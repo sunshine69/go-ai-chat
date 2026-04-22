@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chzyer/readline"
 	"github.com/joho/godotenv"
 )
 
@@ -52,14 +53,14 @@ type History struct {
 var (
 	history       []Message
 	historyLoaded bool = false
-	homeDir, _    = os.UserHomeDir()
+	homeDir, _         = os.UserHomeDir()
 )
 
 // --- Main Logic ---
 
 func main() {
 	// Load config from multiple sources: Current Dir .env, then Home .aigdotenv
-	_ = godotenv.Load()                      // Current directory
+	_ = godotenv.Load()                                  // Current directory
 	homeEnv, _ := godotenv.Read(homeDir + "/.aigdotenv") // User home dir
 
 	// Merge or prefer home dir env vars over current dir
@@ -89,7 +90,8 @@ func main() {
 
 	// --- REPL Mode ---
 	fmt.Println("AI Chat CLI - REPL Mode")
-	fmt.Println("Commands: /new, /add <file>, /r <cmd>, /exit")
+	fmt.Println("Commands: /new, /add <file>, /r <cmd>, /exit, /history")
+	fmt.Println("Use ↑/↓ arrow keys to navigate previous messages; type /history to see all.")
 	fmt.Println("----------------------------------------")
 	if historyLoaded {
 		fmt.Printf("Loaded %d messages from previous session.\n", len(history)/2)
@@ -97,40 +99,119 @@ func main() {
 		fmt.Println()
 	}
 
-	scanner := bufio.NewScanner(os.Stdin)
+	// Setup readline for history navigation & editing
+	histFile := filepath.Join(homeDir, ".aig_history_lines")
+	rl, err := readline.New("")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Could not initialize readline: %v\n", err)
+		fmt.Println("Falling back to basic input mode (no arrow keys).")
 
-	for {
-		fmt.Print("You: ")
-		if !scanner.Scan() {
-			fmt.Println()
-			break
+		scanner := bufio.NewScanner(os.Stdin)
+		for {
+			fmt.Print("You: ")
+			if !scanner.Scan() {
+				fmt.Println()
+				break
+			}
+			text := strings.TrimSpace(scanner.Text())
+			if text == "" {
+				continue
+			}
+			if strings.HasPrefix(text, "/") {
+				if text == "/exit" || text == "/q" {
+					break
+				}
+				if text == "/history" {
+					fmt.Println("✅ Chat History (Current Session):")
+					for i, msg := range history {
+						role := "User"
+						if msg.Role == "assistant" {
+							role = "AI"
+						}
+						content := msg.Content
+						if len(content) > 200 {
+							content = content[:197] + "..."
+						}
+						fmt.Printf(" %d [%s]: %s\n", i+1, role, content)
+					}
+					continue
+				}
+				handleCommand(text, config, &history)
+				continue
+			}
+			history = append(history, Message{Role: "user", Content: text})
+			ans, err := askAI(config, history)
+			if err != nil {
+				fmt.Printf("Error: %v\n", err)
+				history = history[:len(history)-1]
+				continue
+			}
+			fmt.Printf("AI: %s\n", ans)
+			history = append(history, Message{Role: "assistant", Content: ans})
+			saveHistory(getHistoryFilePath())
 		}
+	} else {
+		defer rl.Close()
 
-		text := strings.TrimSpace(scanner.Text())
-		if text == "" {
-			continue
+		for {
+			line, err := rl.Readline()
+			if err != nil {
+				fmt.Println()
+				break
+			}
+
+			text := strings.TrimSpace(line)
+			if text == "" {
+				continue
+			}
+
+			if strings.HasPrefix(text, "/") {
+				if text == "/exit" || text == "/q" {
+					break
+				}
+				if text == "/history" {
+					fmt.Println("✅ Chat History (Current Session):")
+					for i, msg := range history {
+						role := "User"
+						if msg.Role == "assistant" {
+							role = "AI"
+						}
+						content := msg.Content
+						if len(content) > 200 {
+							content = content[:197] + "..."
+						}
+						fmt.Printf(" %d [%s]: %s\n", i+1, role, content)
+					}
+					continue
+				}
+				handleCommand(text, config, &history)
+				continue
+			}
+
+			// Save user input to readline history file (only non-command lines)
+			if err := appendHistoryFile(histFile, text); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: Could not save line to history file: %v\n", err)
+			}
+
+			// Add to main history
+			history = append(history, Message{Role: "user", Content: text})
+			ans, err := askAI(config, history)
+			if err != nil {
+				fmt.Printf("Error: %v\n", err)
+				history = history[:len(history)-1]
+				continue
+			}
+
+			fmt.Printf("AI: %s\n", ans)
+			history = append(history, Message{Role: "assistant", Content: ans})
+			saveHistory(getHistoryFilePath())
 		}
-
-		if strings.HasPrefix(text, "/") {
-			handleCommand(text, config, &history)
-			continue
-		}
-
-		history = append(history, Message{Role: "user", Content: text})
-		ans, err := askAI(config, history)
-		if err != nil {
-			fmt.Printf("Error: %v\n", err)
-			history = history[:len(history)-1]
-			continue
-		}
-
-		fmt.Printf("AI: %s\n", ans)
-		history = append(history, Message{Role: "assistant", Content: ans})
-		saveHistory(getHistoryFilePath())
 	}
 
 	// Save final state
-	saveHistory(getHistoryFilePath())
+	if err := saveHistory(getHistoryFilePath()); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Could not save history: %v\n", err)
+	}
 }
 
 // --- Non-Interactive Argument Parsing ---
@@ -139,7 +220,7 @@ func handleNonInteractive(config Config) {
 	args := os.Args[1:]
 	i := 0
 
-	// Initialize history (starts empty, unless loaded later)
+	// Initialize history (starts empty)
 	history = []Message{}
 
 	for i < len(args) {
@@ -217,45 +298,120 @@ func handleNonInteractive(config Config) {
 
 func runREPL(config Config) {
 	fmt.Println("AI Chat REPL (Interactive Mode)")
-	fmt.Println("Commands: /new, /add <file>, /r <cmd>, /exit")
+	fmt.Println("Commands: /new, /add <file>, /r <cmd>, /exit, /history")
 	fmt.Println("----------------------------------------")
 
-	scanner := bufio.NewScanner(os.Stdin)
-	for {
-		fmt.Print("You: ")
-		if !scanner.Scan() {
-			fmt.Println()
-			break
-		}
+	histFile := filepath.Join(homeDir, ".aig_history_lines")
+	rl, err := readline.New("")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Could not initialize readline: %v\n", err)
+		fmt.Println("Falling back to basic input mode.")
 
-		text := strings.TrimSpace(scanner.Text())
-		if text == "" {
-			continue
-		}
-
-		if strings.HasPrefix(text, "/") {
-			if text == "/exit" || text == "/q" {
+		scanner := bufio.NewScanner(os.Stdin)
+		for {
+			fmt.Print("You: ")
+			if !scanner.Scan() {
+				fmt.Println()
 				break
 			}
-			handleCommand(text, config, &history)
-			continue
+			text := strings.TrimSpace(scanner.Text())
+			if text == "" {
+				continue
+			}
+			if strings.HasPrefix(text, "/") {
+				if text == "/exit" || text == "/q" {
+					break
+				}
+				if text == "/history" {
+					fmt.Println("✅ Chat History (Current Session):")
+					for i, msg := range history {
+						role := "User"
+						if msg.Role == "assistant" {
+							role = "AI"
+						}
+						content := msg.Content
+						if len(content) > 200 {
+							content = content[:197] + "..."
+						}
+						fmt.Printf(" %d [%s]: %s\n", i+1, role, content)
+					}
+					continue
+				}
+				handleCommand(text, config, &history)
+				continue
+			}
+			history = append(history, Message{Role: "user", Content: text})
+			ans, err := askAI(config, history)
+			if err != nil {
+				fmt.Printf("Error: %v\n", err)
+				history = history[:len(history)-1]
+				continue
+			}
+			fmt.Printf("AI: %s\n", ans)
+			history = append(history, Message{Role: "assistant", Content: ans})
+			saveHistory(getHistoryFilePath())
 		}
+	} else {
+		defer rl.Close()
 
-		history = append(history, Message{Role: "user", Content: text})
-		ans, err := askAI(config, history)
-		if err != nil {
-			fmt.Printf("Error: %v\n", err)
-			history = history[:len(history)-1]
-			continue
+		for {
+			line, err := rl.Readline()
+			if err != nil {
+				fmt.Println()
+				break
+			}
+
+			text := strings.TrimSpace(line)
+			if text == "" {
+				continue
+			}
+
+			if strings.HasPrefix(text, "/") {
+				if text == "/exit" || text == "/q" {
+					break
+				}
+				if text == "/history" {
+					fmt.Println("✅ Chat History (Current Session):")
+					for i, msg := range history {
+						role := "User"
+						if msg.Role == "assistant" {
+							role = "AI"
+						}
+						content := msg.Content
+						if len(content) > 200 {
+							content = content[:197] + "..."
+						}
+						fmt.Printf(" %d [%s]: %s\n", i+1, role, content)
+					}
+					continue
+				}
+				handleCommand(text, config, &history)
+				continue
+			}
+
+			// Save user input to readline history file (only non-command lines)
+			if err := appendHistoryFile(histFile, text); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: Could not save line to history file: %v\n", err)
+			}
+
+			history = append(history, Message{Role: "user", Content: text})
+			ans, err := askAI(config, history)
+			if err != nil {
+				fmt.Printf("Error: %v\n", err)
+				history = history[:len(history)-1]
+				continue
+			}
+
+			fmt.Printf("AI: %s\n", ans)
+			history = append(history, Message{Role: "assistant", Content: ans})
+			saveHistory(getHistoryFilePath())
 		}
-
-		fmt.Printf("AI: %s\n", ans)
-		history = append(history, Message{Role: "assistant", Content: ans})
-		saveHistory(getHistoryFilePath())
 	}
 
 	// Save final state
-	saveHistory(getHistoryFilePath())
+	if err := saveHistory(getHistoryFilePath()); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Could not save history: %v\n", err)
+	}
 }
 
 // --- Helper Functions ---
@@ -279,6 +435,7 @@ func handleCommand(text string, config Config, history *[]Message) {
 		fmt.Println("  /add <file>    - Add file contents to context")
 		fmt.Println("  /r <cmd>       - Run shell command and show output")
 		fmt.Println("  /exit or /q    - Exit REPL")
+		fmt.Println("  /history       - Show current chat history")
 	case "/add":
 		if arg == "" {
 			fmt.Println("Usage: /add <filename>")
@@ -307,6 +464,12 @@ func handleCommand(text string, config Config, history *[]Message) {
 func runSystemCommand(cmdStr string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+
+	// Sanitize command to prevent command injection
+	if strings.Contains(cmdStr, "&&") || strings.Contains(cmdStr, "||") || strings.Contains(cmdStr, ";") {
+		fmt.Println("⚠️  Command contains forbidden operators (&&, ||, or ;)")
+		return
+	}
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
 
@@ -420,7 +583,23 @@ func saveHistory(filePath string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filePath, data, 0644)
+	return os.WriteFile(filePath, data, 0600) // ✅ More secure permissions
+}
+
+func appendHistoryFile(filename, line string) error {
+	// Only append non-empty lines that are not commands
+	if line == "" || strings.HasPrefix(line, "/") {
+		return nil
+	}
+
+	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	_, err = f.WriteString(line + "\n")
+	return err
 }
 
 func loadConfig() Config {
@@ -452,4 +631,3 @@ func loadConfig() Config {
 
 	return c
 }
-
