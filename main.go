@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ type Config struct {
 	BaseURL string
 	Model   string
 	APIKey  string
+	Timeout time.Duration
 }
 
 type Message struct {
@@ -44,8 +46,7 @@ type History struct {
 	History []Message `json:"history"`
 }
 
-// --- Global State ---
-
+// Global State
 var (
 	history       []Message
 	historyLoaded bool = false
@@ -54,11 +55,21 @@ var (
 // --- Main Logic ---
 
 func main() {
-	_ = godotenv.Load()
+	// Load config from multiple sources: Current Dir .env, then Home .aigdotenv
+	_ = godotenv.Load()                       // Current directory
+	homeEnv, _ := godotenv.Read(".aigdotenv") // User home dir
+
+	// Merge or prefer home dir env vars over current dir
+	for k, v := range homeEnv {
+		// Only set if not already defined
+		if os.Getenv(k) == "" {
+			_ = os.Setenv(k, v)
+		}
+	}
 
 	config := loadConfig()
 
-	// Load history if exists (only if not in a "clear" command)
+	// Load history if exists
 	historyFilePath := getHistoryFilePath()
 	if _, err := os.Stat(historyFilePath); err == nil {
 		if err := loadHistory(historyFilePath); err != nil {
@@ -68,146 +79,21 @@ func main() {
 		}
 	}
 
-	// Check for command-line arguments (Non-Interactive Mode)
-	// If args exist, we process commands, otherwise we drop into REPL
+	// Check for command-line arguments
 	if len(os.Args) > 1 {
 		handleArguments(config)
 		return
 	}
 
 	// --- REPL Mode ---
-
 	fmt.Println("AI Chat CLI - REPL Mode")
 	fmt.Println("Commands: /new, /add <file>, /exit")
 	fmt.Println("----------------------------------------")
-
-	// If we loaded history, give a heads up
 	if historyLoaded {
-		fmt.Printf("Loaded %d messages from previous session.\n", len(history)/2) // approx count (user+ai)
+		fmt.Printf("Loaded %d messages from previous session.\n", len(history)/2)
 		fmt.Println("Type /new to start fresh if desired.")
 		fmt.Println()
 	}
-
-	scanner := bufio.NewScanner(os.Stdin)
-
-	for {
-		fmt.Print("You: ")
-		if !scanner.Scan() {
-			fmt.Println()
-			break
-		}
-
-		text := strings.TrimSpace(scanner.Text())
-
-		if text == "" {
-			continue
-		}
-
-		// Handle internal commands
-		if strings.HasPrefix(text, "/") {
-			if text == "/exit" {
-				break
-			}
-			handleCommand(text, config, &history)
-			continue
-		}
-
-		// User Question Logic
-		history = append(history, Message{Role: "user", Content: text})
-
-		ans, err := askAI(config, history)
-		if err != nil {
-			fmt.Printf("Error: %v\n", err)
-			history = history[:len(history)-1] // Rollback
-			continue
-		}
-
-		fmt.Printf("AI: %s\n", ans)
-		history = append(history, Message{Role: "assistant", Content: ans})
-
-		// Save history after every interaction
-		saveHistory(historyFilePath)
-	}
-
-	// Save final state on exit
-	saveHistory(historyFilePath)
-}
-
-// --- Argument Parsing & Execution ---
-
-func handleArguments(config Config) {
-	// Simple manual argument parsing to allow -cmd -f combinations
-	args := os.Args[1:]
-	i := 0
-	for i < len(args) {
-		arg := args[i]
-
-		if arg == "-cmd" {
-			if i+1 >= len(args) {
-				fmt.Println("Error: -cmd requires an argument (new, add, repl)")
-				os.Exit(1)
-			}
-			i++
-			cmd := args[i]
-
-			switch cmd {
-			case "new":
-				history = []Message{}
-				fmt.Println("New conversation started (cleared history).")
-			case "add":
-				if i+1 >= len(args) {
-					fmt.Println("Error: /add requires a filename")
-					os.Exit(1)
-				}
-				i++
-				filePath := args[i]
-				content, err := os.ReadFile(filePath)
-				if err != nil {
-					fmt.Printf("Error reading file %s: %v\n", filePath, err)
-					os.Exit(1)
-				}
-				history = append([]Message{
-					{Role: "system", Content: fmt.Sprintf("Reference File Content:\n```\n%s\n```\n", string(content))},
-				}, history...)
-				fmt.Printf("Added '%s' to conversation context.\n", filePath)
-			case "repl":
-				fmt.Println("Starting REPL mode with current context...")
-				runREPL(config)
-			default:
-				fmt.Printf("Unknown command: %s\n", cmd)
-			}
-			i++
-			continue
-		}
-
-		// Single shot execution if just text is provided
-		if !strings.HasPrefix(arg, "-") {
-			// Treat remaining args as the question
-			question := strings.Join(args[i:], " ")
-			ans, err := askAI(config, []Message{{Role: "user", Content: question}})
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-			fmt.Print(ans)
-			return // Exit immediately after single shot
-		}
-
-		i++
-	}
-
-	// If loop finished and no specific command triggered exit, check if we want repl
-	// If user ran: `./aichat -cmd repl` we already handled it.
-	// If user ran: `./aichat -cmd add -f file.txt` we handled it.
-	// If user ran: `./aichat -cmd new` we handled it.
-	// If user ran: `./aichat "question"` we handled it.
-}
-
-// Convenience function to run REPL after processing commands
-func runREPL(config Config) {
-	fmt.Println("AI Chat REPL (Interactive Mode)")
-	fmt.Println("Commands: /new, /add <file>, /exit")
-	fmt.Println("----------------------------------------")
 
 	scanner := bufio.NewScanner(os.Stdin)
 
@@ -241,15 +127,127 @@ func runREPL(config Config) {
 
 		fmt.Printf("AI: %s\n", ans)
 		history = append(history, Message{Role: "assistant", Content: ans})
-
-		// Save immediately
-		historyFilePath := getHistoryFilePath()
 		saveHistory(historyFilePath)
 	}
 
 	// Save final state
-	historyFilePath := getHistoryFilePath()
 	saveHistory(historyFilePath)
+}
+
+// --- Argument Parsing & Execution ---
+
+func handleArguments(config Config) {
+	args := os.Args[1:]
+	i := 0
+	for i < len(args) {
+		arg := args[i]
+
+		if arg == "-cmd" || arg == "-c" {
+			if i+1 >= len(args) {
+				fmt.Println("Error: -cmd requires an argument (new, add, repl)")
+				os.Exit(1)
+			}
+			i++
+			cmd := args[i]
+
+			switch cmd {
+			case "new":
+				history = []Message{}
+				fmt.Println("New conversation started (cleared history).")
+			case "add":
+				if i+1 >= len(args) {
+					fmt.Println("Error: /add requires a filename (use -f <filename>)")
+					os.Exit(1)
+				}
+				i++
+				filePath := args[i]
+				content, err := os.ReadFile(filePath)
+				if err != nil {
+					fmt.Printf("Error reading file %s: %v\n", filePath, err)
+					os.Exit(1)
+				}
+				history = append([]Message{
+					{Role: "system", Content: fmt.Sprintf("Reference File Content:\n```\n%s\n```\n", string(content))},
+				}, history...)
+				fmt.Printf("Added '%s' to conversation context.\n", filePath)
+			case "repl":
+				fmt.Println("Starting REPL mode with current context...")
+				runREPL(config)
+			default:
+				fmt.Printf("Unknown command: %s\n", cmd)
+			}
+			i++
+			continue
+		}
+
+		if arg == "-f" {
+			// Skip this flag and the filename, it's handled by -cmd add logic above
+			if i+1 >= len(args) {
+				fmt.Println("Error: -f requires a filename")
+				os.Exit(1)
+			}
+			i += 2
+			continue
+		}
+
+		if !strings.HasPrefix(arg, "-") {
+			// Single shot execution
+			question := strings.Join(args[i:], " ")
+			ans, err := askAI(config, []Message{{Role: "user", Content: question}})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Print(ans)
+			return
+		}
+
+		i++
+	}
+
+	// Default to REPL if no specific actions were taken
+	runREPL(config)
+}
+
+// Convenience function to run REPL
+func runREPL(config Config) {
+	fmt.Println("AI Chat REPL (Interactive Mode)")
+	fmt.Println("Commands: /new, /add <file>, /exit")
+	fmt.Println("----------------------------------------")
+
+	scanner := bufio.NewScanner(os.Stdin)
+	for {
+		fmt.Print("You: ")
+		if !scanner.Scan() {
+			fmt.Println()
+			break
+		}
+
+		text := strings.TrimSpace(scanner.Text())
+		if text == "" {
+			continue
+		}
+
+		if strings.HasPrefix(text, "/") {
+			if text == "/exit" || text == "/q" {
+				break
+			}
+			handleCommand(text, config, &history)
+			continue
+		}
+
+		history = append(history, Message{Role: "user", Content: text})
+		ans, err := askAI(config, history)
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			history = history[:len(history)-1]
+			continue
+		}
+
+		fmt.Printf("AI: %s\n", ans)
+		history = append(history, Message{Role: "assistant", Content: ans})
+		saveHistory(getHistoryFilePath())
+	}
 }
 
 // --- Helper Functions ---
@@ -263,8 +261,7 @@ func handleCommand(text string, config Config, history *[]Message) {
 	case "/new":
 		*history = []Message{}
 		fmt.Println("New conversation started.")
-		historyFilePath := getHistoryFilePath()
-		os.Remove(historyFilePath) // Clear file
+		os.Remove(getHistoryFilePath())
 	case "/help":
 		fmt.Println("Commands: /new, /add <file>, /exit")
 	case "/add":
@@ -281,10 +278,8 @@ func handleCommand(text string, config Config, history *[]Message) {
 		*history = append([]Message{
 			{Role: "system", Content: fmt.Sprintf("Reference File Content:\n```\n%s\n```\n", string(content))},
 		}, (*history)...)
-
 		fmt.Printf("Added '%s' to conversation context.\n", filePath)
-		historyFilePath := getHistoryFilePath()
-		saveHistory(historyFilePath)
+		saveHistory(getHistoryFilePath())
 	default:
 		fmt.Printf("Unknown command: %s\n", cmd)
 	}
@@ -304,7 +299,9 @@ func askAI(config Config, history []Message) (string, error) {
 
 	jsonValue, _ := json.Marshal(jsonData)
 
-	client := &http.Client{Timeout: 60 * time.Second}
+	// Create client with configurable timeout
+	client := &http.Client{Timeout: config.Timeout}
+
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonValue))
 	if err != nil {
 		return "", err
@@ -342,7 +339,7 @@ func askAI(config Config, history []Message) (string, error) {
 	return "", fmt.Errorf("no choices returned")
 }
 
-// --- History File Management ---
+// --- File Management ---
 
 func getHistoryFilePath() string {
 	home, err := os.UserHomeDir()
@@ -366,7 +363,6 @@ func loadHistory(filePath string) error {
 }
 
 func saveHistory(filePath string) error {
-	// Ensure directory exists
 	dir := filepath.Dir(filePath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
@@ -385,6 +381,14 @@ func loadConfig() Config {
 		BaseURL: os.Getenv("OPENAI_URL"),
 		Model:   os.Getenv("OPENAI_MODEL"),
 		APIKey:  os.Getenv("OPENAI_API_KEY"),
+		Timeout: 15 * time.Minute, // Default to 15 minutes
+	}
+
+	// Override timeout with env variable
+	if timeoutStr := os.Getenv("TIMEOUT"); timeoutStr != "" {
+		if seconds, err := strconv.Atoi(timeoutStr); err == nil {
+			c.Timeout = time.Duration(seconds) * time.Second
+		}
 	}
 
 	if c.BaseURL == "" {
