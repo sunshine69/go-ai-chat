@@ -50,14 +50,16 @@ type History struct {
 var (
 	history       []Message
 	historyLoaded bool = false
+	homeDir, _         = os.UserHomeDir()
 )
 
 // --- Main Logic ---
 
 func main() {
 	// Load config from multiple sources: Current Dir .env, then Home .aigdotenv
-	_ = godotenv.Load()                       // Current directory
-	homeEnv, _ := godotenv.Read(".aigdotenv") // User home dir
+
+	_ = godotenv.Load()                                  // Current directory
+	homeEnv, _ := godotenv.Read(homeDir + "/.aigdotenv") // User home dir
 
 	// Merge or prefer home dir env vars over current dir
 	for k, v := range homeEnv {
@@ -153,6 +155,8 @@ func handleArguments(config Config) {
 			switch cmd {
 			case "new":
 				history = []Message{}
+				homeDir, _ := os.UserHomeDir()
+				os.RemoveAll(homeDir + "/.aihistory")
 				fmt.Println("New conversation started (cleared history).")
 			case "add":
 				if i+1 >= len(args) {
