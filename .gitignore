@@ -1,3 +1,4 @@
+.env
 webnote-go
 *.log
 webnote-linux-amd64-static

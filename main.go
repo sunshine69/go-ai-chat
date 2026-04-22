@@ -101,7 +101,7 @@ func main() {
 
 	// Setup readline for history navigation & editing
 	histFile := filepath.Join(homeDir, ".aig_history_lines")
-	rl, err := readline.New("")
+	rl, err := readline.NewEx(&readline.Config{Prompt: "> "})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: Could not initialize readline: %v\n", err)
 		fmt.Println("Falling back to basic input mode (no arrow keys).")
@@ -628,6 +628,6 @@ func loadConfig() Config {
 			c.Model = "llama3"
 		}
 	}
-
+	fmt.Printf("%v\n", c)
 	return c
 }
