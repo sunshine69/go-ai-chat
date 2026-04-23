@@ -512,6 +512,9 @@ func handleCommand(text string, config *Config, history *[]Message) {
 		}
 		config.BaseURL = arg
 		fmt.Printf("URL switched to: %s\n", arg)
+	case "/p": // print current config
+		dump, _ := json.Marshal(config)
+		fmt.Printf("Current config: %s\n", string(dump))
 	default:
 		fmt.Printf("Unknown command: %s\n", cmd)
 	}
