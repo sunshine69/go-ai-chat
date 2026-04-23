@@ -666,12 +666,10 @@ func saveConfig() {
 	if config == nil {
 		return
 	}
-	if !config.PromptedURL && !config.PromptedModel && !config.PromptedAPIKey {
-		return // No changes to save
-	}
 
-	// Read existing .aigdotenv
 	dotEnvPath := filepath.Join(homeDir, ".aigdotenv")
+
+	// Read existing .aigdotenv (if exists)
 	envVars := make(map[string]string)
 	if data, err := os.ReadFile(dotEnvPath); err == nil {
 		lines := strings.Split(string(data), "\n")
@@ -687,15 +685,24 @@ func saveConfig() {
 		}
 	}
 
-	// Update with current config values if prompted
-	if config.PromptedURL {
+	// Update env vars with current config values (even if not flagged as "prompted")
+	// But only if they differ from defaults (and not empty)
+	changed := false
+	if config.BaseURL != "" && config.BaseURL != "https://api.openai.com/v1/chat/completions" {
 		envVars["OPENAI_URL"] = config.BaseURL
+		changed = true
 	}
-	if config.PromptedModel {
+	if config.Model != "" && config.Model != "gpt-3.5-turbo" {
 		envVars["OPENAI_MODEL"] = config.Model
+		changed = true
 	}
-	if config.PromptedAPIKey {
+	if config.APIKey != "" {
 		envVars["OPENAI_API_KEY"] = config.APIKey
+		changed = true
+	}
+
+	if !changed {
+		return // no meaningful changes
 	}
 
 	// Write back to .aigdotenv
@@ -706,6 +713,8 @@ func saveConfig() {
 
 	if err := os.WriteFile(dotEnvPath, []byte(sb.String()), 0600); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: Could not save config to %s: %v\n", dotEnvPath, err)
+	} else {
+		fmt.Println("✅ Configuration saved to ~/.aigdotenv")
 	}
 }
 
