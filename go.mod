@@ -1,4 +1,4 @@
-module llg
+module aig
 
 go 1.26.2
 
