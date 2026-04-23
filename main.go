@@ -42,6 +42,9 @@ type Response struct {
 	Object  string `json:"object"`
 	Created int64  `json:"created"`
 	Choices []struct {
+		Delta struct {
+			Content string `json:"content"`
+		} `json:"delta"`
 		Message struct {
 			Content string `json:"content"`
 			Role    string `json:"role"`
@@ -163,13 +166,14 @@ func main() {
 				continue
 			}
 			history = append(history, Message{Role: "user", Content: text})
+			fmt.Print("AI: ") // Print prefix before calling askAI
 			ans, err := askAI(*config, history)
+			fmt.Println() // Newline after stream finishes
 			if err != nil {
 				fmt.Printf("Error: %v\n", err)
 				history = history[:len(history)-1]
 				continue
 			}
-			fmt.Printf("AI: %s\n", ans)
 			history = append(history, Message{Role: "assistant", Content: ans})
 			saveHistory(getHistoryFilePath())
 		}
@@ -238,6 +242,8 @@ func main() {
 			}
 			// Add to main history
 			history = append(history, Message{Role: "user", Content: text})
+
+			fmt.Print("AI: ") // Print prefix before calling askAI
 			ans, err := askAI(*config, history)
 			if err != nil {
 				fmt.Printf("Error: %v\n", err)
@@ -245,7 +251,6 @@ func main() {
 				continue
 			}
 
-			fmt.Printf("AI: %s\n", ans)
 			history = append(history, Message{Role: "assistant", Content: ans})
 
 			// Save to the current context file
@@ -690,7 +695,7 @@ func askAI(config Config, history []Message) (string, error) {
 	jsonData := map[string]interface{}{
 		"model":    config.Model,
 		"messages": history,
-		"stream":   false,
+		"stream":   true, // Always stream
 	}
 
 	jsonValue, _ := json.Marshal(jsonData)
@@ -713,25 +718,55 @@ func askAI(config Config, history []Message) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-
 	if resp.StatusCode != 200 {
-		return fmt.Sprintf("API Error: %s", string(body)), nil
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("API Error: %s", string(body))
 	}
 
-	var apiResponse Response
-	if err := json.Unmarshal(body, &apiResponse); err != nil {
-		return "", err
+	// Use a scanner to read the stream line by line
+	scanner := bufio.NewScanner(resp.Body)
+	var fullContent strings.Builder
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		// OpenAI/Ollama end the stream with this specific line
+		if line == "data: [DONE]" {
+			break
+		}
+		// SSE protocol uses "data: " prefix
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+
+		// Remove "data: " prefix to get the JSON part
+		jsonData := strings.TrimPrefix(line, "data: ")
+
+		var streamResp Response
+		if err := json.Unmarshal([]byte(jsonData), &streamResp); err != nil {
+			// If a single line is invalid JSON, skip it instead of crashing the whole stream
+			continue
+		}
+
+		if len(streamResp.Choices) > 0 {
+			content := streamResp.Choices[0].Delta.Content
+			if content != "" {
+				// Print the chunk immediately to the console
+				fmt.Print(content)
+				// Sync stdout to ensure the user sees it without delay
+				os.Stdout.Sync()
+				fullContent.WriteString(content)
+			}
+		}
 	}
 
-	if len(apiResponse.Choices) > 0 {
-		return apiResponse.Choices[0].Message.Content, nil
+	if err := scanner.Err(); err != nil {
+		return fullContent.String(), fmt.Errorf("stream error: %v", err)
 	}
 
-	return "", fmt.Errorf("no choices returned")
+	return fullContent.String(), nil
 }
 
 // --- File Management ---
