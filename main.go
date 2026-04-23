@@ -158,7 +158,6 @@ func main() {
 		}
 	} else {
 		defer rl.Close()
-
 		for {
 			line, err := rl.Readline()
 			if err != nil {
@@ -197,12 +196,10 @@ func main() {
 				}
 				continue
 			}
-
 			// Save user input to readline history file (only non-command lines)
 			if err := appendHistoryFile(histFile, text); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: Could not save line to history file: %v\n", err)
 			}
-
 			// Add to main history
 			history = append(history, Message{Role: "user", Content: text})
 			ans, err := askAI(*config, history)
@@ -491,7 +488,9 @@ func handleCommand(text string, config *Config, history *[]Message) {
 		*history = append([]Message{
 			{Role: "system", Content: fmt.Sprintf("Reference File Content:\n```\n%s\n```\n", string(content))},
 		}, (*history)...)
-		fmt.Printf("Added '%s' to conversation context.\n", arg)
+		if config.Debug {
+			fmt.Printf("Added '%s' to conversation context.\n", arg)
+		}
 	case "/r":
 		if arg == "" {
 			fmt.Println("Usage: /r <command>")
@@ -570,8 +569,6 @@ func askAI(config Config, history []Message) (string, error) {
 	jsonValue, _ := json.Marshal(jsonData)
 
 	client := &http.Client{Timeout: config.Timeout}
-
-	println(string(jsonValue))
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonValue))
 	if err != nil {
