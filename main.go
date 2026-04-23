@@ -22,10 +22,14 @@ import (
 // --- Configuration & Data Structures ---
 
 type Config struct {
-	BaseURL string
-	Model   string
-	APIKey  string
-	Timeout time.Duration
+	BaseURL        string
+	Model          string
+	APIKey         string
+	Timeout        time.Duration
+	PromptedURL    bool
+	PromptedModel  bool
+	PromptedAPIKey bool
+	Debug          bool
 }
 
 type Message struct {
@@ -54,6 +58,7 @@ var (
 	history       []Message
 	historyLoaded bool = false
 	homeDir, _         = os.UserHomeDir()
+	config        *Config
 )
 
 // --- Main Logic ---
@@ -70,7 +75,7 @@ func main() {
 		}
 	}
 
-	config := loadConfig()
+	config = loadConfig()
 
 	// Load history if exists
 	historyFilePath := getHistoryFilePath()
@@ -84,13 +89,13 @@ func main() {
 
 	// Check for command-line arguments (non-interactive mode)
 	if len(os.Args) > 1 {
-		handleNonInteractive(config)
+		handleNonInteractive(*config)
 		return
 	}
 
 	// --- REPL Mode ---
 	fmt.Println("AI Chat CLI - REPL Mode")
-	fmt.Println("Commands: /new, /add <file>, /r <cmd>, /exit, /history")
+	fmt.Println("Commands: /new, /add <file>, /r <cmd>, /exit, /history, /m <model>, /url <url>")
 	fmt.Println("Use ↑/↓ arrow keys to navigate previous messages; type /history to see all.")
 	fmt.Println("----------------------------------------")
 	if historyLoaded {
@@ -119,6 +124,7 @@ func main() {
 			}
 			if strings.HasPrefix(text, "/") {
 				if text == "/exit" || text == "/q" {
+					saveConfig()
 					break
 				}
 				if text == "/history" {
@@ -140,7 +146,7 @@ func main() {
 				continue
 			}
 			history = append(history, Message{Role: "user", Content: text})
-			ans, err := askAI(config, history)
+			ans, err := askAI(*config, history)
 			if err != nil {
 				fmt.Printf("Error: %v\n", err)
 				history = history[:len(history)-1]
@@ -167,6 +173,7 @@ func main() {
 
 			if strings.HasPrefix(text, "/") {
 				if text == "/exit" || text == "/q" {
+					saveConfig()
 					break
 				}
 				if text == "/history" {
@@ -185,6 +192,9 @@ func main() {
 					continue
 				}
 				handleCommand(text, config, &history)
+				if config.Debug {
+					fmt.Printf("[DEBUG] config: %v\n", *config)
+				}
 				continue
 			}
 
@@ -195,7 +205,7 @@ func main() {
 
 			// Add to main history
 			history = append(history, Message{Role: "user", Content: text})
-			ans, err := askAI(config, history)
+			ans, err := askAI(*config, history)
 			if err != nil {
 				fmt.Printf("Error: %v\n", err)
 				history = history[:len(history)-1]
@@ -275,6 +285,24 @@ func handleNonInteractive(config Config) {
 			continue
 		}
 
+		if arg == "/m" {
+			if i+1 >= len(args) {
+				fmt.Println("Error: /m requires a model name")
+				os.Exit(1)
+			}
+			i += 2
+			continue
+		}
+
+		if arg == "/url" {
+			if i+1 >= len(args) {
+				fmt.Println("Error: /url requires a URL")
+				os.Exit(1)
+			}
+			i += 2
+			continue
+		}
+
 		if !strings.HasPrefix(arg, "/") {
 			// Single shot execution: treat as a direct prompt
 			question := strings.Join(args[i:], " ")
@@ -337,7 +365,7 @@ func runREPL(config Config) {
 					}
 					continue
 				}
-				handleCommand(text, config, &history)
+				handleCommand(text, &config, &history)
 				continue
 			}
 			history = append(history, Message{Role: "user", Content: text})
@@ -385,7 +413,7 @@ func runREPL(config Config) {
 					}
 					continue
 				}
-				handleCommand(text, config, &history)
+				handleCommand(text, &config, &history)
 				continue
 			}
 
@@ -416,7 +444,7 @@ func runREPL(config Config) {
 
 // --- Helper Functions ---
 
-func handleCommand(text string, config Config, history *[]Message) {
+func handleCommand(text string, config *Config, history *[]Message) {
 	parts := strings.SplitN(text, " ", 2)
 	cmd := parts[0]
 	arg := ""
@@ -434,8 +462,22 @@ func handleCommand(text string, config Config, history *[]Message) {
 		fmt.Println("  /new           - Clear conversation history")
 		fmt.Println("  /add <file>    - Add file contents to context")
 		fmt.Println("  /r <cmd>       - Run shell command and show output")
+		fmt.Println("  /m <model>     - Switch model (e.g., /m gpt-4)")
+		fmt.Println("  /url <url>     - Switch API URL")
 		fmt.Println("  /exit or /q    - Exit REPL")
 		fmt.Println("  /history       - Show current chat history")
+		fmt.Println("  /debug <0|1>   - Enable/Disable debug")
+
+	case "/debug":
+		if arg == "" {
+			fmt.Println("Usage: /debug <0|1>")
+			return
+		}
+		if arg == "1" {
+			config.Debug = true
+		} else {
+			config.Debug = false
+		}
 	case "/add":
 		if arg == "" {
 			fmt.Println("Usage: /add <filename>")
@@ -456,6 +498,20 @@ func handleCommand(text string, config Config, history *[]Message) {
 			return
 		}
 		runSystemCommand(arg)
+	case "/m":
+		if arg == "" {
+			fmt.Println("Usage: /m <model>")
+			return
+		}
+		config.Model = arg
+		fmt.Printf("Model switched to: %s\n", arg)
+	case "/url":
+		if arg == "" {
+			fmt.Println("Usage: /url <url>")
+			return
+		}
+		config.BaseURL = arg
+		fmt.Printf("URL switched to: %s\n", arg)
 	default:
 		fmt.Printf("Unknown command: %s\n", cmd)
 	}
@@ -511,6 +567,8 @@ func askAI(config Config, history []Message) (string, error) {
 	jsonValue, _ := json.Marshal(jsonData)
 
 	client := &http.Client{Timeout: config.Timeout}
+
+	println(string(jsonValue))
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonValue))
 	if err != nil {
@@ -602,12 +660,119 @@ func appendHistoryFile(filename, line string) error {
 	return err
 }
 
-func loadConfig() Config {
+// --- Config Management ---
+
+func saveConfig() {
+	if config == nil {
+		return
+	}
+	if !config.PromptedURL && !config.PromptedModel && !config.PromptedAPIKey {
+		return // No changes to save
+	}
+
+	// Read existing .aigdotenv
+	dotEnvPath := filepath.Join(homeDir, ".aigdotenv")
+	envVars := make(map[string]string)
+	if data, err := os.ReadFile(dotEnvPath); err == nil {
+		lines := strings.Split(string(data), "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) == 2 {
+				envVars[parts[0]] = parts[1]
+			}
+		}
+	}
+
+	// Update with current config values if prompted
+	if config.PromptedURL {
+		envVars["OPENAI_URL"] = config.BaseURL
+	}
+	if config.PromptedModel {
+		envVars["OPENAI_MODEL"] = config.Model
+	}
+	if config.PromptedAPIKey {
+		envVars["OPENAI_API_KEY"] = config.APIKey
+	}
+
+	// Write back to .aigdotenv
+	var sb strings.Builder
+	for k, v := range envVars {
+		sb.WriteString(fmt.Sprintf("%s=%s\n", k, v))
+	}
+
+	if err := os.WriteFile(dotEnvPath, []byte(sb.String()), 0600); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Could not save config to %s: %v\n", dotEnvPath, err)
+	}
+}
+
+func promptForMissingConfig(config *Config) {
+	reader := bufio.NewReader(os.Stdin)
+
+	// Check which values are missing
+	needsURL := config.BaseURL == ""
+	needsModel := config.Model == ""
+	needsAPIKey := config.APIKey == ""
+
+	if !needsURL && !needsModel && !needsAPIKey {
+		return // No prompting needed
+	}
+
+	fmt.Println()
+	fmt.Println("🤖 AI Chat CLI needs configuration")
+	fmt.Println("We'll help you set up your OpenAI API credentials.")
+	fmt.Println()
+
+	// Prompt for URL if missing
+	if needsURL {
+		fmt.Printf("API URL [%s]: ", config.BaseURL)
+		if input, _ := reader.ReadString('\n'); strings.TrimSpace(input) != "" {
+			config.BaseURL = strings.TrimSpace(input)
+			config.PromptedURL = true
+		}
+	}
+
+	// Prompt for Model if missing
+	if needsModel {
+		fmt.Printf("Model [%s]: ", config.Model)
+		if input, _ := reader.ReadString('\n'); strings.TrimSpace(input) != "" {
+			config.Model = strings.TrimSpace(input)
+			config.PromptedModel = true
+		}
+	}
+
+	// Prompt for API Key if missing
+	if needsAPIKey {
+		fmt.Printf("API Key (will not be displayed): ")
+		apiKey, _ := reader.ReadString('\n')
+		apiKey = strings.TrimSpace(string(apiKey))
+		if apiKey != "" {
+			config.APIKey = apiKey
+			config.PromptedAPIKey = true
+		}
+	}
+
+	// Save config to .aigdotenv
+	fmt.Println()
+	if needsURL || needsModel || needsAPIKey {
+		saveConfig()
+		fmt.Println("✅ Configuration saved to ~/.aigdotenv")
+		fmt.Println()
+	}
+}
+
+func loadConfig() *Config {
 	c := Config{
-		BaseURL: os.Getenv("OPENAI_URL"),
-		Model:   os.Getenv("OPENAI_MODEL"),
-		APIKey:  os.Getenv("OPENAI_API_KEY"),
-		Timeout: 15 * time.Minute,
+		BaseURL:        os.Getenv("OPENAI_URL"),
+		Model:          os.Getenv("OPENAI_MODEL"),
+		APIKey:         os.Getenv("OPENAI_API_KEY"),
+		Timeout:        15 * time.Minute,
+		PromptedURL:    false,
+		PromptedModel:  false,
+		PromptedAPIKey: false,
 	}
 
 	if timeoutStr := os.Getenv("TIMEOUT"); timeoutStr != "" {
@@ -628,6 +793,11 @@ func loadConfig() Config {
 			c.Model = "llama3"
 		}
 	}
-	fmt.Printf("%v\n", c)
-	return c
+
+	// Prompt for missing values if in REPL mode (not in non-interactive mode)
+	if len(os.Args) == 1 {
+		promptForMissingConfig(&c)
+	}
+
+	return &c
 }
