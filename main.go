@@ -296,9 +296,6 @@ func handleNonInteractive(config Config) {
 	args := os.Args[1:]
 	i := 0
 
-	// Initialize history (starts empty)
-	history = []Message{}
-
 	for i < len(args) {
 		arg := args[i]
 
@@ -372,7 +369,8 @@ func handleNonInteractive(config Config) {
 		if !strings.HasPrefix(arg, "/") {
 			// Single shot execution: treat as a direct prompt
 			question := strings.Join(args[i:], " ")
-			ans, err := askAI(config, []Message{{Role: "user", Content: question}})
+			history = append(history, Message{Role: "user", Content: question})
+			ans, err := askAI(config, history)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
