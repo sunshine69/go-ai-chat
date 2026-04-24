@@ -115,7 +115,7 @@ func main() {
 
 	// --- REPL Mode ---
 	fmt.Println("AI Chat CLI - REPL Mode")
-	fmt.Println("Commands: /new, /add <file>, /r <cmd>, /exit, /history, /m <model>, /url <url> /list, /del <context>, /use <context>")
+	fmt.Println("Commands: /new, /add <file>, /r <cmd>, /exit, /history, /m <model>, /url <url> /list, /del <context>, /use <context>, /timeout <dur>")
 	fmt.Println("Use ↑/↓ arrow keys to navigate previous messages; type /history to see all.")
 	fmt.Println("----------------------------------------")
 	if historyLoaded {
@@ -390,7 +390,7 @@ func handleNonInteractive(config Config) {
 
 func runREPL(config Config) {
 	fmt.Println("AI Chat REPL (Interactive Mode)")
-	fmt.Println("Commands: /new, /add <file>, /r <cmd>, /exit, /history, /m <model>, /url <url> /list, /del <context>, /use <context>")
+	fmt.Println("Commands: /new, /add <file>, /r <cmd>, /exit, /history, /m <model>, /url <url> /list, /del <context>, /use <context>, /timeout <dur>")
 	fmt.Println("----------------------------------------")
 
 	histFile := filepath.Join(homeDir, ".aig_history_lines")
@@ -529,6 +529,7 @@ func handleCommand(text string, config *Config, history *[]Message) {
 		fmt.Println("  /r <cmd>       - Run shell command and show output")
 		fmt.Println("  /m <model>     - Switch model (e.g., /m gpt-4)")
 		fmt.Println("  /url <url>     - Switch API URL")
+		fmt.Println("  /timeout <dur> - Set request timeout (e.g., 30s, 5m)")
 		fmt.Println("  /exit or /q    - Exit REPL")
 		fmt.Println("  /history       - Show current chat history")
 		fmt.Println("  /list          - List contexts for current model")
@@ -641,6 +642,18 @@ func handleCommand(text string, config *Config, history *[]Message) {
 		}
 		config.BaseURL = arg
 		fmt.Printf("URL switched to: %s\n", arg)
+	case "/timeout":
+		if arg == "" {
+			fmt.Println("Usage: /timeout <duration> (e.g., 30s, 5m, 1h)")
+			return
+		}
+		d, err := time.ParseDuration(arg)
+		if err != nil {
+			fmt.Printf("Error parsing duration: %v\n", err)
+			return
+		}
+		config.Timeout = d
+		fmt.Printf("Timeout set to: %v\n", d)
 	case "/p": // print current config
 		dump, _ := json.Marshal(config)
 		fmt.Printf("Current config: %s\n", string(dump))
@@ -860,6 +873,10 @@ func saveConfig() {
 		envVars["OPENAI_API_KEY"] = config.APIKey
 		changed = true
 	}
+	if config.Timeout != 15*time.Minute {
+		envVars["TIMEOUT"] = config.Timeout.String()
+		changed = true
+	}
 
 	if !changed {
 		return // no meaningful changes
@@ -945,7 +962,9 @@ func loadConfig() *Config {
 	}
 
 	if timeoutStr := os.Getenv("TIMEOUT"); timeoutStr != "" {
-		if seconds, err := strconv.Atoi(timeoutStr); err == nil {
+		if d, err := time.ParseDuration(timeoutStr); err == nil {
+			c.Timeout = d
+		} else if seconds, err := strconv.Atoi(timeoutStr); err == nil {
 			c.Timeout = time.Duration(seconds) * time.Second
 		}
 	}
