@@ -602,6 +602,15 @@ func handleCommand(text string, config *Config, history *[]Message) {
 		} else {
 			config.Debug = false
 		}
+	case "/system":
+		if arg == "" {
+			fmt.Println("Usage: /system <text>")
+			return
+		}
+		*history = append([]Message{
+			{Role: "system", Content: arg},
+		}, *history...)
+		fmt.Printf("✅ System prompt added: %s\n", arg)
 	case "/add":
 		if arg == "" {
 			fmt.Println("Usage: /add <filename>")
