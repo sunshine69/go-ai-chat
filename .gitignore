@@ -1,3 +1,4 @@
+*.pad
 .env
 webnote-go
 *.log

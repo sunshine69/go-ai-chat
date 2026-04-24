@@ -12,9 +12,11 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/chzyer/readline"
@@ -136,6 +138,22 @@ var (
 	currentContextPath string // Track the currently active context file
 )
 
+func saveHistoryToFile(history []Message, index int, filename string) {
+	if len(history) == 0 || index <= 0 {
+		println("history empty or index is not > 0")
+		return
+	}
+	msg := history[index-1]
+	switch v := msg.Content.(type) {
+	case string:
+		content := v
+		os.WriteFile(filename, []byte(content), 0o644)
+	default:
+		fmt.Println("[INFO] skip saving non text content")
+	}
+	return
+}
+
 func printHistory(history []Message) {
 	fmt.Println("✅ Chat History (Current Session):")
 	for i, msg := range history {
@@ -228,6 +246,7 @@ func main() {
 	runREPLWithReader(config, &history, rl, histFile)
 
 	// Save final state
+	saveConfig()
 	if currentContextPath != "" {
 		if err := saveHistory(currentContextPath); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: Could not save history: %v\n", err)
@@ -337,7 +356,7 @@ func handleNonInteractive(config Config) {
 			// Single shot execution: treat as a direct prompt
 			question := strings.Join(args[i:], " ")
 			history = append(history, Message{Role: "user", Content: question})
-			ans, err := askAI(config, history)
+			ans, err := askAI(context.Background(), config, history)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
@@ -378,6 +397,32 @@ func handleCommand(text string, config *Config, history *[]Message) {
 	}
 
 	switch cmd {
+	case "/s":
+		if arg == "" {
+			fmt.Println("Usage: /s <index:filename>")
+			return
+		}
+		idx_file := strings.Split(arg, ":")
+		if len(idx_file) != 2 {
+			println("error input must be idx:file-path")
+			return
+		}
+		idx, err := strconv.Atoi(idx_file[0])
+		if err != nil {
+			println("error, index must be integer")
+			return
+		}
+		saveHistoryToFile(*history, idx, idx_file[1])
+		return
+
+	case "/cd":
+		if arg == "" {
+			fmt.Println("Usage: /cd <directory>")
+			return
+		}
+		if err := os.Chdir(arg); err != nil {
+			fmt.Printf("[ERROR] can not chdir to %s - %v\n", arg, err)
+		}
 	case "/new":
 		*history = []Message{}
 		currentContextPath = "" // Reset context path so a new one is created on next msg
@@ -594,8 +639,7 @@ func runSystemCommand(cmdStr string) {
 	}
 	fmt.Printf("✅ Output:\n%s\n", o)
 }
-
-func askAI(config Config, history []Message) (string, error) {
+func askAI(ctx context.Context, config Config, history []Message) (string, error) {
 	url := config.BaseURL
 	if !strings.Contains(url, "/chat/completions") {
 		url = strings.TrimSuffix(url, "/") + "/chat/completions"
@@ -604,14 +648,14 @@ func askAI(config Config, history []Message) (string, error) {
 	jsonData := map[string]interface{}{
 		"model":    config.Model,
 		"messages": history,
-		"stream":   true, // Always stream
+		"stream":   true,
 	}
 
 	jsonValue, _ := json.Marshal(jsonData)
-
 	client := &http.Client{Timeout: config.Timeout}
 
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonValue))
+	// ✅ Use context-aware request
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonValue))
 	if err != nil {
 		return "", err
 	}
@@ -632,46 +676,33 @@ func askAI(config Config, history []Message) (string, error) {
 		return "", fmt.Errorf("API Error: %s", string(body))
 	}
 
-	// Use a scanner to read the stream line by line
 	scanner := bufio.NewScanner(resp.Body)
 	var fullContent strings.Builder
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		// OpenAI/Ollama end the stream with this specific line
-		if line == "data: [DONE]" {
-			break
-		}
-		// SSE protocol uses "data: " prefix
-		if !strings.HasPrefix(line, "data: ") {
+		if line == "" || line == "data: [DONE]" || !strings.HasPrefix(line, "data: ") {
 			continue
 		}
 
-		// Remove "data: " prefix to get the JSON part
-		jsonData := strings.TrimPrefix(line, "data: ")
-
+		streamData := strings.TrimPrefix(line, "data: ")
 		var streamResp Response
-		if err := json.Unmarshal([]byte(jsonData), &streamResp); err != nil {
-			// If a single line is invalid JSON, skip it instead of crashing the whole stream
+		if err := json.Unmarshal([]byte(streamData), &streamResp); err != nil {
 			continue
 		}
 
 		if len(streamResp.Choices) > 0 {
 			content := streamResp.Choices[0].Delta.Content
 			if content != "" {
-				// Print the chunk immediately to the console
 				fmt.Print(content)
-				// Sync stdout to ensure the user sees it without delay
 				os.Stdout.Sync()
 				fullContent.WriteString(content)
 			}
 		}
 	}
 
-	if err := scanner.Err(); err != nil {
+	// ✅ Only return stream error if not cancelled by context
+	if err := scanner.Err(); err != nil && ctx.Err() == nil {
 		return fullContent.String(), fmt.Errorf("stream error: %v", err)
 	}
 
@@ -926,15 +957,34 @@ func runREPLWithReader(config *Config, history *[]Message, rl *readline.Instance
 				fmt.Fprintf(os.Stderr, "Warning: Could not save line to history file: %v\n", err)
 			}
 			*history = append(*history, Message{Role: "user", Content: text})
-			ans, err := askAI(*config, *history)
+			// Inside both branches, right before askAI call:
+			ctx, cancel := context.WithCancel(context.Background())
+			sigChan := make(chan os.Signal, 1)
+			signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+			go func() {
+				<-sigChan
+				fmt.Print("\n⏹️  Interrupted. Stopping response...\n")
+				cancel()
+			}()
+			ans, err := askAI(context.Background(), *config, *history)
+			signal.Stop(sigChan) // Prevent goroutine leak
+
 			if err != nil {
 				fmt.Printf("Error: %v\n", err)
 				*history = (*history)[:len(*history)-1]
 				continue
 			}
+
+			// ✅ If Ctrl+C was pressed, skip saving history and return to prompt
+			if ctx.Err() != nil {
+				continue
+			}
+
 			printOutput(ans)
 			*history = append(*history, Message{Role: "assistant", Content: ans})
 			saveHistory(getHistoryFilePath())
+
 		}
 		return
 	}
@@ -974,14 +1024,34 @@ func runREPLWithReader(config *Config, history *[]Message, rl *readline.Instance
 		}
 
 		*history = append(*history, Message{Role: "user", Content: text})
-		ans, err := askAI(*config, *history)
+		// Inside both branches, right before askAI call:
+		ctx, cancel := context.WithCancel(context.Background())
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+		go func() {
+			<-sigChan
+			fmt.Print("\n⏹️  Interrupted. Stopping response...\n")
+			cancel()
+		}()
+
+		ans, err := askAI(ctx, *config, *history)
+		signal.Stop(sigChan) // Prevent goroutine leak
+
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
 			*history = (*history)[:len(*history)-1]
 			continue
 		}
+
+		// ✅ If Ctrl+C was pressed, skip saving history and return to prompt
+		if ctx.Err() != nil {
+			continue
+		}
+
 		printOutput(ans)
 		*history = append(*history, Message{Role: "assistant", Content: ans})
 		saveHistory(getHistoryFilePath())
+
 	}
 }
