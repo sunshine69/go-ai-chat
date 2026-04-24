@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"os"
 	"os/exec"
@@ -32,8 +34,79 @@ type Config struct {
 }
 
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role    string      `json:"role"`
+	Content interface{} `json:"content"`
+}
+
+// ContentPart is used for multimodal messages (OpenAI/Anthropic standard)
+type ContentPart struct {
+	Type     string    `json:"type"`
+	Text     string    `json:"text,omitempty"`
+	ImageURL *ImageURL `json:"image_url,omitempty"`
+}
+
+type ImageURL struct {
+	URL string `json:"url"`
+}
+
+type FileProcessor interface {
+	Process(path string) (interface{}, error)
+}
+
+type TextProcessor struct{}
+
+func (p *TextProcessor) Process(path string) (interface{}, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	// Wrap in markdown for context
+	return fmt.Sprintf("Reference File Content (%s):\n```\n%s\n```\n", filepath.Base(path), string(content)), nil
+}
+
+type ImageProcessor struct{}
+
+func (p *ImageProcessor) Process(path string) (interface{}, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	mimeType := mime.TypeByExtension(filepath.Ext(path))
+	if mimeType == "" {
+		mimeType = "image/jpeg" // Fallback
+	}
+
+	base64Data := base64.StdEncoding.EncodeToString(content)
+	dataURL := fmt.Sprintf("data:%s;base64,%s", mimeType, base64Data)
+
+	// Multimodal structure: text instruction + image
+	return []ContentPart{
+		{
+			Type: "text",
+			Text: fmt.Sprintf("Attached image: %s", filepath.Base(path)),
+		},
+		{
+			Type: "image_url",
+			ImageURL: &ImageURL{
+				URL: dataURL,
+			},
+		},
+	}, nil
+}
+
+func getFileProcessor(path string) FileProcessor {
+	ext := filepath.Ext(path)
+	switch ext {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp":
+		return &ImageProcessor{}
+	default:
+		return &TextProcessor{}
+	}
+}
+
+func processFile(path string) (interface{}, error) {
+	return getFileProcessor(path).Process(path)
 }
 
 type Response struct {
@@ -62,6 +135,31 @@ var (
 	config             *Config
 	currentContextPath string // Track the currently active context file
 )
+
+func printHistory(history []Message) {
+	fmt.Println("✅ Chat History (Current Session):")
+	for i, msg := range history {
+		role := "User"
+		if msg.Role == "assistant" {
+			role = "AI"
+		}
+
+		var displayContent string
+		switch v := msg.Content.(type) {
+		case string:
+			displayContent = v
+		case []ContentPart:
+			displayContent = "[Multimodal Content (Image/Text)]"
+		default:
+			displayContent = fmt.Sprintf("%v", v)
+		}
+
+		if len(displayContent) > 200 {
+			displayContent = displayContent[:197] + "..."
+		}
+		fmt.Printf(" %d [%s]: %s\n", i+1, role, displayContent)
+	}
+}
 
 func main() {
 	_ = godotenv.Load()
@@ -121,7 +219,7 @@ func main() {
 
 	// Setup readline for history navigation & editing
 	histFile := filepath.Join(homeDir, ".aig_history_lines")
-	rl, err := readline.NewEx(&readline.Config{Prompt: "> "})
+	rl, err := readline.NewEx(&readline.Config{Prompt: "> ", HistoryFile: histFile, HistoryLimit: 5000})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: Could not initialize readline: %v\n", err)
 		fmt.Println("Falling back to basic input mode (no arrow keys).")
@@ -143,18 +241,7 @@ func main() {
 					break
 				}
 				if text == "/history" {
-					fmt.Println("✅ Chat History (Current Session):")
-					for i, msg := range history {
-						role := "User"
-						if msg.Role == "assistant" {
-							role = "AI"
-						}
-						content := msg.Content
-						if len(content) > 200 {
-							content = content[:197] + "..."
-						}
-						fmt.Printf(" %d [%s]: %s\n", i+1, role, content)
-					}
+					printHistory(history)
 					continue
 				}
 				handleCommand(text, config, &history)
@@ -192,18 +279,7 @@ func main() {
 					break
 				}
 				if text == "/history" {
-					fmt.Println("✅ Chat History (Current Session):")
-					for i, msg := range history {
-						role := "User"
-						if msg.Role == "assistant" {
-							role = "AI"
-						}
-						content := msg.Content
-						if len(content) > 200 {
-							content = content[:197] + "..."
-						}
-						fmt.Printf(" %d [%s]: %s\n", i+1, role, content)
-					}
+					printHistory(history)
 					continue
 				}
 				handleCommand(text, config, &history)
@@ -389,7 +465,7 @@ func runREPL(config Config) {
 	fmt.Println("----------------------------------------")
 
 	histFile := filepath.Join(homeDir, ".aig_history_lines")
-	rl, err := readline.New("")
+	rl, err := readline.NewEx(&readline.Config{Prompt: "> ", HistoryFile: histFile, HistoryLimit: 5000})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: Could not initialize readline: %v\n", err)
 		fmt.Println("Falling back to basic input mode.")
@@ -410,18 +486,7 @@ func runREPL(config Config) {
 					break
 				}
 				if text == "/history" {
-					fmt.Println("✅ Chat History (Current Session):")
-					for i, msg := range history {
-						role := "User"
-						if msg.Role == "assistant" {
-							role = "AI"
-						}
-						content := msg.Content
-						if len(content) > 200 {
-							content = content[:197] + "..."
-						}
-						fmt.Printf(" %d [%s]: %s\n", i+1, role, content)
-					}
+					printHistory(history)
 					continue
 				}
 				handleCommand(text, &config, &history)
@@ -458,18 +523,7 @@ func runREPL(config Config) {
 					break
 				}
 				if text == "/history" {
-					fmt.Println("✅ Chat History (Current Session):")
-					for i, msg := range history {
-						role := "User"
-						if msg.Role == "assistant" {
-							role = "AI"
-						}
-						content := msg.Content
-						if len(content) > 200 {
-							content = content[:197] + "..."
-						}
-						fmt.Printf(" %d [%s]: %s\n", i+1, role, content)
-					}
+					printHistory(history)
 					continue
 				}
 				handleCommand(text, &config, &history)
@@ -616,14 +670,18 @@ func handleCommand(text string, config *Config, history *[]Message) {
 			fmt.Println("Usage: /add <filename>")
 			return
 		}
-		content, err := os.ReadFile(arg)
+		content, err := processFile(arg)
 		if err != nil {
-			fmt.Printf("Error reading file %s: %v\n", arg, err)
+			fmt.Printf("Error processing file %s: %v\n", arg, err)
 			return
 		}
+		// We prepend as a system message to provide context,
+		// though for images, some APIs prefer them in a 'user' message.
+		// Most modern models (GPT-4o) handle system-level images fine.
 		*history = append([]Message{
-			{Role: "system", Content: fmt.Sprintf("Reference File Content:\n```\n%s\n```\n", string(content))},
-		}, (*history)...)
+			{Role: "system", Content: content},
+		}, *history...)
+
 		if config.Debug {
 			fmt.Printf("Added '%s' to conversation context.\n", arg)
 		}
@@ -711,10 +769,6 @@ func runSystemCommand(cmdStr string) {
 	}
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
 	o, err := u.RunSystemCommandV3(cmd, true)
 
 	if ctx.Err() == context.DeadlineExceeded {
