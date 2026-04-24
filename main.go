@@ -36,8 +36,9 @@ type Config struct {
 }
 
 type Message struct {
-	Role    string      `json:"role"`
-	Content interface{} `json:"content"`
+	Role     string      `json:"role"`
+	Content  interface{} `json:"content"`
+	Thinking string      `json:"thinking,omitempty"`
 }
 
 // ContentPart is used for multimodal messages (OpenAI/Anthropic standard)
@@ -117,7 +118,8 @@ type Response struct {
 	Created int64  `json:"created"`
 	Choices []struct {
 		Delta struct {
-			Content string `json:"content"`
+			ReasoningContent string `json:"reasoning_content,omitempty"`
+			Content          string `json:"content"`
 		} `json:"delta"`
 		Message struct {
 			Content string `json:"content"`
@@ -153,7 +155,6 @@ func saveHistoryToFile(history []Message, index int, filename string) {
 	}
 	return
 }
-
 func printHistory(history []Message) {
 	fmt.Println("✅ Chat History (Current Session):")
 	for i, msg := range history {
@@ -167,15 +168,23 @@ func printHistory(history []Message) {
 		case string:
 			displayContent = v
 		case []ContentPart:
-			displayContent = "[Multimodal Content (Image/Text)]"
+			displayContent = "[Multimodal Content]"
 		default:
 			displayContent = fmt.Sprintf("%v", v)
 		}
 
-		if len(displayContent) > 200 {
-			displayContent = displayContent[:197] + "..."
+		if msg.Thinking != "" {
+			thinkPreview := msg.Thinking
+			if len(thinkPreview) > 150 {
+				thinkPreview = thinkPreview[:147] + "..."
+			}
+			fmt.Printf(" %d [%s]: 🤔 %s\n   💬 %s\n", i+1, role, thinkPreview, displayContent)
+		} else {
+			if len(displayContent) > 200 {
+				displayContent = displayContent[:197] + "..."
+			}
+			fmt.Printf(" %d [%s]: %s\n", i+1, role, displayContent)
 		}
-		fmt.Printf(" %d [%s]: %s\n", i+1, role, displayContent)
 	}
 }
 
@@ -356,7 +365,17 @@ func handleNonInteractive(config Config) {
 			// Single shot execution: treat as a direct prompt
 			question := strings.Join(args[i:], " ")
 			history = append(history, Message{Role: "user", Content: question})
-			ans, err := askAI(context.Background(), config, history)
+			ctx, cancel := context.WithCancel(context.Background())
+			sigChan := make(chan os.Signal, 1)
+			signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+			go func() {
+				<-sigChan
+				fmt.Print("\n⏹️  Interrupted. Stopping response...\n")
+				cancel()
+			}()
+
+			ans, _, err := askAI(ctx, config, history)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
@@ -639,7 +658,7 @@ func runSystemCommand(cmdStr string) {
 	}
 	fmt.Printf("✅ Output:\n%s\n", o)
 }
-func askAI(ctx context.Context, config Config, history []Message) (string, error) {
+func askAI(ctx context.Context, config Config, history []Message) (string, string, error) {
 	url := config.BaseURL
 	if !strings.Contains(url, "/chat/completions") {
 		url = strings.TrimSuffix(url, "/") + "/chat/completions"
@@ -654,10 +673,9 @@ func askAI(ctx context.Context, config Config, history []Message) (string, error
 	jsonValue, _ := json.Marshal(jsonData)
 	client := &http.Client{Timeout: config.Timeout}
 
-	// ✅ Use context-aware request
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonValue))
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -667,17 +685,19 @@ func askAI(ctx context.Context, config Config, history []Message) (string, error
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("API Error: %s", string(body))
+		return "", "", fmt.Errorf("API Error: %s", string(body))
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
 	var fullContent strings.Builder
+	var thinkingContent strings.Builder
+	thinkingStarted := false
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -692,21 +712,36 @@ func askAI(ctx context.Context, config Config, history []Message) (string, error
 		}
 
 		if len(streamResp.Choices) > 0 {
-			content := streamResp.Choices[0].Delta.Content
-			if content != "" {
-				fmt.Print(content)
+			delta := streamResp.Choices[0].Delta
+
+			// 🤔 Stream thinking content
+			if delta.ReasoningContent != "" {
+				if !thinkingStarted {
+					fmt.Print("\n> 🤔 Thinking...\n")
+					thinkingStarted = true
+				}
+				fmt.Print(delta.ReasoningContent)
 				os.Stdout.Sync()
-				fullContent.WriteString(content)
+				thinkingContent.WriteString(delta.ReasoningContent)
+			}
+
+			// 📝 Stream main response
+			if delta.Content != "" {
+				if thinkingStarted {
+					fmt.Print("\n> 📝 Response:\n")
+				}
+				fmt.Print(delta.Content)
+				os.Stdout.Sync()
+				fullContent.WriteString(delta.Content)
 			}
 		}
 	}
 
-	// ✅ Only return stream error if not cancelled by context
 	if err := scanner.Err(); err != nil && ctx.Err() == nil {
-		return fullContent.String(), fmt.Errorf("stream error: %v", err)
+		return fullContent.String(), thinkingContent.String(), fmt.Errorf("stream error: %v", err)
 	}
 
-	return fullContent.String(), nil
+	return fullContent.String(), thinkingContent.String(), nil
 }
 
 // --- File Management ---
@@ -967,22 +1002,24 @@ func runREPLWithReader(config *Config, history *[]Message, rl *readline.Instance
 				fmt.Print("\n⏹️  Interrupted. Stopping response...\n")
 				cancel()
 			}()
-			ans, err := askAI(context.Background(), *config, *history)
-			signal.Stop(sigChan) // Prevent goroutine leak
 
+			ans, thinking, err := askAI(ctx, *config, *history)
 			if err != nil {
 				fmt.Printf("Error: %v\n", err)
 				*history = (*history)[:len(*history)-1]
 				continue
 			}
 
-			// ✅ If Ctrl+C was pressed, skip saving history and return to prompt
 			if ctx.Err() != nil {
 				continue
 			}
 
 			printOutput(ans)
-			*history = append(*history, Message{Role: "assistant", Content: ans})
+			*history = append(*history, Message{
+				Role:     "assistant",
+				Content:  ans,
+				Thinking: thinking, // 👈 Cleanly separated
+			})
 			saveHistory(getHistoryFilePath())
 
 		}
@@ -1035,9 +1072,8 @@ func runREPLWithReader(config *Config, history *[]Message, rl *readline.Instance
 			cancel()
 		}()
 
-		ans, err := askAI(ctx, *config, *history)
-		signal.Stop(sigChan) // Prevent goroutine leak
-
+		ans, thinking, err := askAI(ctx, *config, *history)
+		//		signal.Stop(sigChan) // Prevent goroutine leak
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
 			*history = (*history)[:len(*history)-1]
@@ -1050,8 +1086,32 @@ func runREPLWithReader(config *Config, history *[]Message, rl *readline.Instance
 		}
 
 		printOutput(ans)
-		*history = append(*history, Message{Role: "assistant", Content: ans})
+		*history = append(*history, Message{
+			Role:     "assistant",
+			Content:  ans,
+			Thinking: thinking, // 👈 Cleanly separated
+		})
 		saveHistory(getHistoryFilePath())
+
+		/*
+			ans, _, err := askAI(ctx, *config, *history)
+			signal.Stop(sigChan) // Prevent goroutine leak
+
+			if err != nil {
+				fmt.Printf("Error: %v\n", err)
+				*history = (*history)[:len(*history)-1]
+				continue
+			}
+
+			// ✅ If Ctrl+C was pressed, skip saving history and return to prompt
+			if ctx.Err() != nil {
+				continue
+			}
+
+			printOutput(ans)
+			*history = append(*history, Message{Role: "assistant", Content: ans})
+			saveHistory(getHistoryFilePath())
+		*/
 
 	}
 }
