@@ -17,9 +17,8 @@ import (
 
 	"github.com/chzyer/readline"
 	"github.com/joho/godotenv"
+	u "github.com/sunshine69/golang-tools/utils"
 )
-
-// --- Configuration & Data Structures ---
 
 type Config struct {
 	BaseURL        string
@@ -56,7 +55,6 @@ type History struct {
 	History []Message `json:"history"`
 }
 
-// Global State
 var (
 	history            []Message
 	historyLoaded      bool = false
@@ -65,12 +63,9 @@ var (
 	currentContextPath string // Track the currently active context file
 )
 
-// --- Main Logic ---
-
 func main() {
-	// Load config from multiple sources: Current Dir .env, then Home .aigdotenv
-	_ = godotenv.Load()                                  // Current directory
-	homeEnv, _ := godotenv.Read(homeDir + "/.aigdotenv") // User home dir
+	_ = godotenv.Load()
+	homeEnv, _ := godotenv.Read(homeDir + "/.aigdotenv")
 
 	// Merge or prefer home dir env vars over current dir
 	for k, v := range homeEnv {
@@ -673,28 +668,22 @@ func runSystemCommand(cmdStr string) {
 	}
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
-
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	o, err := u.RunSystemCommandV3(cmd, true)
+
 	if ctx.Err() == context.DeadlineExceeded {
 		fmt.Println("⚠️ Command timed out after 30s")
 		return
 	}
 
 	if err != nil {
-		fmt.Printf("Command failed: %v\n", err)
+		fmt.Printf("❌ Command failed: %v\nStderr: %s\n", err, o)
 		return
 	}
-
-	if stdout.Len() > 0 {
-		fmt.Printf("✅ Output:\n%s\n", stdout.String())
-	}
-	if stderr.Len() > 0 {
-		fmt.Printf("❌ Stderr:\n%s\n", stderr.String())
-	}
+	fmt.Printf("✅ Output:\n%s\n", o)
 }
 
 func askAI(config Config, history []Message) (string, error) {
