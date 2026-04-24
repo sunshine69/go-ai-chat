@@ -221,7 +221,7 @@ func main() {
 				}
 				// Remove characters that might be problematic in filenames
 				cleanMsg = strings.Map(func(r rune) rune {
-					if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == ' ' || r == '_' || r == '-' {
+					if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
 						return r
 					}
 					return '_'
@@ -532,6 +532,7 @@ func handleCommand(text string, config *Config, history *[]Message) {
 		fmt.Println("  /del <name>    - Delete specific context")
 		fmt.Println("  /del all       - Delete all contexts for current model")
 		fmt.Println("  /debug <0|1>   - Enable/Disable debug")
+		fmt.Println("  /show <thing>  - Show details (e.g., /show context <name>)")
 
 	case "/use":
 		if arg == "" {
@@ -650,8 +651,41 @@ func handleCommand(text string, config *Config, history *[]Message) {
 		config.Timeout = d
 		fmt.Printf("Timeout set to: %v\n", d)
 	case "/p": // print current config
-		dump, _ := json.Marshal(config)
-		fmt.Printf("Current config: %s\n", string(dump))
+		fmt.Printf("Current config: %s\n", u.JsonDump(config, ""))
+	case "/show":
+		if arg == "" {
+			fmt.Println("Usage: /show <thing> (e.g., /show context <name>)")
+			return
+		}
+		if strings.HasPrefix(arg, "context ") {
+			contextName := strings.TrimPrefix(arg, "context ")
+			path := filepath.Join(homeDir, ".aig", contextName+".json")
+
+			if _, err := os.Stat(path); os.IsNotExist(err) {
+				fmt.Printf("Error: context '%s' not found.\n", contextName)
+				return
+			}
+
+			var tempHistory []Message
+			if err := loadHistory(path, &tempHistory); err != nil {
+				fmt.Printf("Error loading context: %v\n", err)
+				return
+			}
+
+			fmt.Printf("📜 Showing context: %s\n", contextName)
+			fmt.Println(strings.Repeat("-", 20))
+			for _, msg := range tempHistory {
+				switch msg.Role {
+				case "user":
+					fmt.Printf("user: %s\n", msg.Content)
+				case "assistant":
+					fmt.Printf("AI: %s\n", msg.Content)
+				}
+			}
+			fmt.Println(strings.Repeat("-", 20))
+		} else {
+			fmt.Printf("Unknown thing to show: %s. Try '/show context <name>'\n", arg)
+		}
 	default:
 		fmt.Printf("Unknown command: %s\n", cmd)
 	}
