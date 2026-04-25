@@ -18,6 +18,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/chzyer/readline"
 	"github.com/joho/godotenv"
@@ -141,8 +142,8 @@ var (
 )
 
 func saveHistoryToFile(history []Message, index int, filename string) {
-	if len(history) == 0 || index <= 0 {
-		println("history empty or index is not > 0")
+	if index > len(history) {
+		println("history empty or index is not > len of history")
 		return
 	}
 	msg := history[index-1]
@@ -155,6 +156,13 @@ func saveHistoryToFile(history []Message, index int, filename string) {
 	}
 	return
 }
+
+// generateContextName creates a space-free, timestamped context filename
+func generateContextName(model string) string {
+	cleanModel := strings.ReplaceAll(model, " ", "_")
+	return time.Now().Format("20060102-150405") + "_" + cleanModel + ".json"
+}
+
 func printHistory(history []Message) {
 	fmt.Println("✅ Chat History (Current Session):")
 	for i, msg := range history {
@@ -170,20 +178,28 @@ func printHistory(history []Message) {
 		case []ContentPart:
 			displayContent = "[Multimodal Content]"
 		default:
-			displayContent = fmt.Sprintf("%v", v)
+			displayContent = v.(string)
 		}
 
 		if msg.Thinking != "" {
 			thinkPreview := msg.Thinking
-			if len(thinkPreview) > 150 {
-				thinkPreview = thinkPreview[:147] + "..."
+			// Replace newlines with spaces to prevent multi-line expansion in the preview
+			thinkPreview = strings.ReplaceAll(thinkPreview, "\n", " ")
+
+			// Truncate to ~147 visible characters max
+			if utf8.RuneCountInString(thinkPreview) > 147 {
+				runes := []rune(thinkPreview)
+				thinkPreview = string(runes[:144]) + "..."
 			}
 			fmt.Printf(" %d [%s]: 🤔 %s\n   💬 %s\n", i+1, role, thinkPreview, displayContent)
+		} else if utf8.RuneCountInString(displayContent) > 200 {
+			// Fallback: if Thinking is empty but response is long, truncate response
+			runes := []rune(displayContent)
+			displayContent = string(runes[:197]) + "..."
+			fmt.Printf(" %d [%s]: 💬 %s\n", i+1, role, displayContent)
 		} else {
-			if len(displayContent) > 200 {
-				displayContent = displayContent[:197] + "..."
-			}
-			fmt.Printf(" %d [%s]: %s\n", i+1, role, displayContent)
+			// Short response, no thinking
+			fmt.Printf(" %d [%s]: 💬 %s\n", i+1, role, displayContent)
 		}
 	}
 }
@@ -442,34 +458,42 @@ func handleCommand(text string, config *Config, history *[]Message) {
 		if err := os.Chdir(arg); err != nil {
 			fmt.Printf("[ERROR] can not chdir to %s - %v\n", arg, err)
 		}
-	case "/new":
+	case "/new", "/n":
 		*history = []Message{}
-		currentContextPath = "" // Reset context path so a new one is created on next msg
-		fmt.Println("New conversation started.")
+		// Generate a space-free context filename automatically
+		newContextFile := generateContextName(config.Model)
+		currentContextPath = filepath.Join(homeDir, ".aig", newContextFile)
+		fmt.Printf("✅ New context started: %s\n", filepath.Base(currentContextPath))
+
 		// We don't delete everything in ~/.aig, just clear current session
 	case "/help":
 		fmt.Println("Commands:")
-		fmt.Println("  /new           - Clear conversation history")
-		fmt.Println("  /add <file>    - Add file contents to context")
-		fmt.Println("  /r <cmd>       - Run shell command and show output")
-		fmt.Println("  /m <model>     - Switch model (e.g., /m gpt-4)")
-		fmt.Println("  /url <url>     - Switch API URL")
-		fmt.Println("  /timeout <dur> - Set request timeout (e.g., 30s, 5m)")
-		fmt.Println("  /exit or /q    - Exit REPL")
-		fmt.Println("  /history       - Show current chat history")
-		fmt.Println("  /list          - List contexts for current model")
-		fmt.Println("  /use <name>    - Switch to an existing context")
-		fmt.Println("  /del <name>    - Delete specific context")
-		fmt.Println("  /del all       - Delete all contexts for current model")
-		fmt.Println("  /debug <0|1>   - Enable/Disable debug")
-		fmt.Println("  /show <thing>  - Show details (e.g., /show context <name>)")
+		fmt.Println("  /new , /n                     - Clear conversation history")
+		fmt.Println("  /add <file>,/a                - Add file contents to context")
+		fmt.Println("  /r <cmd>                      - Run shell command and show output")
+		fmt.Println("  /m <model>                    - Switch model (e.g., /m gpt-4)")
+		fmt.Println("  /url <url>                    - Switch API URL")
+		fmt.Println("  /timeout or /t <dur>          - Set request timeout (e.g., 30s, 5m)")
+		fmt.Println("  /exit or /q                   - Exit REPL")
+		fmt.Println("  /history or /h                - Show current chat history")
+		fmt.Println("  /list, /l                     - List contexts for current model")
+		fmt.Println("  /use <name>                   - Switch to an existing context")
+		fmt.Println("  /del <name>                   - Delete specific context")
+		fmt.Println("  /del all                      - Delete all contexts for current model")
+		fmt.Println("  /debug <0|1>                  - Enable/Disable debug")
+		fmt.Println("  /show <thing>                 - Show details (e.g., /show context <name>)")
+		fmt.Println("  /s <hist_index:filename>      - Save the history index to a file ")
+		fmt.Println("  /cd <dirname>                 - Change to directory")
 
 	case "/use":
 		if arg == "" {
 			fmt.Println("Usage: /use <context-name>")
 			return
 		}
-		path := filepath.Join(filepath.Join(homeDir, ".aig"), arg+".json")
+		// Remove spaces & replace with underscores to match generated names
+		sanitizedName := strings.ReplaceAll(arg, " ", "_")
+		path := filepath.Join(filepath.Join(homeDir, ".aig"), sanitizedName+".json")
+
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			fmt.Printf("Error: context '%s' not found.\n", arg)
 			return
@@ -481,7 +505,7 @@ func handleCommand(text string, config *Config, history *[]Message) {
 		currentContextPath = path
 		fmt.Printf("✅ Switched to context: %s\n", arg)
 
-	case "/list":
+	case "/list", "/l":
 		fmt.Printf("📜 Contexts for model [%s]:\n", config.Model)
 		files, _ := os.ReadDir(filepath.Join(homeDir, ".aig"))
 		found := false
@@ -532,7 +556,7 @@ func handleCommand(text string, config *Config, history *[]Message) {
 		} else {
 			config.Debug = false
 		}
-	case "/system":
+	case "/system", "/sys":
 		if arg == "" {
 			fmt.Println("Usage: /system <text>")
 			return
@@ -541,7 +565,7 @@ func handleCommand(text string, config *Config, history *[]Message) {
 			{Role: "system", Content: arg},
 		}, *history...)
 		fmt.Printf("✅ System prompt added: %s\n", arg)
-	case "/add":
+	case "/add", "/a":
 		if arg == "" {
 			fmt.Println("Usage: /add <filename>")
 			return
@@ -581,7 +605,7 @@ func handleCommand(text string, config *Config, history *[]Message) {
 		}
 		config.BaseURL = arg
 		fmt.Printf("URL switched to: %s\n", arg)
-	case "/timeout":
+	case "/timeout", "/t":
 		if arg == "" {
 			fmt.Println("Usage: /timeout <duration> (e.g., 30s, 5m, 1h)")
 			return
@@ -658,6 +682,7 @@ func runSystemCommand(cmdStr string) {
 	}
 	fmt.Printf("✅ Output:\n%s\n", o)
 }
+
 func askAI(ctx context.Context, config Config, history []Message) (string, string, error) {
 	url := config.BaseURL
 	if !strings.Contains(url, "/chat/completions") {
@@ -697,9 +722,20 @@ func askAI(ctx context.Context, config Config, history []Message) (string, strin
 	scanner := bufio.NewScanner(resp.Body)
 	var fullContent strings.Builder
 	var thinkingContent strings.Builder
-	thinkingStarted := false
+	var thinkingStarted = false
+	var headerPrinted = false
+
+	// ✅ Immediately unblock scanner when context is cancelled
+	go func() {
+		<-ctx.Done()
+		resp.Body.Close()
+	}()
 
 	for scanner.Scan() {
+		if ctx.Err() != nil {
+			break // ✅ Exit loop instantly on cancellation
+		}
+
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || line == "data: [DONE]" || !strings.HasPrefix(line, "data: ") {
 			continue
@@ -727,8 +763,9 @@ func askAI(ctx context.Context, config Config, history []Message) (string, strin
 
 			// 📝 Stream main response
 			if delta.Content != "" {
-				if thinkingStarted {
+				if !headerPrinted {
 					fmt.Print("\n> 📝 Response:\n")
+					headerPrinted = true // ✅ Prints exactly once
 				}
 				fmt.Print(delta.Content)
 				os.Stdout.Sync()
@@ -837,7 +874,7 @@ func saveConfig() {
 		envVars["OPENAI_API_KEY"] = config.APIKey
 		changed = true
 	}
-	if config.Timeout != 15*time.Minute {
+	if config.Timeout != 45*time.Minute {
 		envVars["TIMEOUT"] = config.Timeout.String()
 		changed = true
 	}
@@ -919,7 +956,7 @@ func loadConfig() *Config {
 		BaseURL:        os.Getenv("OPENAI_URL"),
 		Model:          os.Getenv("OPENAI_MODEL"),
 		APIKey:         os.Getenv("OPENAI_API_KEY"),
-		Timeout:        15 * time.Minute,
+		Timeout:        45 * time.Minute,
 		PromptedURL:    false,
 		PromptedModel:  false,
 		PromptedAPIKey: false,
@@ -976,7 +1013,7 @@ func runREPLWithReader(config *Config, history *[]Message, rl *readline.Instance
 				if text == "/exit" || text == "/q" {
 					return
 				}
-				if text == "/history" {
+				if strings.HasPrefix(text, "/h") {
 					printHistory(*history)
 					continue
 				}
@@ -1044,7 +1081,7 @@ func runREPLWithReader(config *Config, history *[]Message, rl *readline.Instance
 			if text == "/exit" || text == "/q" {
 				return
 			}
-			if text == "/history" {
+			if strings.HasPrefix(text, "/h") {
 				printHistory(*history)
 				continue
 			}
@@ -1092,26 +1129,5 @@ func runREPLWithReader(config *Config, history *[]Message, rl *readline.Instance
 			Thinking: thinking, // 👈 Cleanly separated
 		})
 		saveHistory(getHistoryFilePath())
-
-		/*
-			ans, _, err := askAI(ctx, *config, *history)
-			signal.Stop(sigChan) // Prevent goroutine leak
-
-			if err != nil {
-				fmt.Printf("Error: %v\n", err)
-				*history = (*history)[:len(*history)-1]
-				continue
-			}
-
-			// ✅ If Ctrl+C was pressed, skip saving history and return to prompt
-			if ctx.Err() != nil {
-				continue
-			}
-
-			printOutput(ans)
-			*history = append(*history, Message{Role: "assistant", Content: ans})
-			saveHistory(getHistoryFilePath())
-		*/
-
 	}
 }
