@@ -883,7 +883,7 @@ func handleCommand(text string, config *Config, history *[]Message) {
 			return
 		}
 		sanitizedName := strings.ReplaceAll(arg, " ", "_")
-		path := filepath.Join(filepath.Join(homeDir, ".aig"), sanitizedName+".json")
+		path := filepath.Join(filepath.Join(homeDir, ".aig"), sanitizedName)
 
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			fmt.Printf("Error: context '%s' not found.\n", arg)
@@ -901,7 +901,7 @@ func handleCommand(text string, config *Config, history *[]Message) {
 		files, _ := os.ReadDir(filepath.Join(homeDir, ".aig"))
 		found := false
 		for _, f := range files {
-			if !f.IsDir() && strings.HasSuffix(f.Name(), "_"+config.Model+".json") {
+			if !f.IsDir() {
 				fmt.Printf("  - %s\n", f.Name())
 				found = true
 			}
@@ -909,7 +909,7 @@ func handleCommand(text string, config *Config, history *[]Message) {
 		if !found {
 			fmt.Println("  (No contexts found)")
 		}
-		fmt.Printf(" Current context: %s\n", currentContextPath)
+		fmt.Printf(" Current context: %s\n", filepath.Base(currentContextPath))
 
 	case "/del":
 		if arg == "" {
@@ -973,10 +973,7 @@ func handleCommand(text string, config *Config, history *[]Message) {
 		*history = append([]Message{
 			{Role: "system", Content: content},
 		}, *history...)
-
-		if config.Debug {
-			fmt.Printf("Added '%s' to conversation context.\n", arg)
-		}
+		fmt.Printf("Added '%s' to conversation context.\n", arg)
 
 	case "/r":
 		if arg == "" {
@@ -1024,7 +1021,7 @@ func handleCommand(text string, config *Config, history *[]Message) {
 		}
 		if strings.HasPrefix(arg, "context ") {
 			contextName := strings.TrimPrefix(arg, "context ")
-			path := filepath.Join(homeDir, ".aig", contextName+".json")
+			path := filepath.Join(homeDir, ".aig", contextName)
 
 			if _, err := os.Stat(path); os.IsNotExist(err) {
 				fmt.Printf("Error: context '%s' not found.\n", contextName)
