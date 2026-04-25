@@ -246,7 +246,10 @@ func printHistory(history []Message) {
 		case []ContentPart:
 			displayContent = "[Multimodal Content]"
 		default:
-			displayContent = v.(string)
+			if displayContent, ok := v.(string); !ok {
+				fmt.Println("error ")
+				return
+			}
 		}
 
 		if msg.Thinking != "" {
