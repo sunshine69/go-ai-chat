@@ -154,6 +154,9 @@ func saveHistoryToFile(history []Message, index int, filename string) error {
 	default:
 		fmt.Println("[INFO] skip saving non text content")
 	}
+	if msg.Thinking != "" {
+		return os.WriteFile(filename+".think", []byte(msg.Thinking), 0o644)
+	}
 	return nil
 }
 
