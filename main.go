@@ -142,26 +142,20 @@ var (
 )
 
 func saveHistoryToFile(history *[]Message, index int, filename string) error {
-	if index <= 0 || index > len(*history) {
-		return fmt.Errorf("invalid history index: %d (valid range: 1..%d)", index, len(*history))
-	}
 
-	// Create a copy of the first `index` messages (inclusive)
-	subset := make([]Message, index)
-	copy(subset, (*history)[:index])
-
-	// Now save this subset
-	dir := filepath.Dir(filename)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
+	if index <= 0 || index > len(history) {
+		println("history empty or index is not > len of history")
+		return
 	}
-
-	h := History{History: subset}
-	data, err := json.MarshalIndent(h, "", "  ")
-	if err != nil {
-		return err
+	msg := history[index-1]
+	switch v := msg.Content.(type) {
+	case string:
+		content := v
+		return os.WriteFile(filename, []byte(content), 0o644)
+	default:
+		fmt.Println("[INFO] skip saving non text content")
 	}
-	return os.WriteFile(filename, data, 0600)
+	return nil
 }
 
 // generateContextName creates a safe filename: YYYYMMDD-HHMMSS_<trunc(first_user_question)_30>_<model>.json
