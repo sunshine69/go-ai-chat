@@ -898,6 +898,7 @@ func handleCommand(text string, config *Config, history *[]Message) {
 		if !found {
 			fmt.Println("  (No contexts found)")
 		}
+		fmt.Printf(" Current context: %s\n", currentContextPath)
 
 	case "/del":
 		if arg == "" {
