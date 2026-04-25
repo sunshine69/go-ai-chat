@@ -141,11 +141,10 @@ var (
 	currentContextPath string // Track the currently active context file
 )
 
-func saveHistoryToFile(history *[]Message, index int, filename string) error {
+func saveHistoryToFile(history []Message, index int, filename string) error {
 
 	if index <= 0 || index > len(history) {
-		println("history empty or index is not > len of history")
-		return
+		return fmt.Errorf("history empty or index is not > len of history")
 	}
 	msg := history[index-1]
 	switch v := msg.Content.(type) {
@@ -799,7 +798,7 @@ func handleCommand(text string, config *Config, history *[]Message) {
 		}
 
 		// Save only up to idx
-		if err := saveHistoryToFile(history, idx, path); err != nil {
+		if err := saveHistoryToFile(*history, idx, path); err != nil {
 			fmt.Printf("❌ Failed to save: %v\n", err)
 		} else {
 			fmt.Printf("✅ Saved conversation up to index %d to: %s\n", idx, path)
