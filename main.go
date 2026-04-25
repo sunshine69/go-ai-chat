@@ -141,26 +141,101 @@ var (
 	currentContextPath string // Track the currently active context file
 )
 
-func saveHistoryToFile(history []Message, index int, filename string) {
-	if index > len(history) {
-		println("history empty or index is not > len of history")
-		return
+func saveHistoryToFile(history *[]Message, index int, filename string) error {
+	if index <= 0 || index > len(*history) {
+		return fmt.Errorf("invalid history index: %d (valid range: 1..%d)", index, len(*history))
 	}
-	msg := history[index-1]
-	switch v := msg.Content.(type) {
-	case string:
-		content := v
-		os.WriteFile(filename, []byte(content), 0o644)
-	default:
-		fmt.Println("[INFO] skip saving non text content")
+
+	// Create a copy of the first `index` messages (inclusive)
+	subset := make([]Message, index)
+	copy(subset, (*history)[:index])
+
+	// Now save this subset
+	dir := filepath.Dir(filename)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
 	}
-	return
+
+	h := History{History: subset}
+	data, err := json.MarshalIndent(h, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filename, data, 0600)
 }
 
-// generateContextName creates a space-free, timestamped context filename
-func generateContextName(model string) string {
+// generateContextName creates a safe filename: YYYYMMDD-HHMMSS_<trunc(first_user_question)_30>_<model>.json
+func generateContextName(model string, firstQuestion string) string {
+	// Clean model name: replace spaces with underscores
 	cleanModel := strings.ReplaceAll(model, " ", "_")
-	return time.Now().Format("20060102-150405") + "_" + cleanModel + ".json"
+
+	// Truncate first question to 30 chars, replace unsafe chars
+	safeContent := strings.ReplaceAll(firstQuestion, " ", "_")
+	if len(safeContent) > 30 {
+		safeContent = safeContent[:30]
+	}
+	// Further sanitize: only keep alphanumeric, _, -
+	sanitized := make([]rune, 0, len(safeContent))
+	for _, r := range safeContent {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			sanitized = append(sanitized, r)
+		} else {
+			sanitized = append(sanitized, '_') // fallback
+		}
+	}
+
+	timestamp := time.Now().Format("20060102-150405")
+	return fmt.Sprintf("%s_%s_%s.json", timestamp, string(sanitized), cleanModel)
+}
+
+// saveHistory saves the current history to the currentContextPath
+func saveHistory() error {
+	if currentContextPath == "" {
+		return fmt.Errorf("no context path set — cannot save history")
+	}
+
+	dir := filepath.Dir(currentContextPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+
+	h := History{History: history}
+	data, err := json.MarshalIndent(h, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(currentContextPath, data, 0600)
+}
+
+// getLatestContextPath finds the newest context file for the current model in ~/.aig/
+func getLatestContextPath(model string) string {
+	dir := filepath.Join(homeDir, ".aig")
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+
+	var latestPath string
+	var latestTime int64
+
+	for _, f := range files {
+		if f.IsDir() || !strings.HasSuffix(f.Name(), "_"+model+".json") {
+			continue
+		}
+		// Extract timestamp portion from filename: YYYYMMDD-HHMMSS
+		parts := strings.Split(f.Name(), "_")
+		if len(parts) < 2 {
+			continue
+		}
+		tsStr := parts[0] // YYYYMMDD-HHMMSS
+		if t, err := time.Parse("20060102-150405", tsStr); err == nil {
+			if t.Unix() > latestTime {
+				latestTime = t.Unix()
+				latestPath = filepath.Join(dir, f.Name())
+			}
+		}
+	}
+	return latestPath
 }
 
 func printHistory(history []Message) {
@@ -221,7 +296,7 @@ func main() {
 	aigDir := filepath.Join(homeDir, ".aig")
 	_ = os.MkdirAll(aigDir, 0755)
 
-	// Load latest context if exists for the current model
+	// Load latest context file if exists
 	latestPath := getLatestContextPath(config.Model)
 	if latestPath != "" {
 		if err := loadHistory(latestPath, &history); err == nil {
@@ -233,23 +308,7 @@ func main() {
 		}
 	}
 
-	// Load history if exists
-	historyFilePath := getHistoryFilePath()
-	if _, err := os.Stat(historyFilePath); err == nil {
-		if err := loadHistory(historyFilePath, &history); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Could not load history file: %v\n", err)
-		} else {
-			historyLoaded = true
-		}
-	}
-
-	// Check for command-line arguments (non-interactive mode)
-	if len(os.Args) > 1 {
-		handleNonInteractive(*config)
-		return
-	}
-
-	// --- REPL Mode (using shared helper) ---
+	// --- REPL Mode ---
 	fmt.Println("AI Chat CLI - REPL Mode")
 	fmt.Println("Commands: /new, /add <file>, /r <cmd>, /exit, /history, /m <model>, /url <url> /list, /del <context>, /use <context>, /timeout <dur>")
 	fmt.Println("Use ↑/↓ arrow keys to navigate previous messages; type /history to see all.")
@@ -263,42 +322,18 @@ func main() {
 	histFile := filepath.Join(homeDir, ".aig_history_lines")
 	rl, err := readline.NewEx(&readline.Config{Prompt: "> ", HistoryFile: histFile, HistoryLimit: 5000})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: Could not initialize readline: %v\n", err)
-		fmt.Println("Falling back to basic input mode (no arrow keys).")
 		rl = nil
 	}
 
 	runREPLWithReader(config, &history, rl, histFile)
 
-	// Save final state
+	// Save final state (if we had an active context)
 	saveConfig()
 	if currentContextPath != "" {
-		if err := saveHistory(currentContextPath); err != nil {
+		if err := saveHistory(); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: Could not save history: %v\n", err)
 		}
 	}
-}
-
-func getLatestContextPath(model string) string {
-	dir := filepath.Join(homeDir, ".aig")
-	files, err := os.ReadDir(dir)
-	if err != nil {
-		return ""
-	}
-
-	var latestFile string
-	var latestTime string
-
-	for _, f := range files {
-		if !f.IsDir() && strings.HasSuffix(f.Name(), "_"+model+".json") {
-			// Filename starts with YYYYMMDD-HHMMSS
-			if f.Name() > latestTime {
-				latestTime = f.Name()
-				latestFile = filepath.Join(dir, f.Name())
-			}
-		}
-	}
-	return latestFile
 }
 
 // --- Non-Interactive Argument Parsing ---
@@ -413,250 +448,13 @@ func runREPL(config Config) {
 	histFile := filepath.Join(homeDir, ".aig_history_lines")
 	rl, err := readline.NewEx(&readline.Config{Prompt: "> ", HistoryFile: histFile, HistoryLimit: 5000})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: Could not initialize readline: %v\n", err)
 		rl = nil
 	}
-	// Note: config is passed by value here, so we must make a pointer copy
 	cfgPtr := config
 	runREPLWithReader(&cfgPtr, &history, rl, histFile)
 }
 
 // --- Helper Functions ---
-
-func handleCommand(text string, config *Config, history *[]Message) {
-	parts := strings.SplitN(text, " ", 2)
-	cmd := parts[0]
-	arg := ""
-	if len(parts) > 1 {
-		arg = parts[1]
-	}
-
-	switch cmd {
-	case "/s":
-		if arg == "" {
-			fmt.Println("Usage: /s <index:filename>")
-			return
-		}
-		idx_file := strings.Split(arg, ":")
-		if len(idx_file) != 2 {
-			println("error input must be idx:file-path")
-			return
-		}
-		idx, err := strconv.Atoi(idx_file[0])
-		if err != nil {
-			println("error, index must be integer")
-			return
-		}
-		saveHistoryToFile(*history, idx, idx_file[1])
-		return
-
-	case "/cd":
-		if arg == "" {
-			fmt.Println("Usage: /cd <directory>")
-			return
-		}
-		if err := os.Chdir(arg); err != nil {
-			fmt.Printf("[ERROR] can not chdir to %s - %v\n", arg, err)
-		}
-	case "/new", "/n":
-		*history = []Message{}
-		// Generate a space-free context filename automatically
-		newContextFile := generateContextName(config.Model)
-		currentContextPath = filepath.Join(homeDir, ".aig", newContextFile)
-		fmt.Printf("✅ New context started: %s\n", filepath.Base(currentContextPath))
-
-		// We don't delete everything in ~/.aig, just clear current session
-	case "/help":
-		fmt.Println("Commands:")
-		fmt.Println("  /new , /n                     - Clear conversation history")
-		fmt.Println("  /add <file>,/a                - Add file contents to context")
-		fmt.Println("  /r <cmd>                      - Run shell command and show output")
-		fmt.Println("  /m <model>                    - Switch model (e.g., /m gpt-4)")
-		fmt.Println("  /url <url>                    - Switch API URL")
-		fmt.Println("  /timeout or /t <dur>          - Set request timeout (e.g., 30s, 5m)")
-		fmt.Println("  /exit or /q                   - Exit REPL")
-		fmt.Println("  /history or /h                - Show current chat history")
-		fmt.Println("  /list, /l                     - List contexts for current model")
-		fmt.Println("  /use <name>                   - Switch to an existing context")
-		fmt.Println("  /del <name>                   - Delete specific context")
-		fmt.Println("  /del all                      - Delete all contexts for current model")
-		fmt.Println("  /debug <0|1>                  - Enable/Disable debug")
-		fmt.Println("  /show <thing>                 - Show details (e.g., /show context <name>)")
-		fmt.Println("  /s <hist_index:filename>      - Save the history index to a file ")
-		fmt.Println("  /cd <dirname>                 - Change to directory")
-
-	case "/use":
-		if arg == "" {
-			fmt.Println("Usage: /use <context-name>")
-			return
-		}
-		// Remove spaces & replace with underscores to match generated names
-		sanitizedName := strings.ReplaceAll(arg, " ", "_")
-		path := filepath.Join(filepath.Join(homeDir, ".aig"), sanitizedName+".json")
-
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			fmt.Printf("Error: context '%s' not found.\n", arg)
-			return
-		}
-		if err := loadHistory(path, history); err != nil {
-			fmt.Printf("Error loading context: %v\n", err)
-			return
-		}
-		currentContextPath = path
-		fmt.Printf("✅ Switched to context: %s\n", arg)
-
-	case "/list", "/l":
-		fmt.Printf("📜 Contexts for model [%s]:\n", config.Model)
-		files, _ := os.ReadDir(filepath.Join(homeDir, ".aig"))
-		found := false
-		for _, f := range files {
-			if !f.IsDir() && strings.HasSuffix(f.Name(), "_"+config.Model+".json") {
-				fmt.Printf("  - %s\n", f.Name())
-				found = true
-			}
-		}
-		if !found {
-			fmt.Println("  (No contexts found)")
-		}
-
-	case "/del":
-		if arg == "" {
-			fmt.Println("Usage: /del <name> or /del all")
-			return
-		}
-		if arg == "all" {
-			files, _ := os.ReadDir(filepath.Join(homeDir, ".aig"))
-			count := 0
-			for _, f := range files {
-				if !f.IsDir() && strings.HasSuffix(f.Name(), "_"+config.Model+".json") {
-					os.Remove(filepath.Join(filepath.Join(homeDir, ".aig"), f.Name()))
-					count++
-				}
-			}
-			fmt.Printf("🗑️ Deleted %d contexts.\n", count)
-		} else {
-			path := filepath.Join(filepath.Join(homeDir, ".aig"), arg+".json")
-			if err := os.Remove(path); err != nil {
-				fmt.Printf("Error deleting context: %v\n", err)
-			} else {
-				fmt.Printf("✅ Deleted context: %s\n", arg)
-				if currentContextPath != "" && strings.Contains(currentContextPath, arg) {
-					currentContextPath = ""
-					*history = []Message{}
-				}
-			}
-		}
-	case "/debug":
-		if arg == "" {
-			fmt.Println("Usage: /debug <0|1>")
-			return
-		}
-		if arg == "1" {
-			config.Debug = true
-		} else {
-			config.Debug = false
-		}
-	case "/system", "/sys":
-		if arg == "" {
-			fmt.Println("Usage: /system <text>")
-			return
-		}
-		*history = append([]Message{
-			{Role: "system", Content: arg},
-		}, *history...)
-		fmt.Printf("✅ System prompt added: %s\n", arg)
-	case "/add", "/a":
-		if arg == "" {
-			fmt.Println("Usage: /add <filename>")
-			return
-		}
-		content, err := processFile(arg)
-		if err != nil {
-			fmt.Printf("Error processing file %s: %v\n", arg, err)
-			return
-		}
-		// We prepend as a system message to provide context,
-		// though for images, some APIs prefer them in a 'user' message.
-		// Most modern models (GPT-4o) handle system-level images fine.
-		*history = append([]Message{
-			{Role: "system", Content: content},
-		}, *history...)
-
-		if config.Debug {
-			fmt.Printf("Added '%s' to conversation context.\n", arg)
-		}
-	case "/r":
-		if arg == "" {
-			fmt.Println("Usage: /r <command>")
-			return
-		}
-		runSystemCommand(arg)
-	case "/m":
-		if arg == "" {
-			fmt.Println("Usage: /m <model>")
-			return
-		}
-		config.Model = arg
-		fmt.Printf("Model switched to: %s\n", arg)
-	case "/url":
-		if arg == "" {
-			fmt.Println("Usage: /url <url>")
-			return
-		}
-		config.BaseURL = arg
-		fmt.Printf("URL switched to: %s\n", arg)
-	case "/timeout", "/t":
-		if arg == "" {
-			fmt.Println("Usage: /timeout <duration> (e.g., 30s, 5m, 1h)")
-			return
-		}
-		d, err := time.ParseDuration(arg)
-		if err != nil {
-			fmt.Printf("Error parsing duration: %v\n", err)
-			return
-		}
-		config.Timeout = d
-		fmt.Printf("Timeout set to: %v\n", d)
-	case "/p": // print current config
-		fmt.Printf("Current config: %s\n", u.JsonDump(config, ""))
-	case "/show":
-		if arg == "" {
-			fmt.Println("Usage: /show <thing> (e.g., /show context <name>)")
-			return
-		}
-		if strings.HasPrefix(arg, "context ") {
-			contextName := strings.TrimPrefix(arg, "context ")
-			path := filepath.Join(homeDir, ".aig", contextName+".json")
-
-			if _, err := os.Stat(path); os.IsNotExist(err) {
-				fmt.Printf("Error: context '%s' not found.\n", contextName)
-				return
-			}
-
-			var tempHistory []Message
-			if err := loadHistory(path, &tempHistory); err != nil {
-				fmt.Printf("Error loading context: %v\n", err)
-				return
-			}
-
-			fmt.Printf("📜 Showing context: %s\n", contextName)
-			fmt.Println(strings.Repeat("-", 20))
-			for _, msg := range tempHistory {
-				switch msg.Role {
-				case "user":
-					fmt.Printf("user: %s\n", msg.Content)
-				case "assistant":
-					fmt.Printf("AI: %s\n", msg.Content)
-				}
-			}
-			fmt.Println(strings.Repeat("-", 20))
-		} else {
-			fmt.Printf("Unknown thing to show: %s. Try '/show context <name>'\n", arg)
-		}
-	default:
-		fmt.Printf("Unknown command: %s\n", cmd)
-	}
-}
 
 func runSystemCommand(cmdStr string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -791,6 +589,7 @@ func getHistoryFilePath() string {
 	return filepath.Join(home, ".aihistory.json")
 }
 
+// loadHistory loads a context file into memory (history)
 func loadHistory(filePath string, historyPtr *[]Message) error {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
@@ -802,20 +601,6 @@ func loadHistory(filePath string, historyPtr *[]Message) error {
 	}
 	*historyPtr = h.History
 	return nil
-}
-
-func saveHistory(filePath string) error {
-	dir := filepath.Dir(filePath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
-	}
-
-	h := History{History: history}
-	data, err := json.MarshalIndent(h, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(filePath, data, 0600) // ✅ More secure permissions
 }
 
 func appendHistoryFile(filename, line string) error {
@@ -991,7 +776,284 @@ func loadConfig() *Config {
 	return &c
 }
 
-// runREPLWithReader runs the REPL using the provided readline instance (or nil for basic mode)
+// Marker
+func handleCommand(text string, config *Config, history *[]Message) {
+	parts := strings.SplitN(text, " ", 2)
+	cmd := parts[0]
+	arg := ""
+	if len(parts) > 1 {
+		arg = parts[1]
+	}
+
+	switch cmd {
+
+	case "/s":
+		if arg == "" {
+			fmt.Println("Usage: /s <index:filename>")
+			return
+		}
+		idx_file := strings.Split(arg, ":")
+		if len(idx_file) != 2 {
+			println("error input must be idx:file-path")
+			return
+		}
+		idxStr, path := idx_file[0], idx_file[1]
+		idx, err := strconv.Atoi(idxStr)
+		if err != nil {
+			println("error, index must be integer")
+			return
+		}
+
+		// Save only up to idx
+		if err := saveHistoryToFile(history, idx, path); err != nil {
+			fmt.Printf("❌ Failed to save: %v\n", err)
+		} else {
+			fmt.Printf("✅ Saved conversation up to index %d to: %s\n", idx, path)
+		}
+
+	case "/cd":
+		if arg == "" {
+			fmt.Println("Usage: /cd <directory>")
+			return
+		}
+		if err := os.Chdir(arg); err != nil {
+			fmt.Printf("[ERROR] can not chdir to %s - %v\n", arg, err)
+		}
+
+	case "/new", "/n":
+		// Before resetting, save current session if history not empty
+		if len(*history) > 0 {
+			// Generate name: use first user message as base
+			firstUserMsg := ""
+			for _, m := range *history {
+				if m.Role == "user" {
+					if s, ok := m.Content.(string); ok {
+						firstUserMsg = s
+						break
+					}
+					break
+				}
+			}
+			if firstUserMsg == "" {
+				firstUserMsg = "untitled"
+			}
+			newContextName := generateContextName(config.Model, firstUserMsg)
+			newContextPath := filepath.Join(homeDir, ".aig", newContextName)
+
+			// Save current session to new file
+			if err := saveHistory(); err != nil {
+				fmt.Printf("⚠️  Could not save current session: %v\n", err)
+			} else {
+				fmt.Printf("✅ Saved current session to: %s\n", filepath.Base(newContextPath))
+			}
+		}
+
+		// Now reset history & context path
+		*history = []Message{}
+		// Generate fresh context name (will be set in first user question save)
+		currentContextPath = ""
+		fmt.Println("✅ New context started.")
+
+	case "/help":
+		fmt.Println("Commands:")
+		fmt.Println("  /new , /n                     - Clear conversation history")
+		fmt.Println("  /add <file>,/a                - Add file contents to context")
+		fmt.Println("  /r <cmd>                      - Run shell command and show output")
+		fmt.Println("  /m <model>                    - Switch model (e.g., /m gpt-4)")
+		fmt.Println("  /url <url>                    - Switch API URL")
+		fmt.Println("  /timeout or /t <dur>          - Set request timeout (e.g., 30s, 5m, 1h)")
+		fmt.Println("  /exit or /q                   - Exit REPL")
+		fmt.Println("  /history or /h                - Show current chat history")
+		fmt.Println("  /list, /l                     - List contexts for current model")
+		fmt.Println("  /use <name>                   - Switch to an existing context")
+		fmt.Println("  /del <name>                   - Delete specific context")
+		fmt.Println("  /del all                      - Delete all contexts for current model")
+		fmt.Println("  /debug <0|1>                  - Enable/Disable debug")
+		fmt.Println("  /show <thing>                 - Show details (e.g., /show context <name>)")
+		fmt.Println("  /s <hist_index:filename>      - Save the history index to a file ")
+		fmt.Println("  /cd <dirname>                 - Change to directory")
+
+	case "/use":
+		if arg == "" {
+			fmt.Println("Usage: /use <context-name>")
+			return
+		}
+		sanitizedName := strings.ReplaceAll(arg, " ", "_")
+		path := filepath.Join(filepath.Join(homeDir, ".aig"), sanitizedName+".json")
+
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			fmt.Printf("Error: context '%s' not found.\n", arg)
+			return
+		}
+		if err := loadHistory(path, history); err != nil {
+			fmt.Printf("Error loading context: %v\n", err)
+			return
+		}
+		currentContextPath = path
+		fmt.Printf("✅ Switched to context: %s\n", arg)
+
+	case "/list", "/l":
+		fmt.Printf("📜 Contexts for model [%s]:\n", config.Model)
+		files, _ := os.ReadDir(filepath.Join(homeDir, ".aig"))
+		found := false
+		for _, f := range files {
+			if !f.IsDir() && strings.HasSuffix(f.Name(), "_"+config.Model+".json") {
+				fmt.Printf("  - %s\n", f.Name())
+				found = true
+			}
+		}
+		if !found {
+			fmt.Println("  (No contexts found)")
+		}
+
+	case "/del":
+		if arg == "" {
+			fmt.Println("Usage: /del <name> or /del all")
+			return
+		}
+		if arg == "all" {
+			files, _ := os.ReadDir(filepath.Join(homeDir, ".aig"))
+			count := 0
+			for _, f := range files {
+				if !f.IsDir() && strings.HasSuffix(f.Name(), "_"+config.Model+".json") {
+					os.Remove(filepath.Join(filepath.Join(homeDir, ".aig"), f.Name()))
+					count++
+				}
+			}
+			fmt.Printf("🗑️ Deleted %d contexts.\n", count)
+		} else {
+			path := filepath.Join(filepath.Join(homeDir, ".aig"), arg+".json")
+			if err := os.Remove(path); err != nil {
+				fmt.Printf("Error deleting context: %v\n", err)
+			} else {
+				fmt.Printf("✅ Deleted context: %s\n", arg)
+				if currentContextPath != "" && strings.Contains(currentContextPath, arg) {
+					currentContextPath = ""
+					*history = []Message{}
+				}
+			}
+		}
+
+	case "/debug":
+		if arg == "" {
+			fmt.Println("Usage: /debug <0|1>")
+			return
+		}
+		if arg == "1" {
+			config.Debug = true
+		} else {
+			config.Debug = false
+		}
+
+	case "/system", "/sys":
+		if arg == "" {
+			fmt.Println("Usage: /system <text>")
+			return
+		}
+		*history = append([]Message{
+			{Role: "system", Content: arg},
+		}, *history...)
+		fmt.Printf("✅ System prompt added: %s\n", arg)
+
+	case "/add", "/a":
+		if arg == "" {
+			fmt.Println("Usage: /add <filename>")
+			return
+		}
+		content, err := processFile(arg)
+		if err != nil {
+			fmt.Printf("Error processing file %s: %v\n", arg, err)
+			return
+		}
+		*history = append([]Message{
+			{Role: "system", Content: content},
+		}, *history...)
+
+		if config.Debug {
+			fmt.Printf("Added '%s' to conversation context.\n", arg)
+		}
+
+	case "/r":
+		if arg == "" {
+			fmt.Println("Usage: /r <command>")
+			return
+		}
+		runSystemCommand(arg)
+
+	case "/m":
+		if arg == "" {
+			fmt.Println("Usage: /m <model>")
+			return
+		}
+		config.Model = arg
+		fmt.Printf("Model switched to: %s\n", arg)
+
+	case "/url":
+		if arg == "" {
+			fmt.Println("Usage: /url <url>")
+			return
+		}
+		config.BaseURL = arg
+		fmt.Printf("URL switched to: %s\n", arg)
+
+	case "/timeout", "/t":
+		if arg == "" {
+			fmt.Println("Usage: /timeout <duration> (e.g., 30s, 5m, 1h)")
+			return
+		}
+		d, err := time.ParseDuration(arg)
+		if err != nil {
+			fmt.Printf("Error parsing duration: %v\n", err)
+			return
+		}
+		config.Timeout = d
+		fmt.Printf("Timeout set to: %v\n", d)
+
+	case "/p": // print current config
+		fmt.Printf("Current config: %s\n", u.JsonDump(config, ""))
+
+	case "/show":
+		if arg == "" {
+			fmt.Println("Usage: /show <thing> (e.g., /show context <name>)")
+			return
+		}
+		if strings.HasPrefix(arg, "context ") {
+			contextName := strings.TrimPrefix(arg, "context ")
+			path := filepath.Join(homeDir, ".aig", contextName+".json")
+
+			if _, err := os.Stat(path); os.IsNotExist(err) {
+				fmt.Printf("Error: context '%s' not found.\n", contextName)
+				return
+			}
+
+			var tempHistory []Message
+			if err := loadHistory(path, &tempHistory); err != nil {
+				fmt.Printf("Error loading context: %v\n", err)
+				return
+			}
+
+			fmt.Printf("📜 Showing context: %s\n", contextName)
+			fmt.Println(strings.Repeat("-", 20))
+			for _, msg := range tempHistory {
+				switch msg.Role {
+				case "user":
+					fmt.Printf("user: %s\n", msg.Content)
+				case "assistant":
+					fmt.Printf("AI: %s\n", msg.Content)
+				}
+			}
+			fmt.Println(strings.Repeat("-", 20))
+		} else {
+			fmt.Printf("Unknown thing to show: %s. Try '/show context <name>'\n", arg)
+		}
+
+	default:
+		fmt.Printf("Unknown command: %s\n", cmd)
+	}
+}
+
+// --- REPL logic with save hooks ---
+
 func runREPLWithReader(config *Config, history *[]Message, rl *readline.Instance, histFile string) {
 	printPrompt := func() { fmt.Print("You: ") }
 	printOutput := func(s string) { fmt.Printf("AI: %s\n", s) }
@@ -1028,8 +1090,16 @@ func runREPLWithReader(config *Config, history *[]Message, rl *readline.Instance
 			if err := appendHistoryFile(histFile, text); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: Could not save line to history file: %v\n", err)
 			}
+
+			// If no context path yet and first user message, set context path
+			if currentContextPath == "" {
+				firstUserMsg := text
+				newContextName := generateContextName(config.Model, firstUserMsg)
+				currentContextPath = filepath.Join(homeDir, ".aig", newContextName)
+			}
+
 			*history = append(*history, Message{Role: "user", Content: text})
-			// Inside both branches, right before askAI call:
+
 			ctx, cancel := context.WithCancel(context.Background())
 			sigChan := make(chan os.Signal, 1)
 			signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
@@ -1055,10 +1125,13 @@ func runREPLWithReader(config *Config, history *[]Message, rl *readline.Instance
 			*history = append(*history, Message{
 				Role:     "assistant",
 				Content:  ans,
-				Thinking: thinking, // 👈 Cleanly separated
+				Thinking: thinking,
 			})
-			saveHistory(getHistoryFilePath())
 
+			// Save session to current context file after each turn
+			if err := saveHistory(); err != nil {
+				fmt.Fprintf(os.Stderr, "⚠️  Could not save history: %v\n", err)
+			}
 		}
 		return
 	}
@@ -1097,8 +1170,15 @@ func runREPLWithReader(config *Config, history *[]Message, rl *readline.Instance
 			fmt.Fprintf(os.Stderr, "Warning: Could not save line to history file: %v\n", err)
 		}
 
+		// If no context path yet and first user message, set context path
+		if currentContextPath == "" {
+			firstUserMsg := text
+			newContextName := generateContextName(config.Model, firstUserMsg)
+			currentContextPath = filepath.Join(homeDir, ".aig", newContextName)
+		}
+
 		*history = append(*history, Message{Role: "user", Content: text})
-		// Inside both branches, right before askAI call:
+
 		ctx, cancel := context.WithCancel(context.Background())
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
@@ -1110,14 +1190,12 @@ func runREPLWithReader(config *Config, history *[]Message, rl *readline.Instance
 		}()
 
 		ans, thinking, err := askAI(ctx, *config, *history)
-		//		signal.Stop(sigChan) // Prevent goroutine leak
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
 			*history = (*history)[:len(*history)-1]
 			continue
 		}
 
-		// ✅ If Ctrl+C was pressed, skip saving history and return to prompt
 		if ctx.Err() != nil {
 			continue
 		}
@@ -1126,8 +1204,12 @@ func runREPLWithReader(config *Config, history *[]Message, rl *readline.Instance
 		*history = append(*history, Message{
 			Role:     "assistant",
 			Content:  ans,
-			Thinking: thinking, // 👈 Cleanly separated
+			Thinking: thinking,
 		})
-		saveHistory(getHistoryFilePath())
+
+		// Save session to current context file after each turn
+		if err := saveHistory(); err != nil {
+			fmt.Fprintf(os.Stderr, "⚠️  Could not save history: %v\n", err)
+		}
 	}
 }
