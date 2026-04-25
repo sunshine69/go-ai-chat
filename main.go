@@ -150,7 +150,9 @@ func saveHistoryToFile(history []Message, index int, filename string) error {
 	switch v := msg.Content.(type) {
 	case string:
 		content := v
-		return os.WriteFile(filename, []byte(content), 0o644)
+		if err := os.WriteFile(filename, []byte(content), 0o644); err != nil {
+			return err
+		}
 	default:
 		fmt.Println("[INFO] skip saving non text content")
 	}
