@@ -230,46 +230,54 @@ func getLatestContextPath(model string) string {
 	}
 	return latestPath
 }
-
 func printHistory(history []Message) {
 	fmt.Println("✅ Chat History (Current Session):")
+
+	// Define how many characters we want to see in the history summary
+	const maxContentLen = 100
+	const maxThinkLen = 50
+
 	for i, msg := range history {
 		role := "User"
 		if msg.Role == "assistant" {
 			role = "AI"
 		}
 
+		// 1. Safely extract and truncate the main content
 		var displayContent string
 		switch v := msg.Content.(type) {
 		case string:
 			displayContent = v
 		case []ContentPart:
 			displayContent = "[Multimodal Content]"
+		case map[string]interface{}:
+			// This handles the case where JSON unmarshaling turns Content into a map
+			displayContent = "[Structured Content]"
 		default:
-			if displayContent, ok := v.(string); !ok {
-				fmt.Println("error ")
-				return
-			}
+			displayContent = "[Non-text Content]"
 		}
 
-		if msg.Thinking != "" {
-			thinkPreview := msg.Thinking
-			// Replace newlines with spaces to prevent multi-line expansion in the preview
-			thinkPreview = strings.ReplaceAll(thinkPreview, "\n", " ")
-
-			// Truncate to ~147 visible characters max
-			if utf8.RuneCountInString(thinkPreview) > 147 {
-				runes := []rune(thinkPreview)
-				thinkPreview = string(runes[:144]) + "..."
-			}
-			fmt.Printf(" %d [%s]: 🤔 %s\n   💬 %s\n", i+1, role, thinkPreview, displayContent)
-		} else if utf8.RuneCountInString(displayContent) > 200 {
-			// Fallback: if Thinking is empty but response is long, truncate response
+		// Truncate main content
+		if utf8.RuneCountInString(displayContent) > maxContentLen {
 			runes := []rune(displayContent)
-			displayContent = string(runes[:197]) + "..."
-			fmt.Printf(" %d [%s]: 💬 %s\n", i+1, role, displayContent)
+			displayContent = string(runes[:maxContentLen-3]) + "..."
+		}
+
+		// 2. Handle Thinking content preview
+		if msg.Thinking != "" {
+			// Clean up thinking text (remove newlines)
+			thinkPreview := strings.ReplaceAll(msg.Thinking, "\n", " ")
+
+			// Truncate thinking text
+			if utf8.RuneCountInString(thinkPreview) > maxThinkLen {
+				runes := []rune(thinkPreview)
+				thinkPreview = string(runes[:maxThinkLen-3]) + "..."
+			}
+
+			// Print combined line: Index [Role]: 🤔 Thinking | 💬 Content
+			fmt.Printf(" %d [%s]: 🤔 %s | 💬 %s\n", i+1, role, thinkPreview, displayContent)
 		} else {
-			// Short response, no thinking
+			// Standard print: Index [Role]: 💬 Content
 			fmt.Printf(" %d [%s]: 💬 %s\n", i+1, role, displayContent)
 		}
 	}
