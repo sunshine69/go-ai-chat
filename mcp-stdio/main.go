@@ -97,7 +97,7 @@ func toolFetch(argsRaw json.RawMessage) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1000))
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 3000000))
 	return string(body), nil
 }
 
