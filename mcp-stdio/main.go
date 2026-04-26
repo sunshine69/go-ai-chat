@@ -11,18 +11,18 @@ import (
 	"time"
 )
 
-// --- MCP Protocol Structures ---
+// ---------- JSON-RPC base ----------
 
 type JSONRPCRequest struct {
 	Jsonrpc string          `json:"jsonrpc"`
-	ID      interface{}     `json:"id"`
+	ID      interface{}     `json:"id,omitempty"`
 	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params"`
+	Params  json.RawMessage `json:"params,omitempty"`
 }
 
 type JSONRPCResponse struct {
 	Jsonrpc string      `json:"jsonrpc"`
-	ID      interface{} `json:"id"`
+	ID      interface{} `json:"id,omitempty"`
 	Result  interface{} `json:"result,omitempty"`
 	Error   *RPCError   `json:"error,omitempty"`
 }
@@ -32,22 +32,20 @@ type RPCError struct {
 	Message string `json:"message"`
 }
 
+// ---------- MCP Types ----------
+
+type Tool struct {
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	InputSchema map[string]interface{} `json:"inputSchema"` // was "input_schema" — MCP spec requires camelCase
+}
+
 type ToolCallParams struct {
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments"`
 }
 
-type ToolDefinition struct {
-	Name        string                 `json:"name"`
-	Description string                 `json:"description"`
-	InputSchema map[string]interface{} `json:"input_schema"`
-}
-
-type ListToolsResult struct {
-	Tools []ToolDefinition `json:"tools"`
-}
-
-// --- Tool Logic ---
+// ---------- Tool Implementations ----------
 
 type CalculatorArgs struct {
 	A  float64 `json:"a"`
@@ -61,61 +59,57 @@ func toolCalculator(argsRaw json.RawMessage) (string, error) {
 		return "", err
 	}
 
-	var res float64
 	switch args.Op {
 	case "add":
-		res = args.A + args.B
+		return fmt.Sprintf("%g", args.A+args.B), nil
 	case "sub":
-		res = args.A - args.B
+		return fmt.Sprintf("%g", args.A-args.B), nil
 	case "mul":
-		res = args.A * args.B
+		return fmt.Sprintf("%g", args.A*args.B), nil
 	case "div":
 		if args.B == 0 {
 			return "Error: division by zero", nil
 		}
-		res = args.A / args.B
+		return fmt.Sprintf("%g", args.A/args.B), nil
 	default:
 		return "Error: invalid operator", nil
 	}
-	return fmt.Sprintf("%g", res), nil
 }
 
 type FetchArgs struct {
 	URL string `json:"url"`
 }
 
-func toolFetchURL(argsRaw json.RawMessage) (string, error) {
+func toolFetch(argsRaw json.RawMessage) (string, error) {
 	var args FetchArgs
 	if err := json.Unmarshal(argsRaw, &args); err != nil {
 		return "", err
 	}
+
 	if args.URL == "" {
-		return "Error: no URL provided", nil
+		return "Error: missing URL", nil
 	}
 
 	client := http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(args.URL)
 	if err != nil {
-		return "", fmt.Errorf("fetch error: %v", err)
+		return "", err
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1000)) // Limit to 1000 chars
-	if err != nil {
-		return "", err
-	}
-
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1000))
 	return string(body), nil
 }
 
-// --- Server Implementation ---
+// ---------- Server ----------
 
 func main() {
 	scanner := bufio.NewScanner(os.Stdin)
+	scanner.Buffer(make([]byte, 0, 1024), 1024*1024)
 
 	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.TrimSpace(line) == "" {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
 			continue
 		}
 
@@ -125,22 +119,36 @@ func main() {
 			continue
 		}
 
-		handleRequest(req)
+		handle(req)
 	}
 }
 
-func handleRequest(req JSONRPCRequest) {
-	var resp JSONRPCResponse
-	resp.Jsonrpc = "2.0"
-	resp.ID = req.ID
+// ---------- Handler ----------
 
+func handle(req JSONRPCRequest) {
 	switch req.Method {
+
+	case "initialize":
+		sendResult(req.ID, map[string]interface{}{
+			"protocolVersion": "2024-11-05",
+			"capabilities": map[string]interface{}{
+				"tools": map[string]interface{}{},
+			},
+			"serverInfo": map[string]string{
+				"name":    "go-mcp-minimal",
+				"version": "1.0",
+			},
+		})
+
+	case "notifications/initialized", "initialized":
+		// notification — no response
+
 	case "tools/list":
-		result := ListToolsResult{
-			Tools: []ToolDefinition{
+		sendResult(req.ID, map[string]interface{}{
+			"tools": []Tool{
 				{
 					Name:        "calculator",
-					Description: "Perform math: add, sub, mul, div. Args: a (num), b (num), op (string)",
+					Description: "Basic math: add, sub, mul, div",
 					InputSchema: map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
@@ -153,7 +161,7 @@ func handleRequest(req JSONRPCRequest) {
 				},
 				{
 					Name:        "fetch_url",
-					Description: "Fetch text content from a URL.",
+					Description: "Fetch text from a URL (first 1000 bytes)",
 					InputSchema: map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
@@ -163,55 +171,63 @@ func handleRequest(req JSONRPCRequest) {
 					},
 				},
 			},
-		}
-		resp.Result = result
+		})
 
 	case "tools/call":
-		var callParams ToolCallParams
-		if err := json.Unmarshal(req.Params, &callParams); err != nil {
+		var p ToolCallParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
 			sendError(req.ID, -32602, "Invalid params")
 			return
 		}
 
-		var toolRes string
-		var err error
+		var (
+			out string
+			err error
+		)
 
-		switch callParams.Name {
+		switch p.Name {
 		case "calculator":
-			toolRes, err = toolCalculator(callParams.Arguments)
+			out, err = toolCalculator(p.Arguments)
 		case "fetch_url":
-			toolRes, err = toolFetchURL(callParams.Arguments)
+			out, err = toolFetch(p.Arguments)
 		default:
-			err = fmt.Errorf("tool not found")
+			sendError(req.ID, -32601, "Tool not found")
+			return
 		}
 
 		if err != nil {
 			sendError(req.ID, -32000, err.Error())
 			return
 		}
-		resp.Result = toolRes
+
+		sendResult(req.ID, map[string]interface{}{
+			"content": []map[string]string{
+				{"type": "text", "text": out},
+			},
+		})
+
+	case "shutdown":
+		sendResult(req.ID, nil)
+
+	case "exit":
+		os.Exit(0)
 
 	default:
 		sendError(req.ID, -32601, "Method not found")
-		return
 	}
-
-	sendResponse(resp)
 }
 
-func sendResponse(resp JSONRPCResponse) {
-	b, _ := json.Marshal(resp)
+// ---------- Helpers ----------
+
+func sendResult(id interface{}, result interface{}) {
+	write(JSONRPCResponse{Jsonrpc: "2.0", ID: id, Result: result})
+}
+
+func sendError(id interface{}, code int, msg string) {
+	write(JSONRPCResponse{Jsonrpc: "2.0", ID: id, Error: &RPCError{Code: code, Message: msg}})
+}
+
+func write(v interface{}) {
+	b, _ := json.Marshal(v)
 	fmt.Println(string(b))
-}
-
-func sendError(id interface{}, code int, message string) {
-	resp := JSONRPCResponse{
-		Jsonrpc: "2.0",
-		ID:      id,
-		Error: &RPCError{
-			Code:    code,
-			Message: message,
-		},
-	}
-	sendResponse(resp)
 }

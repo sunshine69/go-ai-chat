@@ -37,9 +37,12 @@ type Config struct {
 }
 
 type Message struct {
-	Role     string      `json:"role"`
-	Content  interface{} `json:"content"`
-	Thinking string      `json:"thinking,omitempty"`
+	Role       string      `json:"role"`
+	Content    interface{} `json:"content"`
+	Thinking   string      `json:"thinking,omitempty"`
+	ToolCallID string      `json:"tool_call_id,omitempty"`
+	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
+	Name       string      `json:"name,omitempty"`
 }
 
 // ContentPart is used for multimodal messages (OpenAI/Anthropic standard)
@@ -64,7 +67,6 @@ func (p *TextProcessor) Process(path string) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Wrap in markdown for context
 	return fmt.Sprintf("Reference File Content (%s):\n```\n%s\n```\n", filepath.Base(path), string(content)), nil
 }
 
@@ -78,24 +80,15 @@ func (p *ImageProcessor) Process(path string) (interface{}, error) {
 
 	mimeType := mime.TypeByExtension(filepath.Ext(path))
 	if mimeType == "" {
-		mimeType = "image/jpeg" // Fallback
+		mimeType = "image/jpeg"
 	}
 
 	base64Data := base64.StdEncoding.EncodeToString(content)
 	dataURL := fmt.Sprintf("data:%s;base64,%s", mimeType, base64Data)
 
-	// Multimodal structure: text instruction + image
 	return []ContentPart{
-		{
-			Type: "text",
-			Text: fmt.Sprintf("Attached image: %s", filepath.Base(path)),
-		},
-		{
-			Type: "image_url",
-			ImageURL: &ImageURL{
-				URL: dataURL,
-			},
-		},
+		{Type: "text", Text: fmt.Sprintf("Attached image: %s", filepath.Base(path))},
+		{Type: "image_url", ImageURL: &ImageURL{URL: dataURL}},
 	}, nil
 }
 
@@ -113,21 +106,32 @@ func processFile(path string) (interface{}, error) {
 	return getFileProcessor(path).Process(path)
 }
 
+// ---------------------------------------------------------------------------
+// Streaming response types (OpenAI SSE)
+// ---------------------------------------------------------------------------
+
 type Response struct {
 	ID      string `json:"id"`
 	Object  string `json:"object"`
 	Created int64  `json:"created"`
 	Choices []struct {
 		Delta struct {
-			ReasoningContent string `json:"reasoning_content,omitempty"`
-			Content          string `json:"content"`
+			ReasoningContent string     `json:"reasoning_content,omitempty"`
+			Content          string     `json:"content"`
+			ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
 		} `json:"delta"`
-		Message struct {
-			Content string `json:"content"`
-			Role    string `json:"role"`
+		FinishReason string `json:"finish_reason"`
+		Message      struct {
+			Content   string     `json:"content"`
+			Role      string     `json:"role"`
+			ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 		} `json:"message"`
 	} `json:"choices"`
 }
+
+// ---------------------------------------------------------------------------
+// History / context persistence
+// ---------------------------------------------------------------------------
 
 type History struct {
 	History []Message `json:"history"`
@@ -138,19 +142,20 @@ var (
 	historyLoaded      bool = false
 	homeDir, _              = os.UserHomeDir()
 	config             *Config
-	currentContextPath string // Track the currently active context file
+	currentContextPath string
+
+	// Global MCP client (single active connection)
+	activeMCP *MCPClient
 )
 
 func saveHistoryToFile(history []Message, index int, filename string) error {
-
 	if index <= 0 || index > len(history) {
 		return fmt.Errorf("history empty or index is not > len of history")
 	}
 	msg := history[index-1]
 	switch v := msg.Content.(type) {
 	case string:
-		content := v
-		if err := os.WriteFile(filename, []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(filename, []byte(v), 0o644); err != nil {
 			return err
 		}
 	default:
@@ -162,41 +167,32 @@ func saveHistoryToFile(history []Message, index int, filename string) error {
 	return nil
 }
 
-// generateContextName creates a safe filename: YYYYMMDD-HHMMSS_<trunc(first_user_question)_30>_<model>.json
 func generateContextName(model string, firstQuestion string) string {
-	// Clean model name: replace spaces with underscores
 	cleanModel := strings.ReplaceAll(model, " ", "_")
-
-	// Truncate first question to 30 chars, replace unsafe chars
 	safeContent := strings.ReplaceAll(firstQuestion, " ", "_")
 	if len(safeContent) > 30 {
 		safeContent = safeContent[:30]
 	}
-	// Further sanitize: only keep alphanumeric, _, -
 	sanitized := make([]rune, 0, len(safeContent))
 	for _, r := range safeContent {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
 			sanitized = append(sanitized, r)
 		} else {
-			sanitized = append(sanitized, '_') // fallback
+			sanitized = append(sanitized, '_')
 		}
 	}
-
 	timestamp := time.Now().Format("20060102-150405")
 	return fmt.Sprintf("%s_%s_%s.json", timestamp, string(sanitized), cleanModel)
 }
 
-// saveHistory saves the current history to the currentContextPath
 func saveHistory() error {
 	if currentContextPath == "" {
 		return fmt.Errorf("no context path set — cannot save history")
 	}
-
 	dir := filepath.Dir(currentContextPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
-
 	h := History{History: history}
 	data, err := json.MarshalIndent(h, "", "  ")
 	if err != nil {
@@ -205,28 +201,23 @@ func saveHistory() error {
 	return os.WriteFile(currentContextPath, data, 0600)
 }
 
-// getLatestContextPath finds the newest context file for the current model in ~/.aig/
 func getLatestContextPath(model string) string {
 	dir := filepath.Join(homeDir, ".aig")
 	files, err := os.ReadDir(dir)
 	if err != nil {
 		return ""
 	}
-
 	var latestPath string
 	var latestTime int64
-
 	for _, f := range files {
 		if f.IsDir() || !strings.HasSuffix(f.Name(), "_"+model+".json") {
 			continue
 		}
-		// Extract timestamp portion from filename: YYYYMMDD-HHMMSS
 		parts := strings.Split(f.Name(), "_")
 		if len(parts) < 2 {
 			continue
 		}
-		tsStr := parts[0] // YYYYMMDD-HHMMSS
-		if t, err := time.Parse("20060102-150405", tsStr); err == nil {
+		if t, err := time.Parse("20060102-150405", parts[0]); err == nil {
 			if t.Unix() > latestTime {
 				latestTime = t.Unix()
 				latestPath = filepath.Join(dir, f.Name())
@@ -235,10 +226,9 @@ func getLatestContextPath(model string) string {
 	}
 	return latestPath
 }
+
 func printHistory(history []Message) {
 	fmt.Println("✅ Chat History (Current Session):")
-
-	// Define how many characters we want to see in the history summary
 	const maxContentLen = 100
 	const maxThinkLen = 50
 
@@ -246,9 +236,10 @@ func printHistory(history []Message) {
 		role := "User"
 		if msg.Role == "assistant" {
 			role = "AI"
+		} else if msg.Role == "tool" {
+			role = "Tool"
 		}
 
-		// 1. Safely extract and truncate the main content
 		var displayContent string
 		switch v := msg.Content.(type) {
 		case string:
@@ -256,43 +247,44 @@ func printHistory(history []Message) {
 		case []ContentPart:
 			displayContent = "[Multimodal Content]"
 		case map[string]interface{}:
-			// This handles the case where JSON unmarshaling turns Content into a map
 			displayContent = "[Structured Content]"
 		default:
 			displayContent = "[Non-text Content]"
 		}
 
-		// Truncate main content
+		if len(msg.ToolCalls) > 0 {
+			names := make([]string, 0, len(msg.ToolCalls))
+			for _, tc := range msg.ToolCalls {
+				names = append(names, tc.Function.Name)
+			}
+			displayContent = fmt.Sprintf("[Tool calls: %s]", strings.Join(names, ", "))
+		}
+
 		if utf8.RuneCountInString(displayContent) > maxContentLen {
 			runes := []rune(displayContent)
 			displayContent = string(runes[:maxContentLen-3]) + "..."
 		}
 
-		// 2. Handle Thinking content preview
 		if msg.Thinking != "" {
-			// Clean up thinking text (remove newlines)
 			thinkPreview := strings.ReplaceAll(msg.Thinking, "\n", " ")
-
-			// Truncate thinking text
 			if utf8.RuneCountInString(thinkPreview) > maxThinkLen {
 				runes := []rune(thinkPreview)
 				thinkPreview = string(runes[:maxThinkLen-3]) + "..."
 			}
-
-			// Print combined line: Index [Role]: 🤔 Thinking | 💬 Content
 			fmt.Printf(" %d [%s]: 🤔 %s | 💬 %s\n", i+1, role, thinkPreview, displayContent)
 		} else {
-			// Standard print: Index [Role]: 💬 Content
 			fmt.Printf(" %d [%s]: 💬 %s\n", i+1, role, displayContent)
 		}
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+
 func main() {
 	_ = godotenv.Load()
 	homeEnv, _ := godotenv.Read(homeDir + "/.aigdotenv")
-
-	// Merge or prefer home dir env vars over current dir
 	for k, v := range homeEnv {
 		if os.Getenv(k) == "" {
 			_ = os.Setenv(k, v)
@@ -301,11 +293,9 @@ func main() {
 
 	config = loadConfig()
 
-	// Setup context directory
 	aigDir := filepath.Join(homeDir, ".aig")
 	_ = os.MkdirAll(aigDir, 0755)
 
-	// Load latest context file if exists
 	latestPath := getLatestContextPath(config.Model)
 	if latestPath != "" {
 		if err := loadHistory(latestPath, &history); err == nil {
@@ -317,9 +307,8 @@ func main() {
 		}
 	}
 
-	// --- REPL Mode ---
 	fmt.Println("AI Chat CLI - REPL Mode")
-	fmt.Println("Commands: /new, /add <file>, /r <cmd>, /exit, /history, /m <model>, /url <url> /list, /del <context>, /use <context>, /timeout <dur>")
+	fmt.Println("Commands: /new, /add <file>, /r <cmd>, /exit, /history, /m <model>, /url <url> /list, /del <context>, /use <context>, /timeout <dur>, /mcp <spec>")
 	fmt.Println("Use ↑/↓ arrow keys to navigate previous messages; type /history to see all.")
 	fmt.Println("----------------------------------------")
 	if historyLoaded {
@@ -336,16 +325,20 @@ func main() {
 
 	runREPLWithReader(config, &history, rl, histFile)
 
-	// Save final state (if we had an active context)
 	saveConfig()
 	if currentContextPath != "" {
 		if err := saveHistory(); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: Could not save history: %v\n", err)
 		}
 	}
+	if activeMCP != nil {
+		activeMCP.Close()
+	}
 }
 
-// --- Non-Interactive Argument Parsing ---
+// ---------------------------------------------------------------------------
+// Non-interactive mode
+// ---------------------------------------------------------------------------
 
 func handleNonInteractive(config Config) {
 	args := os.Args[1:]
@@ -375,13 +368,11 @@ func handleNonInteractive(config Config) {
 
 		if arg == "/new" {
 			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "/") {
-				// Consume the next arg as the initial message
 				message := args[i+1]
 				i += 2
 				history = []Message{{Role: "user", Content: message}}
 				continue
 			}
-			// If no message provided, just clear history
 			history = []Message{}
 			i++
 			continue
@@ -422,7 +413,6 @@ func handleNonInteractive(config Config) {
 		}
 
 		if !strings.HasPrefix(arg, "/") {
-			// Single shot execution: treat as a direct prompt
 			question := strings.Join(args[i:], " ")
 			history = append(history, Message{Role: "user", Content: question})
 			ctx, cancel := context.WithCancel(context.Background())
@@ -444,12 +434,10 @@ func handleNonInteractive(config Config) {
 			return
 		}
 
-		// Skip unknown commands or flags
 		fmt.Fprintf(os.Stderr, "Warning: Unknown command or unexpected argument: %s\n", arg)
 		i++
 	}
 
-	// Default fallback: if we parsed some commands but didn't answer yet, fall back to /repl
 	runREPL(config)
 }
 
@@ -463,13 +451,14 @@ func runREPL(config Config) {
 	runREPLWithReader(&cfgPtr, &history, rl, histFile)
 }
 
-// --- Helper Functions ---
+// ---------------------------------------------------------------------------
+// Shell command helper
+// ---------------------------------------------------------------------------
 
 func runSystemCommand(cmdStr string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Sanitize command to prevent command injection
 	if strings.Contains(cmdStr, "&&") || strings.Contains(cmdStr, "||") || strings.Contains(cmdStr, ";") {
 		fmt.Println("⚠️  Command contains forbidden operators (&&, ||, or ;)")
 		return
@@ -482,7 +471,6 @@ func runSystemCommand(cmdStr string) {
 		fmt.Println("⚠️ Command timed out after 30s")
 		return
 	}
-
 	if err != nil {
 		fmt.Printf("❌ Command failed: %v\nStderr: %s\n", err, o)
 		return
@@ -490,26 +478,99 @@ func runSystemCommand(cmdStr string) {
 	fmt.Printf("✅ Output:\n%s\n", o)
 }
 
-func askAI(ctx context.Context, config Config, history []Message) (string, string, error) {
+// ---------------------------------------------------------------------------
+// askAI — streams the response; if MCP is active, injects tools and handles
+// tool_calls returned by the model in a loop until the model gives a final answer.
+// ---------------------------------------------------------------------------
+
+func askAI(ctx context.Context, config Config, msgs []Message) (string, string, error) {
+	// Build a local copy of history for the tool loop — we extend it as we call tools
+	workingMsgs := make([]Message, len(msgs))
+	copy(workingMsgs, msgs)
+
+	for {
+		content, thinking, toolCalls, err := streamOnce(ctx, config, workingMsgs)
+		if err != nil {
+			return content, thinking, err
+		}
+
+		// No tool calls — we're done
+		if len(toolCalls) == 0 {
+			return content, thinking, nil
+		}
+
+		// Append the assistant's tool-call turn
+		workingMsgs = append(workingMsgs, Message{
+			Role:      "assistant",
+			Content:   content,
+			ToolCalls: toolCalls,
+		})
+
+		// Execute each tool call via MCP
+		for _, tc := range toolCalls {
+			fmt.Printf("\n🔧 Calling tool: %s\n", tc.Function.Name)
+			fmt.Printf("   args: %s\n", tc.Function.Arguments) // always show args
+
+			var args map[string]interface{}
+			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+				fmt.Printf("   ❌ Failed to parse tool arguments as JSON: %v\n", err)
+				fmt.Printf("   Raw arguments string: %q\n", tc.Function.Arguments)
+				args = map[string]interface{}{}
+			}
+
+			var toolResult string
+			if activeMCP != nil {
+				toolResult, err = activeMCP.CallTool(tc.Function.Name, args)
+				if err != nil {
+					toolResult = fmt.Sprintf("error: %v", err)
+					fmt.Printf("   ❌ Tool error: %v\n", err)
+					fmt.Printf("   💡 Tip: run /mcp schema to check expected argument names\n")
+				} else {
+					fmt.Printf("   ✅ result: %s\n", toolResult)
+				}
+			} else {
+				toolResult = "error: no MCP client connected"
+			}
+
+			workingMsgs = append(workingMsgs, Message{
+				Role:       "tool",
+				ToolCallID: tc.ID,
+				Name:       tc.Function.Name,
+				Content:    toolResult,
+			})
+		}
+
+		// Loop: ask the model again with the tool results
+		fmt.Print("\n> 📝 Response:\n")
+	}
+}
+
+// streamOnce does one SSE request and returns (content, thinking, toolCalls, error).
+func streamOnce(ctx context.Context, config Config, msgs []Message) (string, string, []ToolCall, error) {
 	url := config.BaseURL
 	if !strings.Contains(url, "/chat/completions") {
 		url = strings.TrimSuffix(url, "/") + "/chat/completions"
 	}
 
-	jsonData := map[string]interface{}{
+	reqBody := map[string]interface{}{
 		"model":    config.Model,
-		"messages": history,
+		"messages": msgs,
 		"stream":   true,
 	}
 
-	jsonValue, _ := json.Marshal(jsonData)
+	// Inject MCP tools if connected
+	if activeMCP != nil && len(activeMCP.Tools()) > 0 {
+		reqBody["tools"] = ToOpenAITools(activeMCP.Tools())
+		reqBody["tool_choice"] = "auto"
+	}
+
+	jsonValue, _ := json.Marshal(reqBody)
 	client := &http.Client{Timeout: config.Timeout}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonValue))
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
-
 	req.Header.Set("Content-Type", "application/json")
 	if config.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+config.APIKey)
@@ -517,22 +578,27 @@ func askAI(ctx context.Context, config Config, history []Message) (string, strin
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		return "", "", fmt.Errorf("API Error: %s", string(body))
+		return "", "", nil, fmt.Errorf("API Error: %s", string(body))
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
+
 	var fullContent strings.Builder
 	var thinkingContent strings.Builder
 	var thinkingStarted = false
 	var headerPrinted = false
 
-	// ✅ Immediately unblock scanner when context is cancelled
+	// Accumulate tool calls across streaming chunks (indexed by tool call index)
+	// OpenAI streams tool calls delta by delta
+	toolCallAccum := map[int]*ToolCall{}
+
 	go func() {
 		<-ctx.Done()
 		resp.Body.Close()
@@ -540,7 +606,7 @@ func askAI(ctx context.Context, config Config, history []Message) (string, strin
 
 	for scanner.Scan() {
 		if ctx.Err() != nil {
-			break // ✅ Exit loop instantly on cancellation
+			break
 		}
 
 		line := strings.TrimSpace(scanner.Text())
@@ -554,41 +620,79 @@ func askAI(ctx context.Context, config Config, history []Message) (string, strin
 			continue
 		}
 
-		if len(streamResp.Choices) > 0 {
-			delta := streamResp.Choices[0].Delta
+		if len(streamResp.Choices) == 0 {
+			continue
+		}
 
-			// 🤔 Stream thinking content
-			if delta.ReasoningContent != "" {
-				if !thinkingStarted {
-					fmt.Print("\n> 🤔 Thinking...\n")
-					thinkingStarted = true
-				}
-				fmt.Print(delta.ReasoningContent)
-				os.Stdout.Sync()
-				thinkingContent.WriteString(delta.ReasoningContent)
+		delta := streamResp.Choices[0].Delta
+
+		// Thinking content
+		if delta.ReasoningContent != "" {
+			if !thinkingStarted {
+				fmt.Print("\n> 🤔 Thinking...\n")
+				thinkingStarted = true
 			}
+			fmt.Print(delta.ReasoningContent)
+			os.Stdout.Sync()
+			thinkingContent.WriteString(delta.ReasoningContent)
+		}
 
-			// 📝 Stream main response
-			if delta.Content != "" {
-				if !headerPrinted {
-					fmt.Print("\n> 📝 Response:\n")
-					headerPrinted = true // ✅ Prints exactly once
-				}
-				fmt.Print(delta.Content)
-				os.Stdout.Sync()
-				fullContent.WriteString(delta.Content)
+		// Regular text content
+		if delta.Content != "" {
+			if !headerPrinted {
+				fmt.Print("\n> 📝 Response:\n")
+				headerPrinted = true
+			}
+			fmt.Print(delta.Content)
+			os.Stdout.Sync()
+			fullContent.WriteString(delta.Content)
+		}
+
+		// Tool call deltas: keyed by the `index` field OpenAI streams per chunk.
+		// This is the only reliable merge key -- do NOT use ID or name matching.
+		for _, tcDelta := range delta.ToolCalls {
+			key := tcDelta.Index
+			if _, exists := toolCallAccum[key]; !exists {
+				toolCallAccum[key] = &ToolCall{Index: key}
+			}
+			tc := toolCallAccum[key]
+			if tcDelta.ID != "" {
+				tc.ID = tcDelta.ID
+			}
+			if tcDelta.Type != "" {
+				tc.Type = tcDelta.Type
+			}
+			if tcDelta.Function.Name != "" {
+				tc.Function.Name += tcDelta.Function.Name
+			}
+			prevArgs := tc.Function.Arguments
+			tc.Function.Arguments += tcDelta.Function.Arguments
+			// Print indicator on first argument chunk (name arrives before args)
+			if tc.Function.Name != "" && prevArgs == "" && tcDelta.Function.Arguments != "" {
+				fmt.Printf("\n> 🔧 Planning tool call: %s\n", tc.Function.Name)
 			}
 		}
 	}
 
 	if err := scanner.Err(); err != nil && ctx.Err() == nil {
-		return fullContent.String(), thinkingContent.String(), fmt.Errorf("stream error: %v", err)
+		return fullContent.String(), thinkingContent.String(), nil, fmt.Errorf("stream error: %v", err)
 	}
 
-	return fullContent.String(), thinkingContent.String(), nil
+	// Collect accumulated tool calls
+	var toolCalls []ToolCall
+	for i := 0; i < len(toolCallAccum); i++ {
+		tc := toolCallAccum[i]
+		if tc != nil && tc.Function.Name != "" {
+			toolCalls = append(toolCalls, *tc)
+		}
+	}
+
+	return fullContent.String(), thinkingContent.String(), toolCalls, nil
 }
 
-// --- File Management ---
+// ---------------------------------------------------------------------------
+// File management
+// ---------------------------------------------------------------------------
 
 func getHistoryFilePath() string {
 	home, err := os.UserHomeDir()
@@ -598,7 +702,6 @@ func getHistoryFilePath() string {
 	return filepath.Join(home, ".aihistory.json")
 }
 
-// loadHistory loads a context file into memory (history)
 func loadHistory(filePath string, historyPtr *[]Message) error {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
@@ -613,31 +716,27 @@ func loadHistory(filePath string, historyPtr *[]Message) error {
 }
 
 func appendHistoryFile(filename, line string) error {
-	// Only append non-empty lines that are not commands
 	if line == "" || strings.HasPrefix(line, "/") {
 		return nil
 	}
-
 	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-
 	_, err = f.WriteString(line + "\n")
 	return err
 }
 
-// --- Config Management ---
+// ---------------------------------------------------------------------------
+// Config management
+// ---------------------------------------------------------------------------
 
 func saveConfig() {
 	if config == nil {
 		return
 	}
-
 	dotEnvPath := filepath.Join(homeDir, ".aigdotenv")
-
-	// Read existing .aigdotenv (if exists)
 	envVars := make(map[string]string)
 	if data, err := os.ReadFile(dotEnvPath); err == nil {
 		lines := strings.Split(string(data), "\n")
@@ -653,8 +752,6 @@ func saveConfig() {
 		}
 	}
 
-	// Update env vars with current config values (even if not flagged as "prompted")
-	// But only if they differ from defaults (and not empty)
 	changed := false
 	if config.BaseURL != "" && config.BaseURL != "https://api.openai.com/v1/chat/completions" {
 		envVars["OPENAI_URL"] = config.BaseURL
@@ -674,15 +771,13 @@ func saveConfig() {
 	}
 
 	if !changed {
-		return // no meaningful changes
+		return
 	}
 
-	// Write back to .aigdotenv
 	var sb strings.Builder
 	for k, v := range envVars {
 		sb.WriteString(fmt.Sprintf("%s=%s\n", k, v))
 	}
-
 	if err := os.WriteFile(dotEnvPath, []byte(sb.String()), 0600); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: Could not save config to %s: %v\n", dotEnvPath, err)
 	} else {
@@ -692,14 +787,12 @@ func saveConfig() {
 
 func promptForMissingConfig(config *Config) {
 	reader := bufio.NewReader(os.Stdin)
-
-	// Check which values are missing
 	needsURL := config.BaseURL == ""
 	needsModel := config.Model == ""
 	needsAPIKey := config.APIKey == ""
 
 	if !needsURL && !needsModel && !needsAPIKey {
-		return // No prompting needed
+		return
 	}
 
 	fmt.Println()
@@ -707,7 +800,6 @@ func promptForMissingConfig(config *Config) {
 	fmt.Println("We'll help you set up your OpenAI API credentials.")
 	fmt.Println()
 
-	// Prompt for URL if missing
 	if needsURL {
 		fmt.Printf("API URL [%s]: ", config.BaseURL)
 		if input, _ := reader.ReadString('\n'); strings.TrimSpace(input) != "" {
@@ -716,7 +808,6 @@ func promptForMissingConfig(config *Config) {
 		}
 	}
 
-	// Prompt for Model if missing
 	if needsModel {
 		fmt.Printf("Model [%s]: ", config.Model)
 		if input, _ := reader.ReadString('\n'); strings.TrimSpace(input) != "" {
@@ -725,7 +816,6 @@ func promptForMissingConfig(config *Config) {
 		}
 	}
 
-	// Prompt for API Key if missing
 	if needsAPIKey {
 		fmt.Printf("API Key (will not be displayed): ")
 		apiKey, _ := reader.ReadString('\n')
@@ -736,7 +826,6 @@ func promptForMissingConfig(config *Config) {
 		}
 	}
 
-	// Save config to .aigdotenv
 	fmt.Println()
 	if needsURL || needsModel || needsAPIKey {
 		saveConfig()
@@ -777,7 +866,6 @@ func loadConfig() *Config {
 		}
 	}
 
-	// Prompt for missing values if in REPL mode (not in non-interactive mode)
 	if len(os.Args) == 1 {
 		promptForMissingConfig(&c)
 	}
@@ -785,7 +873,10 @@ func loadConfig() *Config {
 	return &c
 }
 
-// Marker
+// ---------------------------------------------------------------------------
+// Command handler
+// ---------------------------------------------------------------------------
+
 func handleCommand(text string, config *Config, history *[]Message) {
 	parts := strings.SplitN(text, " ", 2)
 	cmd := parts[0]
@@ -795,6 +886,126 @@ func handleCommand(text string, config *Config, history *[]Message) {
 	}
 
 	switch cmd {
+
+	// -----------------------------------------------------------------------
+	// MCP commands
+	// -----------------------------------------------------------------------
+
+	case "/mcp":
+		if arg == "" {
+			// Show current MCP status
+			if activeMCP == nil {
+				fmt.Println("ℹ️  No MCP server connected.")
+				fmt.Println("Usage:")
+				fmt.Println("  /mcp tcp://<host>:<port>   — connect to a running MCP TCP server")
+				fmt.Println("  /mcp <cmd> [args...]        — launch and connect to an MCP stdio server")
+				fmt.Println("  /mcp off                    — disconnect current MCP server")
+				fmt.Println("  /mcp tools                  — list available tools")
+			} else {
+				fmt.Printf("✅ MCP connected: %s\n", activeMCP.spec)
+				fmt.Printf("   %d tool(s) available\n", len(activeMCP.Tools()))
+			}
+			return
+		}
+
+		switch arg {
+		case "off", "disconnect":
+			if activeMCP != nil {
+				activeMCP.Close()
+				activeMCP = nil
+				fmt.Println("🔌 MCP server disconnected.")
+			} else {
+				fmt.Println("ℹ️  No MCP server connected.")
+			}
+			return
+
+		case "tools":
+			if activeMCP == nil {
+				fmt.Println("ℹ️  No MCP server connected.")
+				return
+			}
+			tools := activeMCP.Tools()
+			if len(tools) == 0 {
+				fmt.Println("ℹ️  No tools available.")
+				return
+			}
+			fmt.Printf("🔧 Available MCP tools (%d):\n", len(tools))
+			for _, t := range tools {
+				fmt.Printf("  • %s — %s\n", t.Name, t.Description)
+			}
+			return
+
+		case "schema":
+			if activeMCP == nil {
+				fmt.Println("ℹ️  No MCP server connected.")
+				return
+			}
+			tools := activeMCP.Tools()
+			if len(tools) == 0 {
+				fmt.Println("ℹ️  No tools available.")
+				return
+			}
+			fmt.Printf("🔧 MCP tool schemas:\n")
+			for _, t := range tools {
+				fmt.Printf("\n  [%s]\n  Description: %s\n  InputSchema:\n", t.Name, t.Description)
+				var pretty interface{}
+				if err := json.Unmarshal(t.InputSchema, &pretty); err == nil {
+					b, _ := json.MarshalIndent(pretty, "    ", "  ")
+					fmt.Printf("    %s\n", string(b))
+				} else {
+					fmt.Printf("    %s\n", string(t.InputSchema))
+				}
+			}
+			return
+
+		case "refresh":
+			if activeMCP == nil {
+				fmt.Println("ℹ️  No MCP server connected.")
+				return
+			}
+			if err := activeMCP.refreshTools(); err != nil {
+				fmt.Printf("❌ Could not refresh tools: %v\n", err)
+			} else {
+				fmt.Printf("✅ Refreshed: %d tool(s)\n", len(activeMCP.Tools()))
+			}
+			return
+		}
+
+		// Disconnect any existing MCP first
+		if activeMCP != nil {
+			fmt.Println("🔌 Disconnecting previous MCP server...")
+			activeMCP.Close()
+			activeMCP = nil
+		}
+
+		// Connect
+		var newMCP *MCPClient
+		var err error
+
+		if strings.HasPrefix(arg, "tcp://") {
+			fmt.Printf("🔌 Connecting to MCP TCP server: %s\n", arg)
+			newMCP, err = ConnectTCP(arg)
+		} else {
+			fmt.Printf("🚀 Launching MCP stdio server: %s\n", arg)
+			newMCP, err = ConnectStdio(arg)
+		}
+
+		if err != nil {
+			fmt.Printf("❌ MCP connect failed: %v\n", err)
+			return
+		}
+
+		activeMCP = newMCP
+		tools := activeMCP.Tools()
+		fmt.Printf("✅ MCP connected: %s\n", activeMCP.spec)
+		fmt.Printf("   %d tool(s) available:\n", len(tools))
+		for _, t := range tools {
+			fmt.Printf("   • %s — %s\n", t.Name, t.Description)
+		}
+
+	// -----------------------------------------------------------------------
+	// Original commands (unchanged)
+	// -----------------------------------------------------------------------
 
 	case "/s":
 		if arg == "" {
@@ -812,8 +1023,6 @@ func handleCommand(text string, config *Config, history *[]Message) {
 			println("error, index must be integer")
 			return
 		}
-
-		// Save only up to idx
 		if err := saveHistoryToFile(*history, idx, path); err != nil {
 			fmt.Printf("❌ Failed to save: %v\n", err)
 		} else {
@@ -830,9 +1039,7 @@ func handleCommand(text string, config *Config, history *[]Message) {
 		}
 
 	case "/new", "/n":
-		// Before resetting, save current session if history not empty
 		if len(*history) > 0 {
-			// Generate name: use first user message as base
 			firstUserMsg := ""
 			for _, m := range *history {
 				if m.Role == "user" {
@@ -848,18 +1055,13 @@ func handleCommand(text string, config *Config, history *[]Message) {
 			}
 			newContextName := generateContextName(config.Model, firstUserMsg)
 			newContextPath := filepath.Join(homeDir, ".aig", newContextName)
-
-			// Save current session to new file
 			if err := saveHistory(); err != nil {
 				fmt.Printf("⚠️  Could not save current session: %v\n", err)
 			} else {
 				fmt.Printf("✅ Saved current session to: %s\n", filepath.Base(newContextPath))
 			}
 		}
-
-		// Now reset history & context path
 		*history = []Message{}
-		// Generate fresh context name (will be set in first user question save)
 		currentContextPath = ""
 		fmt.Println("✅ New context started.")
 
@@ -879,8 +1081,12 @@ func handleCommand(text string, config *Config, history *[]Message) {
 		fmt.Println("  /del all                      - Delete all contexts for current model")
 		fmt.Println("  /debug <0|1>                  - Enable/Disable debug")
 		fmt.Println("  /show <thing>                 - Show details (e.g., /show context <name>)")
-		fmt.Println("  /s <hist_index:filename>      - Save the history index to a file ")
+		fmt.Println("  /s <hist_index:filename>      - Save the history index to a file")
 		fmt.Println("  /cd <dirname>                 - Change to directory")
+		fmt.Println("  /mcp <spec>                   - Connect MCP server (tcp://host:port or cmd)")
+		fmt.Println("  /mcp off                      - Disconnect MCP server")
+		fmt.Println("  /mcp tools                    - List available MCP tools")
+		fmt.Println("  /mcp refresh                  - Refresh MCP tool list")
 
 	case "/use":
 		if arg == "" {
@@ -889,7 +1095,6 @@ func handleCommand(text string, config *Config, history *[]Message) {
 		}
 		sanitizedName := strings.ReplaceAll(arg, " ", "_")
 		path := filepath.Join(filepath.Join(homeDir, ".aig"), sanitizedName)
-
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			fmt.Printf("Error: context '%s' not found.\n", arg)
 			return
@@ -949,11 +1154,7 @@ func handleCommand(text string, config *Config, history *[]Message) {
 			fmt.Println("Usage: /debug <0|1>")
 			return
 		}
-		if arg == "1" {
-			config.Debug = true
-		} else {
-			config.Debug = false
-		}
+		config.Debug = arg == "1"
 
 	case "/system", "/sys":
 		if arg == "" {
@@ -1016,8 +1217,13 @@ func handleCommand(text string, config *Config, history *[]Message) {
 		config.Timeout = d
 		fmt.Printf("Timeout set to: %v\n", d)
 
-	case "/p": // print current config
+	case "/p":
 		fmt.Printf("Current config: %s\n", u.JsonDump(config, ""))
+		if activeMCP != nil {
+			fmt.Printf("MCP: %s (%d tools)\n", activeMCP.spec, len(activeMCP.Tools()))
+		} else {
+			fmt.Println("MCP: not connected")
+		}
 
 	case "/show":
 		if arg == "" {
@@ -1027,18 +1233,15 @@ func handleCommand(text string, config *Config, history *[]Message) {
 		if strings.HasPrefix(arg, "context ") {
 			contextName := strings.TrimPrefix(arg, "context ")
 			path := filepath.Join(homeDir, ".aig", contextName)
-
 			if _, err := os.Stat(path); os.IsNotExist(err) {
 				fmt.Printf("Error: context '%s' not found.\n", contextName)
 				return
 			}
-
 			var tempHistory []Message
 			if err := loadHistory(path, &tempHistory); err != nil {
 				fmt.Printf("Error loading context: %v\n", err)
 				return
 			}
-
 			fmt.Printf("📜 Showing context: %s\n", contextName)
 			fmt.Println(strings.Repeat("-", 20))
 			for _, msg := range tempHistory {
@@ -1059,100 +1262,72 @@ func handleCommand(text string, config *Config, history *[]Message) {
 	}
 }
 
-// --- REPL logic with save hooks ---
+// ---------------------------------------------------------------------------
+// REPL loop
+// ---------------------------------------------------------------------------
 
 func runREPLWithReader(config *Config, history *[]Message, rl *readline.Instance, histFile string) {
 	printPrompt := func() { fmt.Print("You: ") }
 	printOutput := func(s string) { fmt.Printf("AI: %s\n", s) }
 
-	if rl == nil {
-		// Fallback to basic scanner input
-		scanner := bufio.NewScanner(os.Stdin)
-		for {
-			printPrompt()
-			if !scanner.Scan() {
-				fmt.Println()
-				break
-			}
-			text := strings.TrimSpace(scanner.Text())
-			if text == "" {
-				continue
-			}
-			if strings.HasPrefix(text, "/") {
-				if text == "/exit" || text == "/q" {
-					return
-				}
-				if strings.HasPrefix(text, "/h") {
-					printHistory(*history)
-					continue
-				}
-				handleCommand(text, config, history)
-				if config.Debug {
-					fmt.Printf("[DEBUG] config: %v\n", *config)
-				}
-				continue
-			}
-
-			// Save user input to readline history file (only non-command lines)
-			if err := appendHistoryFile(histFile, text); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: Could not save line to history file: %v\n", err)
-			}
-
-			// If no context path yet and first user message, set context path
-			if currentContextPath == "" {
-				firstUserMsg := text
-				newContextName := generateContextName(config.Model, firstUserMsg)
-				currentContextPath = filepath.Join(homeDir, ".aig", newContextName)
-			}
-
-			*history = append(*history, Message{Role: "user", Content: text})
-
-			ctx, cancel := context.WithCancel(context.Background())
-			sigChan := make(chan os.Signal, 1)
-			signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-
-			go func() {
-				<-sigChan
-				fmt.Print("\n⏹️  Interrupted. Stopping response...\n")
-				cancel()
-			}()
-
-			ans, thinking, err := askAI(ctx, *config, *history)
-			if err != nil {
-				fmt.Printf("Error: %v\n", err)
-				*history = (*history)[:len(*history)-1]
-				continue
-			}
-
-			if ctx.Err() != nil {
-				continue
-			}
-
-			printOutput(ans)
-			*history = append(*history, Message{
-				Role:     "assistant",
-				Content:  ans,
-				Thinking: thinking,
-			})
-
-			// Save session to current context file after each turn
-			if err := saveHistory(); err != nil {
-				fmt.Fprintf(os.Stderr, "⚠️  Could not save history: %v\n", err)
-			}
+	doTurn := func(ctx context.Context, text string) {
+		// Ensure context path is set
+		if currentContextPath == "" {
+			newContextName := generateContextName(config.Model, text)
+			currentContextPath = filepath.Join(homeDir, ".aig", newContextName)
 		}
-		return
+
+		*history = append(*history, Message{Role: "user", Content: text})
+
+		ans, thinking, err := askAI(ctx, *config, *history)
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			*history = (*history)[:len(*history)-1]
+			return
+		}
+
+		if ctx.Err() != nil {
+			return
+		}
+
+		printOutput(ans)
+		*history = append(*history, Message{
+			Role:     "assistant",
+			Content:  ans,
+			Thinking: thinking,
+		})
+
+		if err := saveHistory(); err != nil {
+			fmt.Fprintf(os.Stderr, "⚠️  Could not save history: %v\n", err)
+		}
 	}
 
-	defer rl.Close()
+	readLine := func() (string, bool) {
+		if rl != nil {
+			line, err := rl.Readline()
+			if err != nil {
+				return "", false
+			}
+			return strings.TrimSpace(line), true
+		}
+		printPrompt()
+		scanner := bufio.NewScanner(os.Stdin)
+		if !scanner.Scan() {
+			return "", false
+		}
+		return strings.TrimSpace(scanner.Text()), true
+	}
+
+	if rl != nil {
+		defer rl.Close()
+	}
 
 	for {
-		line, err := rl.Readline()
-		if err != nil {
+		text, ok := readLine()
+		if !ok {
 			fmt.Println()
 			break
 		}
-
-		text := strings.TrimSpace(line)
 		if text == "" {
 			continue
 		}
@@ -1172,19 +1347,10 @@ func runREPLWithReader(config *Config, history *[]Message, rl *readline.Instance
 			continue
 		}
 
-		// Save user input to readline history file (only non-command lines)
+		// Save to readline history
 		if err := appendHistoryFile(histFile, text); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: Could not save line to history file: %v\n", err)
 		}
-
-		// If no context path yet and first user message, set context path
-		if currentContextPath == "" {
-			firstUserMsg := text
-			newContextName := generateContextName(config.Model, firstUserMsg)
-			currentContextPath = filepath.Join(homeDir, ".aig", newContextName)
-		}
-
-		*history = append(*history, Message{Role: "user", Content: text})
 
 		ctx, cancel := context.WithCancel(context.Background())
 		sigChan := make(chan os.Signal, 1)
@@ -1196,27 +1362,8 @@ func runREPLWithReader(config *Config, history *[]Message, rl *readline.Instance
 			cancel()
 		}()
 
-		ans, thinking, err := askAI(ctx, *config, *history)
-		if err != nil {
-			fmt.Printf("Error: %v\n", err)
-			*history = (*history)[:len(*history)-1]
-			continue
-		}
-
-		if ctx.Err() != nil {
-			continue
-		}
-
-		printOutput(ans)
-		*history = append(*history, Message{
-			Role:     "assistant",
-			Content:  ans,
-			Thinking: thinking,
-		})
-
-		// Save session to current context file after each turn
-		if err := saveHistory(); err != nil {
-			fmt.Fprintf(os.Stderr, "⚠️  Could not save history: %v\n", err)
-		}
+		doTurn(ctx, text)
+		signal.Stop(sigChan)
+		cancel()
 	}
 }
