@@ -9,6 +9,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	md "github.com/JohannesKaufmann/html-to-markdown"
 )
 
 // ---------- JSON-RPC base ----------
@@ -90,15 +92,36 @@ func toolFetch(argsRaw json.RawMessage) (string, error) {
 		return "Error: missing URL", nil
 	}
 
-	client := http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(args.URL)
+	// Use a client with timeout
+	client := &http.Client{Timeout: 8 * time.Second}
+	req, err := http.NewRequest("GET", args.URL, nil)
+	if err != nil {
+		return "", err
+	}
+
+	// Set a user-agent (many sites require it)
+	req.Header.Set("User-Agent", "Go-MCP-Server/1.0 (+https://example.com)")
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 3000000))
-	return string(body), nil
+	// Read body
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 3000000)) // limit to ~3MB
+	if err != nil {
+		return "", err
+	}
+
+	// Convert HTML to Markdown
+	md := md.NewConverter().Convert(string(body))
+	if err != nil {
+		// Optionally: log the error or fallback to raw HTML
+		return string(body), fmt.Errorf("HTML→MD conversion failed: %w", err)
+	}
+
+	return md, nil
 }
 
 // ---------- Server ----------
