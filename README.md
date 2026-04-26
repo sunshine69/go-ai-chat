@@ -11,10 +11,10 @@ So I find this work flow very productive.
 
 - Ubuntu 25.10 with Wayland and windows manage is labwc
 - No VScode, even not chrome, I can aford one tab Edge browser. Some times I push to the edge of ram usage, no
-  GPU referencing for that hardware, set graphic menory only 1G to maximize RAM
+  GPU referencing for that hardware, set graphic memory only 1G to maximize RAM
 - Development using vim and vim golang inside a tmux session
 - Using this ai chat with mcp (trying to do the lack of vscode + continue)
-- I can aford these models run with llama-server (build it myself to optimize for CPU)
+- I can aford these models run with llama-server (build llama.cpp myself to optimize for native CPU)
   - Qwen3-Coder-Next-APEX-I-Mini.gguf 70B 
   - gemma-4-26B-A4B-it-UD-Q5_K_XL.gguf
   - Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf
@@ -32,7 +32,7 @@ As of now
 
 ## Quick start
 
-- Clone this repo branch testing
+- Clone this repo
 - Build the aig cli and the mcp.exe 
 ```
 go build -o ~/.local/bin/aig chat/*.go
@@ -41,7 +41,8 @@ go build -o mcp.exe mcp-stdio-q36/main.go
 
 - Run the `aig` and answer the first prompts
 - Select the model properly
-- Ask for news headline (output below is shorten)
+- after startup load the mcp using command `/mcp ./mcp.exe` 
+- Ask for news headline (output below is shorten) `fetch a google news and show me news headline`
 
 ```
 ✅ New context started.
