@@ -526,7 +526,9 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 					fmt.Printf("   ❌ Tool error: %v\n", err)
 					fmt.Printf("   💡 Tip: run /mcp schema to check expected argument names\n")
 				} else {
-					fmt.Printf("   ✅ result: %s\n", toolResult)
+					if config.Debug {
+						fmt.Printf("   ✅ result: %s\n", toolResult)
+					}
 				}
 			} else {
 				toolResult = "error: no MCP client connected"

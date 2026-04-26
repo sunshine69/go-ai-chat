@@ -9,6 +9,8 @@ import (
 	"os"
 	"regexp"
 	"strings"
+
+	html2md "github.com/JohannesKaufmann/html-to-markdown"
 )
 
 // =============================================================================
@@ -202,7 +204,22 @@ func fetchAndConvert(url string) (string, error) {
 		return "", fmt.Errorf("read body failed: %w", err)
 	}
 
-	return htmlToMarkdown(body), nil
+	return HTMLToMarkdown(body)
+}
+
+func HTMLToMarkdown(htmlb []byte) (string, error) {
+	html := string(htmlb)
+	if strings.TrimSpace(html) == "" {
+		return "", nil
+	}
+
+	converter := html2md.NewConverter("", true, nil)
+	md, err := converter.ConvertString(html)
+	if err != nil {
+		return "", fmt.Errorf("html to md: %w", err)
+	}
+
+	return strings.TrimSpace(md), nil
 }
 
 // htmlToMarkdown converts raw HTML to a simplified markdown format.
