@@ -4,8 +4,8 @@ This is simple, pure go, console based AI chat with support for mcp.
 
 ## Motivation
 
-I got a small AMD Ryzen 9 PRO 6950H Mini PC--NucBox M7 Pro 32G ram and want to maximize system resoruce for AI
-and coding. I want a system lean to minimum.
+I got a small AMD Ryzen 9 PRO 6950H Mini PC--NucBox M7 Pro 32G ram and want to maximize system resource for AI
+and vibe coding. I want a system lean to minimum.
 
 So I find this work flow very productive. 
 
