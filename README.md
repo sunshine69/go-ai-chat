@@ -27,7 +27,7 @@ can use context size to 64K for gemma and others, for Qwen coder next I can get 
 As of now
 - Support openai url (llama-server)
 - Support mcp server stdio and tcp. Write each mcp server yoursel using the same pattern
-- Save AI thought and answer in a session to a file so u can sue vim to open it and read and copy/paste edit etc
+- Save AI thiking and answer in a session to a file so u can use vim to open it and read and copy/paste edit etc
 - Manage chat session, history
 
 ## Quick start
