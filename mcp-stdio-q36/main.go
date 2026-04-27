@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -124,23 +125,40 @@ func handleInitialize(req *Request) {
 }
 
 func handleToolsList(req *Request) {
-	schema := json.RawMessage(`{
-		"type": "object",
-		"properties": {
-			"url": {
-				"type": "string",
-				"description": "The URL to fetch and convert into markdown text"
-			}
-		},
-		"required": ["url"]
-	}`)
-
-	writeResponse(req.ID, &ResponseResult{
-		Tools: []Tool{{
+	// We combine the schemas for both tools
+	tools := []Tool{
+		{
 			Name:        "fetch_url",
 			Description: "Fetches a URL over HTTP and converts its HTML content into markdown text.",
-			InputSchema: schema,
-		}},
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"url": {
+						"type": "string",
+						"description": "The URL to fetch and convert into markdown text"
+					}
+				},
+				"required": ["url"]
+			}`),
+		},
+		{
+			Name:        "list_directory",
+			Description: "Lists the files and directories in a given path. Useful for understanding project structure.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"path": {
+						"type": "string",
+						"description": "The directory path to list. Use '.' for the current directory."
+					}
+				},
+				"required": ["path"]
+			}`),
+		},
+	}
+
+	writeResponse(req.ID, &ResponseResult{
+		Tools: tools,
 	}, nil)
 }
 
@@ -154,7 +172,8 @@ func handleToolCall(req *Request) {
 		return
 	}
 
-	if args.Name == "fetch_url" {
+	switch args.Name {
+	case "fetch_url":
 		var params struct {
 			URL string `json:"url"`
 		}
@@ -172,7 +191,27 @@ func handleToolCall(req *Request) {
 		writeResponse(req.ID, &ResponseResult{
 			Content: []ContentBlock{{Type: "text", Text: markdownText}},
 		}, nil)
-	} else {
+
+	case "list_directory":
+		var params struct {
+			Path string `json:"path"`
+		}
+		if err := json.Unmarshal(args.Arguments, &params); err != nil || params.Path == "" {
+			writeResponse(req.ID, nil, &ErrorResponse{Code: -32602, Message: "Missing or invalid 'path' parameter"})
+			return
+		}
+
+		dirListing, err := listDirectory(params.Path)
+		if err != nil {
+			writeResponse(req.ID, nil, &ErrorResponse{Code: -32603, Message: err.Error()})
+			return
+		}
+
+		writeResponse(req.ID, &ResponseResult{
+			Content: []ContentBlock{{Type: "text", Text: dirListing}},
+		}, nil)
+
+	default:
 		writeResponse(req.ID, nil, &ErrorResponse{Code: -32601, Message: fmt.Sprintf("Tool '%s' not found", args.Name)})
 	}
 }
@@ -180,6 +219,36 @@ func handleToolCall(req *Request) {
 // =============================================================================
 // Tool Implementation (stdlib-only HTML -> Markdown)
 // =============================================================================
+
+// listDirectory reads the filesystem and returns a formatted string
+func listDirectory(targetPath string) (string, error) {
+	// Clean the path to prevent some basic directory traversal attempts
+	cleanPath := filepath.Clean(targetPath)
+
+	entries, err := os.ReadDir(cleanPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read directory: %w", err)
+	}
+
+	if len(entries) == 0 {
+		return fmt.Sprintf("Directory: %s (empty)", cleanPath), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Directory listing for: %s\n", cleanPath))
+	sb.WriteString(strings.Repeat("-", 40) + "\n")
+
+	for _, entry := range entries {
+		icon := "📄 " // File icon
+		if entry.IsDir() {
+			icon = "📁 " // Directory icon
+		}
+
+		sb.WriteString(fmt.Sprintf("%s%s\n", icon, entry.Name()))
+	}
+
+	return sb.String(), nil
+}
 
 func fetchAndConvert(url string) (string, error) {
 	client := &http.Client{}
