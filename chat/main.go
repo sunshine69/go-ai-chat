@@ -25,6 +25,7 @@ import (
 	u "github.com/sunshine69/golang-tools/utils"
 )
 
+// https://github.com/hymkor/go-multiline-ny for multiline support TODO
 type Config struct {
 	BaseURL        string
 	Model          string
