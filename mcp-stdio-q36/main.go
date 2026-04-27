@@ -123,9 +123,7 @@ func handleInitialize(req *Request) {
 		ServerInfo:      map[string]string{"name": "mcp-fetch-server", "version": "1.0.0"},
 	}, nil)
 }
-
 func handleToolsList(req *Request) {
-	// We combine the schemas for both tools
 	tools := []Tool{
 		{
 			Name:        "fetch_url",
@@ -150,6 +148,21 @@ func handleToolsList(req *Request) {
 					"path": {
 						"type": "string",
 						"description": "The directory path to list. Use '.' for the current directory."
+					}
+				},
+				"required": ["path"]
+			}`),
+		},
+		{
+			// NEW TOOL: read_file
+			Name:        "read_file",
+			Description: "Reads the content of a file from the local filesystem.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"path": {
+						"type": "string",
+						"description": "The path to the file you want to read."
 					}
 				},
 				"required": ["path"]
@@ -211,6 +224,26 @@ func handleToolCall(req *Request) {
 			Content: []ContentBlock{{Type: "text", Text: dirListing}},
 		}, nil)
 
+	case "read_file":
+		// NEW TOOL LOGIC: read_file
+		var params struct {
+			Path string `json:"path"`
+		}
+		if err := json.Unmarshal(args.Arguments, &params); err != nil || params.Path == "" {
+			writeResponse(req.ID, nil, &ErrorResponse{Code: -32602, Message: "Missing or invalid 'path' parameter"})
+			return
+		}
+
+		fileContent, err := readFileContent(params.Path)
+		if err != nil {
+			writeResponse(req.ID, nil, &ErrorResponse{Code: -32603, Message: err.Error()})
+			return
+		}
+
+		writeResponse(req.ID, &ResponseResult{
+			Content: []ContentBlock{{Type: "text", Text: fileContent}},
+		}, nil)
+
 	default:
 		writeResponse(req.ID, nil, &ErrorResponse{Code: -32601, Message: fmt.Sprintf("Tool '%s' not found", args.Name)})
 	}
@@ -220,9 +253,20 @@ func handleToolCall(req *Request) {
 // Tool Implementation (stdlib-only HTML -> Markdown)
 // =============================================================================
 
+// readFileContent reads the content of a file and returns it as a string
+func readFileContent(targetPath string) (string, error) {
+	cleanPath := filepath.Clean(targetPath)
+
+	content, err := os.ReadFile(cleanPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read file: %w", err)
+	}
+
+	return string(content), nil
+}
+
 // listDirectory reads the filesystem and returns a formatted string
 func listDirectory(targetPath string) (string, error) {
-	// Clean the path to prevent some basic directory traversal attempts
 	cleanPath := filepath.Clean(targetPath)
 
 	entries, err := os.ReadDir(cleanPath)
@@ -239,11 +283,10 @@ func listDirectory(targetPath string) (string, error) {
 	sb.WriteString(strings.Repeat("-", 40) + "\n")
 
 	for _, entry := range entries {
-		icon := "📄 " // File icon
+		icon := "📄 "
 		if entry.IsDir() {
-			icon = "📁 " // Directory icon
+			icon = "📁 "
 		}
-
 		sb.WriteString(fmt.Sprintf("%s%s\n", icon, entry.Name()))
 	}
 
