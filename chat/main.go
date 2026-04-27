@@ -168,22 +168,27 @@ func saveHistoryToFile(history []Message, index int, filename string) error {
 	return nil
 }
 
-func generateContextName(model string, firstQuestion string) string {
-	cleanModel := strings.ReplaceAll(model, " ", "_")
-	safeContent := strings.ReplaceAll(firstQuestion, " ", "_")
-	if len(safeContent) > 30 {
-		safeContent = safeContent[:30]
-	}
-	sanitized := make([]rune, 0, len(safeContent))
-	for _, r := range safeContent {
+func sanitizeString(s string) string {
+	sanitized := make([]rune, 0, len(s))
+	for _, r := range s {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
 			sanitized = append(sanitized, r)
 		} else {
 			sanitized = append(sanitized, '_')
 		}
 	}
+	return string(sanitized)
+}
+
+// 2. Refactored to use the helper and take a 'base' string
+func generateContextName(model string, base string) string {
+	cleanModel := strings.ReplaceAll(model, " ", "_")
+	safeBase := sanitizeString(base)
+	if len(safeBase) > 30 {
+		safeBase = safeBase[:30]
+	}
 	timestamp := time.Now().Format("20060102-150405")
-	return fmt.Sprintf("%s_%s_%s.json", timestamp, string(sanitized), cleanModel)
+	return fmt.Sprintf("%s_%s_%s.json", timestamp, safeBase, cleanModel)
 }
 
 func saveHistory() error {
@@ -1051,6 +1056,7 @@ func handleCommand(text string, config *Config, history *[]Message) {
 		}
 
 	case "/new", "/n":
+		// 1. Save the OLD history if it exists before clearing
 		if len(*history) > 0 {
 			firstUserMsg := ""
 			for _, m := range *history {
@@ -1065,17 +1071,31 @@ func handleCommand(text string, config *Config, history *[]Message) {
 			if firstUserMsg == "" {
 				firstUserMsg = "untitled"
 			}
-			newContextName := generateContextName(config.Model, firstUserMsg)
-			newContextPath := filepath.Join(homeDir, ".aig", newContextName)
+
+			// Use the existing logic to name the session we are currently leaving
+			oldName := generateContextName(config.Model, firstUserMsg)
 			if err := saveHistory(); err != nil {
 				fmt.Printf("⚠️  Could not save current session: %v\n", err)
 			} else {
-				fmt.Printf("✅ Saved current session to: %s\n", filepath.Base(newContextPath))
+				fmt.Printf("✅ Saved current session to: %s\n", oldName)
 			}
 		}
+
+		// 2. Reset the history for the new session
 		*history = []Message{}
-		currentContextPath = ""
-		fmt.Println("✅ New context started.")
+
+		// 3. Handle the NEW context naming
+		if arg != "" {
+			// If the user provided a name (e.g., /new my-session),
+			// create the path immediately so doTurn doesn't overwrite it.
+			newName := generateContextName(config.Model, arg)
+			currentContextPath = filepath.Join(homeDir, ".aig", newName)
+			fmt.Printf("✅ New context started with custom name: %s\n", newName)
+		} else {
+			// If no name provided, clear path so doTurn uses the first question
+			currentContextPath = ""
+			fmt.Println("✅ New context started (name will be based on first question).")
+		}
 
 	case "/help":
 		fmt.Println("Commands:")
