@@ -889,6 +889,15 @@ func handleCommand(text string, config *Config, history *[]Message) {
 	}
 
 	switch cmd {
+	case "/edit":
+		// We don't process the turn here because handleCommand
+		// doesn't have access to the 'doTurn' function or context.
+		// We will use a special return value or a flag.
+		// For simplicity in this architecture, let's use a global-ish approach
+		// or handle it in the REPL.
+		// Let's just print a hint for the REPL.
+		fmt.Println("📝 Opening editor... Write your text, save, and exit to send.")
+		return
 
 	// -----------------------------------------------------------------------
 	// MCP commands
@@ -1336,6 +1345,41 @@ func runREPLWithReader(config *Config, history *[]Message, rl *readline.Instance
 		}
 
 		if strings.HasPrefix(text, "/") {
+			if text == "/edit" {
+				editorText, err := openInEditor("") // Start with empty file
+				if err != nil {
+					fmt.Printf("❌ Editor error: %v\n", err)
+					continue
+				}
+
+				// If user saved an empty file, just continue
+				if strings.TrimSpace(editorText) == "" {
+					fmt.Println("⚠️  Empty input. Aborting.")
+					continue
+				}
+
+				// Proceed to "doTurn" with the editor content
+				ctx, cancel := context.WithCancel(context.Background())
+				sigChan := make(chan os.Signal, 1)
+				signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+				go func() {
+					<-sigChan
+					cancel()
+				}()
+
+				// We call doTurn manually here
+				// Note: We need to pass the config and history pointer
+				// Since this is inside the REPL closure, we have access.
+
+				// Define a helper within the loop to reuse the doTurn logic
+				// (Or just copy the logic from your existing doTurn)
+				doTurn(ctx, editorText)
+
+				signal.Stop(sigChan)
+				cancel()
+				continue
+			}
+
 			if text == "/exit" || text == "/q" {
 				return
 			}
@@ -1369,4 +1413,52 @@ func runREPLWithReader(config *Config, history *[]Message, rl *readline.Instance
 		signal.Stop(sigChan)
 		cancel()
 	}
+}
+
+// openInEditor opens the user's default terminal editor (vim, nano, etc.)
+// with the provided initial text.
+func openInEditor(initialText string) (string, error) {
+	// 1. Determine which editor to use
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = os.Getenv("VISUAL")
+	}
+	if editor == "" {
+		editor = "vim" // Default fallback
+	}
+
+	// 2. Create a temporary file
+	tmpFile, err := os.CreateTemp("", "aig-edit-*.txt")
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name()) // Clean up after we are done
+
+	// 3. Write initial text to the temp file
+	if _, err := tmpFile.WriteString(initialText); err != nil {
+		return "", fmt.Errorf("failed to write to temp file: %v", err)
+	}
+	tmpFile.Close()
+
+	// 4. Prepare the command
+	// We use 'sh -c' to ensure environment variables and shell aliases work correctly
+	cmd := exec.Command("sh", "-c", fmt.Sprintf("%s %s", editor, tmpFile.Name()))
+
+	// 5. Connect the editor to the current terminal
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	// 6. Run the editor and wait for it to exit
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("editor exited with error: %v", err)
+	}
+
+	// 7. Read the content back from the file
+	content, err := os.ReadFile(tmpFile.Name())
+	if err != nil {
+		return "", fmt.Errorf("failed to read temp file: %v", err)
+	}
+
+	return string(content), nil
 }
