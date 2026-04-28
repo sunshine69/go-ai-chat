@@ -287,7 +287,6 @@ func printHistory(history []Message) {
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
-
 func main() {
 	_ = godotenv.Load()
 	homeEnv, _ := godotenv.Read(homeDir + "/.aigdotenv")
@@ -313,23 +312,30 @@ func main() {
 		}
 	}
 
-	fmt.Println("AI Chat CLI - REPL Mode")
-	fmt.Println("Commands: /new, /add <file>, /r <cmd>, /exit, /history, /m <model>, /url <url> /list, /del <context>, /use <context>, /timeout <dur>, /mcp <spec>")
-	fmt.Println("Use ↑/↓ arrow keys to navigate previous messages; type /history to see all.")
-	fmt.Println("----------------------------------------")
-	if historyLoaded {
-		fmt.Printf("Loaded %d messages from previous session.\n", len(history)/2)
-		fmt.Println("Type /new to start fresh if desired.")
-		fmt.Println()
-	}
+	// --- CHANGE STARTS HERE ---
+	if len(os.Args) == 1 {
+		// Standard REPL Mode
+		fmt.Println("AI Chat CLI - REPL Mode")
+		fmt.Println("Commands: /new, /add <file>, /r <cmd>, /exit, /history, /m <model>, /url <url> /list, /del <context>, /use <context>, /timeout <dur>, /mcp <spec>")
+		fmt.Println("Use ↑/↓ arrow keys to navigate previous messages; type /history to see all.")
+		fmt.Println("----------------------------------------")
+		if historyLoaded {
+			fmt.Printf("Loaded %d messages from previous session.\n", len(history)/2)
+			fmt.Println("Type /new to start fresh if desired.")
+			fmt.Println()
+		}
 
-	histFile := filepath.Join(homeDir, ".aig_history_lines")
-	rl, err := readline.NewEx(&readline.Config{Prompt: "> ", HistoryFile: histFile, HistoryLimit: 5000})
-	if err != nil {
-		rl = nil
+		histFile := filepath.Join(homeDir, ".aig_history_lines")
+		rl, err := readline.NewEx(&readline.Config{Prompt: "> ", HistoryFile: histFile, HistoryLimit: 5000})
+		if err != nil {
+			rl = nil
+		}
+		runREPLWithReader(config, &history, rl, histFile)
+	} else {
+		// Non-Interactive Mode (One-shot commands or chat)
+		handleNonInteractive(config)
 	}
-
-	runREPLWithReader(config, &history, rl, histFile)
+	// --- CHANGE ENDS HERE ---
 
 	saveConfig()
 	if currentContextPath != "" {
@@ -345,106 +351,81 @@ func main() {
 // ---------------------------------------------------------------------------
 // Non-interactive mode
 // ---------------------------------------------------------------------------
-
-func handleNonInteractive(config Config) {
+func handleNonInteractive(config *Config) {
 	args := os.Args[1:]
-	i := 0
-
-	for i < len(args) {
-		arg := args[i]
-
-		if arg == "/add" {
-			if i+1 >= len(args) {
-				fmt.Println("Error: /add requires a filename")
-				os.Exit(1)
-			}
-			i++
-			filePath := args[i]
-			content, err := os.ReadFile(filePath)
-			if err != nil {
-				fmt.Printf("Error reading file %s: %v\n", filePath, err)
-				os.Exit(1)
-			}
-			history = append([]Message{
-				{Role: "system", Content: fmt.Sprintf("Reference File Content:\n```\n%s\n```\n", string(content))},
-			}, history...)
-			i++
-			continue
-		}
-
-		if arg == "/new" {
-			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "/") {
-				message := args[i+1]
-				i += 2
-				history = []Message{{Role: "user", Content: message}}
-				continue
-			}
-			history = []Message{}
-			i++
-			continue
-		}
-
-		if arg == "/repl" {
-			runREPL(config)
-			return
-		}
-
-		if arg == "/r" {
-			if i+1 >= len(args) {
-				fmt.Println("Error: /r requires a command")
-				os.Exit(1)
-			}
-			i++
-			runSystemCommand(args[i])
-			i++
-			continue
-		}
-
-		if arg == "/m" {
-			if i+1 >= len(args) {
-				fmt.Println("Error: /m requires a model name")
-				os.Exit(1)
-			}
-			i += 2
-			continue
-		}
-
-		if arg == "/url" {
-			if i+1 >= len(args) {
-				fmt.Println("Error: /url requires a URL")
-				os.Exit(1)
-			}
-			i += 2
-			continue
-		}
-
-		if !strings.HasPrefix(arg, "/") {
-			question := strings.Join(args[i:], " ")
-			history = append(history, Message{Role: "user", Content: question})
-			ctx, cancel := context.WithCancel(context.Background())
-			sigChan := make(chan os.Signal, 1)
-			signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-
-			go func() {
-				<-sigChan
-				fmt.Print("\n⏹️  Interrupted. Stopping response...\n")
-				cancel()
-			}()
-
-			ans, _, err := askAI(ctx, config, history)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-			fmt.Print(ans)
-			return
-		}
-
-		fmt.Fprintf(os.Stderr, "Warning: Unknown command or unexpected argument: %s\n", arg)
-		i++
+	if len(args) == 0 {
+		runREPL(*config)
+		return
 	}
 
-	runREPL(config)
+	for i := 0; i < len(args); {
+		// 1. Check if the current argument is a command
+		if strings.HasPrefix(args[i], "/") {
+			// Collect the command and its arguments into one string for handleCommand
+			// e.g., ["/add", "file.txt", "/m", "gpt-4"] -> "/add file.txt" then "/m gpt-4"
+			cmdParts := []string{args[i]}
+			for j := i; j < len(args) && !strings.HasPrefix(args[j], "/"); j++ {
+				cmdParts = append(cmdParts, args[j])
+			}
+			fmt.Printf("[DEBUG] cmdParts %v arg i %s \n", cmdParts, args[i])
+			// Special case: if the user wants to enter REPL mode mid-command
+			switch args[i] {
+			case "/repl":
+				runREPL(*config)
+				return
+			case "/q", "/question", "/chat", "/c":
+				println("[DEBUG] question part")
+				cmdText := strings.Join(cmdParts, " ")
+
+				// Prepare context and signal handling (same as REPL)
+				ctx, cancel := context.WithCancel(context.Background())
+				sigChan := make(chan os.Signal, 1)
+				signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+				go func() {
+					<-sigChan
+					fmt.Print("\n⏹️  Interrupted. Stopping response...\n")
+					cancel()
+				}()
+
+				// Add prompt to history
+				history = append(history, Message{Role: "user", Content: cmdText})
+
+				// 3. Send to AI (askAI handles streaming output to stdout)
+				ans, thinking, err := askAI(ctx, *config, history)
+
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "\n❌ Error: %v\n", err)
+				} else {
+					// Add assistant response to history to ensure it's saved
+					history = append(history, Message{
+						Role:     "assistant",
+						Content:  ans,
+						Thinking: thinking,
+					})
+				}
+
+				// 4. Persist everything (config changes like /m or /url and history) already done in main
+				//saveConfig()
+				//if currentContextPath != "" {
+				//	if err := saveHistory(); err != nil {
+				//		fmt.Fprintf(os.Stderr, "Warning: Could not save history: %v\n", err)
+				//	}
+				//}
+
+				signal.Stop(sigChan)
+				cancel()
+				return // Exit program after the prompt is handled
+			default:
+				cmdText := strings.Join(cmdParts, " ")
+				println("[DEBUG] run command part " + cmdText)
+				// Execute the command using the existing robust logic
+				handleCommand(cmdText, config, &history)
+
+			}
+
+		}
+	}
 }
 
 func runREPL(config Config) {
