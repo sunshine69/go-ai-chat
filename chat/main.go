@@ -354,76 +354,86 @@ func main() {
 func handleNonInteractive(config *Config) {
 	args := os.Args[1:]
 	if len(args) == 0 {
-		runREPL(*config)
 		return
 	}
 
-	for i := 0; i < len(args); {
-		// 1. Check if the current argument is a command
-		if strings.HasPrefix(args[i], "/") {
-			// Collect the command and its arguments into one string for handleCommand
-			// e.g., ["/add", "file.txt", "/m", "gpt-4"] -> "/add file.txt" then "/m gpt-4"
-			cmdParts := []string{args[i]}
-			for j := i; j < len(args) && !strings.HasPrefix(args[j], "/"); j++ {
-				cmdParts = append(cmdParts, args[j])
-			}
-			fmt.Printf("[DEBUG] cmdParts %v arg i %s \n", cmdParts, args[i])
-			// Special case: if the user wants to enter REPL mode mid-command
-			switch args[i] {
-			case "/repl":
-				runREPL(*config)
+	i := 0
+	for i < len(args) {
+		arg := args[i]
+
+		// A command must start with "/" but NOT be a relative path like "./foo" or "../foo"
+		isCommand := strings.HasPrefix(arg, "/") && !strings.HasPrefix(arg, "./") && !strings.HasPrefix(arg, "../")
+
+		if !isCommand {
+			fmt.Fprintf(os.Stderr, "⚠️  Unexpected argument (not a command): %s\n", arg)
+			i++
+			continue
+		}
+
+		cmd := arg
+		i++
+
+		switch cmd {
+		case "/repl":
+			runREPL(*config)
+			return
+
+		case "/c", "/chat", "/q", "/question":
+			// Collect the rest of the args as the question
+			if i >= len(args) {
+				fmt.Fprintln(os.Stderr, "❌ No question provided after", cmd)
 				return
-			case "/q", "/question", "/chat", "/c":
-				println("[DEBUG] question part")
-				cmdText := strings.Join(cmdParts, " ")
+			}
+			question := strings.Join(args[i:], " ")
+			i = len(args) // consume all remaining args
 
-				// Prepare context and signal handling (same as REPL)
-				ctx, cancel := context.WithCancel(context.Background())
-				sigChan := make(chan os.Signal, 1)
-				signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-
-				go func() {
-					<-sigChan
-					fmt.Print("\n⏹️  Interrupted. Stopping response...\n")
-					cancel()
-				}()
-
-				// Add prompt to history
-				history = append(history, Message{Role: "user", Content: cmdText})
-
-				// 3. Send to AI (askAI handles streaming output to stdout)
-				ans, thinking, err := askAI(ctx, *config, history)
-
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "\n❌ Error: %v\n", err)
-				} else {
-					// Add assistant response to history to ensure it's saved
-					history = append(history, Message{
-						Role:     "assistant",
-						Content:  ans,
-						Thinking: thinking,
-					})
-				}
-
-				// 4. Persist everything (config changes like /m or /url and history) already done in main
-				//saveConfig()
-				//if currentContextPath != "" {
-				//	if err := saveHistory(); err != nil {
-				//		fmt.Fprintf(os.Stderr, "Warning: Could not save history: %v\n", err)
-				//	}
-				//}
-
-				signal.Stop(sigChan)
+			ctx, cancel := context.WithCancel(context.Background())
+			sigChan := make(chan os.Signal, 1)
+			signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+			go func() {
+				<-sigChan
+				fmt.Print("\n⏹️  Interrupted. Stopping response...\n")
 				cancel()
-				return // Exit program after the prompt is handled
-			default:
-				cmdText := strings.Join(cmdParts, " ")
-				println("[DEBUG] run command part " + cmdText)
-				// Execute the command using the existing robust logic
-				handleCommand(cmdText, config, &history)
+			}()
 
+			// Set context path if not already set
+			if currentContextPath == "" {
+				newContextName := generateContextName(config.Model, question)
+				currentContextPath = filepath.Join(homeDir, ".aig", newContextName)
 			}
 
+			history = append(history, Message{Role: "user", Content: question})
+			ans, thinking, err := askAI(ctx, *config, history)
+			signal.Stop(sigChan)
+			cancel()
+
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "\n❌ Error: %v\n", err)
+				return
+			}
+			history = append(history, Message{
+				Role:     "assistant",
+				Content:  ans,
+				Thinking: thinking,
+			})
+
+		default:
+			// Generic command: collect args until the next slash-command
+			var cmdArgs []string
+			for i < len(args) {
+				next := args[i]
+				nextIsCommand := strings.HasPrefix(next, "/") && !strings.HasPrefix(next, "./") && !strings.HasPrefix(next, "../")
+				if nextIsCommand {
+					break
+				}
+				cmdArgs = append(cmdArgs, next)
+				i++
+			}
+			fullCmd := cmd
+			if len(cmdArgs) > 0 {
+				fullCmd = cmd + " " + strings.Join(cmdArgs, " ")
+			}
+			handleCommand(fullCmd, config, &history)
 		}
 	}
 }
