@@ -35,6 +35,7 @@ type Config struct {
 	PromptedModel  bool
 	PromptedAPIKey bool
 	Debug          bool
+	MCPPermissions map[string]string
 }
 
 type Message struct {
@@ -505,42 +506,65 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 
 		// Execute each tool call via MCP
 		for _, tc := range toolCalls {
-			fmt.Printf("\n🔧 Calling tool: %s\n", tc.Function.Name)
-			fmt.Printf("   args: %s\n", tc.Function.Arguments) // always show args
+			// --- NEW PERMISSION CHECK ---
+			perm := getEffectivePermission(tc.Function.Name, &config)
+			allowed := true
 
-			var args map[string]interface{}
-			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-				fmt.Printf("   ❌ Failed to parse tool arguments as JSON: %v\n", err)
-				fmt.Printf("   Raw arguments string: %q\n", tc.Function.Arguments)
-				args = map[string]interface{}{}
+			if perm == "deny" {
+				fmt.Printf("\n🚫 Permission Denied: Tool '%s' is blocked.\n", tc.Function.Name)
+				allowed = false
+			} else if perm == "ask" {
+				fmt.Printf("\n⚠️  Tool '%s' requires permission. Allow? [y/N]: ", tc.Function.Name)
+				var response string
+				// Use fmt.Scanln to pause for user input in the terminal
+				fmt.Scanln(&response)
+				if strings.ToLower(response) != "y" {
+					fmt.Printf("❌ User denied permission for '%s'.\n", tc.Function.Name)
+					allowed = false
+				}
 			}
 
 			var toolResult string
-			if activeMCP != nil {
-				toolResult, err = activeMCP.CallTool(tc.Function.Name, args)
-				if err != nil {
-					toolResult = fmt.Sprintf("error: %v", err)
-					fmt.Printf("   ❌ Tool error: %v\n", err)
-					fmt.Printf("   💡 Tip: run /mcp schema to check expected argument names\n")
-				} else {
-					if config.Debug {
-						fmt.Printf("   ✅ result: %s\n", toolResult)
-					}
-				}
+			if !allowed {
+				toolResult = fmt.Sprintf("error: permission denied for tool %s (policy: %s)", tc.Function.Name, perm)
 			} else {
-				toolResult = "error: no MCP client connected"
+
+				fmt.Printf("\n🔧 Calling tool: %s\n", tc.Function.Name)
+				fmt.Printf("   args: %s\n", tc.Function.Arguments) // always show args
+
+				var args map[string]interface{}
+				if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+					fmt.Printf("   ❌ Failed to parse tool arguments as JSON: %v\n", err)
+					fmt.Printf("   Raw arguments string: %q\n", tc.Function.Arguments)
+					args = map[string]interface{}{}
+				}
+
+				if activeMCP != nil {
+					toolResult, err = activeMCP.CallTool(tc.Function.Name, args)
+					if err != nil {
+						toolResult = fmt.Sprintf("error: %v", err)
+						fmt.Printf("   ❌ Tool error: %v\n", err)
+						fmt.Printf("   💡 Tip: run /mcp schema to check expected argument names\n")
+					} else {
+						if config.Debug {
+							fmt.Printf("   ✅ result: %s\n", toolResult)
+						}
+					}
+				} else {
+					toolResult = "error: no MCP client connected"
+				}
+
+				workingMsgs = append(workingMsgs, Message{
+					Role:       "tool",
+					ToolCallID: tc.ID,
+					Name:       tc.Function.Name,
+					Content:    toolResult,
+				})
 			}
 
-			workingMsgs = append(workingMsgs, Message{
-				Role:       "tool",
-				ToolCallID: tc.ID,
-				Name:       tc.Function.Name,
-				Content:    toolResult,
-			})
+			// Loop: ask the model again with the tool results
+			fmt.Print("\n> 📝 Response:\n")
 		}
-
-		// Loop: ask the model again with the tool results
-		fmt.Print("\n> 📝 Response:\n")
 	}
 }
 
@@ -772,6 +796,11 @@ func saveConfig() {
 	if !changed {
 		return
 	}
+	for name, perm := range config.MCPPermissions {
+		if perm != "" {
+			envVars["MCP_PERM_"+name] = perm
+		}
+	}
 
 	var sb strings.Builder
 	for k, v := range envVars {
@@ -782,6 +811,34 @@ func saveConfig() {
 	} else {
 		fmt.Println("✅ Configuration saved to ~/.aigdotenv")
 	}
+}
+
+// isWriteTool checks if a tool name implies a modification/destructive action.
+func isWriteTool(name string) bool {
+	name = strings.ToLower(name)
+	writeKeywords := []string{
+		"write", "create", "delete", "remove", "update", "edit",
+		"post", "put", "patch", "exec", "run", "shell", "mkdir", "rm",
+	}
+	for _, kw := range writeKeywords {
+		if strings.Contains(name, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// getEffectivePermission returns the user-defined permission or the default.
+func getEffectivePermission(name string, config *Config) string {
+	// 1. Check if explicitly set
+	if perm, ok := config.MCPPermissions[name]; ok {
+		return perm
+	}
+	// 2. Fallback to defaults
+	if isWriteTool(name) {
+		return "ask"
+	}
+	return "auto"
 }
 
 func promptForMissingConfig(config *Config) {
@@ -842,6 +899,7 @@ func loadConfig() *Config {
 		PromptedURL:    false,
 		PromptedModel:  false,
 		PromptedAPIKey: false,
+		MCPPermissions: make(map[string]string),
 	}
 
 	if timeoutStr := os.Getenv("TIMEOUT"); timeoutStr != "" {
@@ -868,6 +926,32 @@ func loadConfig() *Config {
 	if len(os.Args) == 1 {
 		promptForMissingConfig(&c)
 	}
+	// NEW: Parse MCP Permissions from environment
+	// Since we use godotenv, all vars in .aigdotenv are in the env
+	// We'll iterate through keys if possible, but since we can't easily
+	// list all env vars in Go without platform specific calls,
+	// we'll rely on the fact that we are reading the file manually below
+	// or we can just scan the file in loadConfig.
+
+	// Let's update loadConfig to read the file manually for permissions
+	dotEnvPath := filepath.Join(homeDir, ".aigdotenv")
+	if data, err := os.ReadFile(dotEnvPath); err == nil {
+		lines := strings.Split(string(data), "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) == 2 {
+				key, val := parts[0], parts[1]
+				if strings.HasPrefix(key, "MCP_PERM_") {
+					toolName := strings.TrimPrefix(key, "MCP_PERM_")
+					c.MCPPermissions[toolName] = val
+				}
+			}
+		}
+	}
 
 	return &c
 }
@@ -885,6 +969,29 @@ func handleCommand(text string, config *Config, history *[]Message) {
 	}
 
 	switch cmd {
+	case "/mcpfunc":
+		if arg == "" {
+			fmt.Println("Usage: /mcpfunc <name> <auto|ask|deny>")
+			return
+		}
+		parts := strings.SplitN(arg, " ", 2)
+		if len(parts) < 2 {
+			fmt.Println("❌ Error: Missing permission level. Usage: /mcpfunc <name> <auto|ask|deny>")
+			return
+		}
+
+		toolName := parts[0]
+		perm := strings.ToLower(parts[1])
+
+		if perm != "auto" && perm != "ask" && perm != "deny" {
+			fmt.Println("❌ Error: Invalid permission level. Use 'auto', 'ask', or 'deny'.")
+			return
+		}
+
+		config.MCPPermissions[toolName] = perm
+		saveConfig() // Persist immediately
+		fmt.Printf("✅ Permission for '%s' set to [%s]\n", toolName, perm)
+
 	case "/edit":
 		// We don't process the turn here because handleCommand
 		// doesn't have access to the 'doTurn' function or context.
