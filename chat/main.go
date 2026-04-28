@@ -317,7 +317,7 @@ func main() {
 	if len(os.Args) == 1 {
 		// Standard REPL Mode
 		fmt.Println("AI Chat CLI - REPL Mode")
-		fmt.Println("Commands: /new, /add <file>, /r <cmd>, /exit, /history, /m <model>, /url <url> /list, /del <context>, /use <context>, /timeout <dur>, /mcp <spec>")
+		fmt.Println("Commands: /new, /add <file>, /r <cmd>, /exit, /history, /m <model>, /url <url> /list, /del <context>, /use <context>, /timeout <dur>, /mcp <spec>, /mcpfunc <func-name> <perm>")
 		fmt.Println("Use ↑/↓ arrow keys to navigate previous messages; type /history to see all.")
 		fmt.Println("----------------------------------------")
 		if historyLoaded {
