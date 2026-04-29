@@ -36,6 +36,7 @@ type Config struct {
 	PromptedAPIKey bool
 	Debug          bool
 	MCPPermissions map[string]string
+	ShowThinking   bool
 }
 
 type Message struct {
@@ -334,6 +335,7 @@ func main() {
 		runREPLWithReader(config, &history, rl, histFile)
 	} else {
 		// Non-Interactive Mode (One-shot commands or chat)
+		config.ShowThinking = false
 		handleNonInteractive(config)
 	}
 	// --- CHANGE ENDS HERE ---
@@ -651,13 +653,17 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 
 		// Thinking content
 		if delta.ReasoningContent != "" {
-			if !thinkingStarted {
-				fmt.Print("\n> 🤔 Thinking...\n")
-				thinkingStarted = true
-			}
-			fmt.Print(delta.ReasoningContent)
-			os.Stdout.Sync()
+			// ALWAYS capture the content so the history is complete
 			thinkingContent.WriteString(delta.ReasoningContent)
+			// ONLY print if the user has enabled it
+			if config.ShowThinking {
+				if !thinkingStarted {
+					fmt.Print("\n> 🤔 Thinking...\n")
+					thinkingStarted = true
+				}
+				fmt.Print(delta.ReasoningContent)
+				os.Stdout.Sync()
+			}
 		}
 
 		// Regular text content
@@ -792,7 +798,11 @@ func saveConfig() {
 		envVars["TIMEOUT"] = config.Timeout.String()
 		changed = true
 	}
-
+	if config.ShowThinking {
+		envVars["SHOW_THINKING"] = "true"
+	} else {
+		envVars["SHOW_THINKING"] = "false"
+	}
 	if !changed {
 		return
 	}
@@ -949,6 +959,9 @@ func loadConfig() *Config {
 					toolName := strings.TrimPrefix(key, "MCP_PERM_")
 					c.MCPPermissions[toolName] = val
 				}
+				if key == "SHOW_THINKING" {
+					c.ShowThinking = (val == "true")
+				}
 			}
 		}
 	}
@@ -969,6 +982,19 @@ func handleCommand(text string, config *Config, history *[]Message) {
 	}
 
 	switch cmd {
+	case "/showthink":
+		switch arg {
+		case "on":
+			config.ShowThinking = true
+			saveConfig()
+			fmt.Println("✅ Thinking text enabled.")
+		case "off":
+			config.ShowThinking = false
+			saveConfig()
+			fmt.Println("✅ Thinking text disabled.")
+		default:
+			fmt.Println("Usage: /showthink on|off")
+		}
 	case "/mcpfunc":
 		if arg == "" {
 			fmt.Println("Usage: /mcpfunc <name> <auto|ask|deny>")
