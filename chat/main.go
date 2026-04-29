@@ -487,18 +487,15 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 	// Build a local copy of history for the tool loop — we extend it as we call tools
 	workingMsgs := make([]Message, len(msgs))
 	copy(workingMsgs, msgs)
-
 	for {
 		content, thinking, toolCalls, err := streamOnce(ctx, config, workingMsgs)
 		if err != nil {
 			return content, thinking, err
 		}
-
 		// No tool calls — we're done
 		if len(toolCalls) == 0 {
 			return content, thinking, nil
 		}
-
 		// Append the assistant's tool-call turn
 		workingMsgs = append(workingMsgs, Message{
 			Role:      "assistant",
@@ -508,7 +505,20 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 
 		// Execute each tool call via MCP
 		for _, tc := range toolCalls {
-			// --- NEW PERMISSION CHECK ---
+			// --- 1. PREPARE ARGUMENT DISPLAY (Pretty Print) ---
+			var argsDisplay string
+			var argsMap map[string]interface{}
+
+			// Attempt to parse and pretty-print the JSON arguments
+			if err := json.Unmarshal([]byte(tc.Function.Arguments), &argsMap); err != nil {
+				// If AI sent invalid JSON, just show the raw string so the user can still see it
+				argsDisplay = tc.Function.Arguments
+			} else {
+				pretty, _ := json.MarshalIndent(argsMap, "    ", "  ")
+				argsDisplay = string(pretty)
+			}
+
+			// --- 2. PERMISSION CHECK ---
 			perm := getEffectivePermission(tc.Function.Name, &config)
 			allowed := true
 
@@ -516,9 +526,12 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 				fmt.Printf("\n🚫 Permission Denied: Tool '%s' is blocked.\n", tc.Function.Name)
 				allowed = false
 			} else if perm == "ask" {
-				fmt.Printf("\n⚠️  Tool '%s' requires permission. Allow? [y/N]: ", tc.Function.Name)
+				fmt.Printf("\n⚠️  Tool '%s' requires permission.\n", tc.Function.Name)
+				fmt.Printf("   Arguments:\n%s\n", argsDisplay) // Print arguments BEFORE asking
+				fmt.Printf("   Allow? [y/N]: ")
+
 				var response string
-				// Use fmt.Scanln to pause for user input in the terminal
+				// Use Scanln to wait for user input
 				fmt.Scanln(&response)
 				if strings.ToLower(response) != "y" {
 					fmt.Printf("❌ User denied permission for '%s'.\n", tc.Function.Name)
@@ -526,23 +539,21 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 				}
 			}
 
+			// --- 3. EXECUTION ---
 			var toolResult string
 			if !allowed {
 				toolResult = fmt.Sprintf("error: permission denied for tool %s (policy: %s)", tc.Function.Name, perm)
 			} else {
-
 				fmt.Printf("\n🔧 Calling tool: %s\n", tc.Function.Name)
-				fmt.Printf("   args: %s\n", tc.Function.Arguments) // always show args
 
-				var args map[string]interface{}
-				if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-					fmt.Printf("   ❌ Failed to parse tool arguments as JSON: %v\n", err)
-					fmt.Printf("   Raw arguments string: %q\n", tc.Function.Arguments)
-					args = map[string]interface{}{}
+				// We already parsed argsMap above, let's reuse it or re-parse for the actual call
+				var finalArgs map[string]interface{}
+				if err := json.Unmarshal([]byte(tc.Function.Arguments), &finalArgs); err != nil {
+					finalArgs = map[string]interface{}{}
 				}
 
 				if activeMCP != nil {
-					toolResult, err = activeMCP.CallTool(tc.Function.Name, args)
+					toolResult, err = activeMCP.CallTool(tc.Function.Name, finalArgs)
 					if err != nil {
 						toolResult = fmt.Sprintf("error: %v", err)
 						fmt.Printf("   ❌ Tool error: %v\n", err)
@@ -563,8 +574,6 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 					Content:    toolResult,
 				})
 			}
-
-			// Loop: ask the model again with the tool results
 			fmt.Print("\n> 📝 Response:\n")
 		}
 	}
