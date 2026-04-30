@@ -315,6 +315,7 @@ func main() {
 	}
 
 	// --- CHANGE STARTS HERE ---
+	runMode := ""
 	if len(os.Args) == 1 {
 		// Standard REPL Mode
 		fmt.Println("AI Chat CLI - REPL Mode")
@@ -336,18 +337,20 @@ func main() {
 	} else {
 		// Non-Interactive Mode (One-shot commands or chat)
 		config.ShowThinking = false
+		runMode = "nonit"
 		handleNonInteractive(config)
 	}
 	// --- CHANGE ENDS HERE ---
-
-	saveConfig()
-	if currentContextPath != "" {
-		if err := saveHistory(); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Could not save history: %v\n", err)
+	if runMode != "nonit" {
+		saveConfig()
+		if currentContextPath != "" {
+			if err := saveHistory(); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: Could not save history: %v\n", err)
+			}
 		}
-	}
-	if activeMCP != nil {
-		activeMCP.Close()
+		if activeMCP != nil {
+			activeMCP.Close()
+		}
 	}
 }
 
