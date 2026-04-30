@@ -1,50 +1,44 @@
 package main
 
 import (
+	"context"
 	"fmt"
-	"io"
-	"net/http"
-	"strings"
 
-	html2md "github.com/JohannesKaufmann/html-to-markdown"
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 )
 
-func HTMLToMarkdown(html string) (string, error) {
-	if strings.TrimSpace(html) == "" {
-		return "", nil
-	}
-
-	converter := html2md.NewConverter("", true, nil)
-	md, err := converter.ConvertString(html)
-	if err != nil {
-		return "", fmt.Errorf("html to md: %w", err)
-	}
-
-	return strings.TrimSpace(md), nil
-}
-
-func FetchAndConvertKernelOrg() (string, error) {
-	resp, err := http.Get("https://kernel.org/")
-	if err != nil {
-		return "", fmt.Errorf("fetch kernel.org: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("read body: %w", err)
-	}
-
-	return HTMLToMarkdown(string(body))
-}
-
 func main() {
-	o, err := FetchAndConvertKernelOrg()
-	if err != nil {
-		println(err.Error())
+	// Create a new MCP server
+	s := server.NewMCPServer(
+		"Demo 🚀",
+		"1.0.0",
+		server.WithToolCapabilities(false),
+	)
 
-	} else {
-		println(o)
+	// Add tool
+	tool := mcp.NewTool("hello_world",
+		mcp.WithDescription("Say hello to someone"),
+		mcp.WithString("name",
+			mcp.Required(),
+			mcp.Description("Name of the person to greet"),
+		),
+	)
+
+	// Add tool handler
+	s.AddTool(tool, helloHandler)
+
+	// Start the stdio server
+	if err := server.ServeStdio(s); err != nil {
+		fmt.Printf("Server error: %v\n", err)
+	}
+}
+
+func helloHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	name, err := request.RequireString("name")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 
+	return mcp.NewToolResultText(fmt.Sprintf("Hello, %s!", name)), nil
 }
