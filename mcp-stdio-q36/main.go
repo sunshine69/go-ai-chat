@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	html2md "github.com/JohannesKaufmann/html-to-markdown"
 )
@@ -247,6 +248,11 @@ func handleToolsList(req *Request) {
 			Description: "Performs a single find-and-replace operation in a file.",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"find":{"type":"string"},"replace":{"type":"string"},"use_regex":{"type":"boolean","default":false},"replace_all":{"type":"boolean","default":false}},"required":["path","find","replace"]}`),
 		},
+		{
+			Name:        "http_request",
+			Description: "Sends an HTTP request to an external URL with support for custom methods, headers, and request body. Useful for API calls, data retrieval, and performing external operations. Pass headers via the 'headers' parameter for authentication.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"method":{"type":"string","description":"HTTP method (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS)"},{"url":{"type":"string","description":"The URL to send the request to"},"headers":{"type":"object","description":"Optional HTTP headers (e.g., \"Authorization\":\"Bearer XXX\", )"},{"body":{"type":"string","description":"Optional request body (string or JSON)"}},"required":["method","url"]}`),
+		},
 	}
 
 	writeResponse(req.ID, &ResponseResult{Tools: tools}, nil)
@@ -381,6 +387,24 @@ func handleToolCall(req *Request) {
 		}
 		writeResponse(req.ID, &ResponseResult{Content: []ContentBlock{{Type: "text", Text: result}}}, nil)
 
+	case "http_request":
+		var p struct {
+			Method  string            `json:"method"`
+			URL     string            `json:"url"`
+			Body    string            `json:"body,omitempty"`
+			Headers map[string]string `json:"headers,omitempty"`
+		}
+		if err := json.Unmarshal(args.Arguments, &p); err != nil || p.URL == "" || p.Method == "" {
+			writeResponse(req.ID, nil, &ErrorResponse{Code: -32602, Message: "Missing or invalid 'method' or 'url' parameter"})
+			return
+		}
+		result, err := makeHTTPRequest(p.Method, p.URL, p.Body, p.Headers)
+		if err != nil {
+			writeResponse(req.ID, nil, &ErrorResponse{Code: -32603, Message: err.Error()})
+			return
+		}
+		writeResponse(req.ID, &ResponseResult{Content: []ContentBlock{{Type: "text", Text: result}}}, nil)
+
 	default:
 		writeResponse(req.ID, nil, &ErrorResponse{Code: -32601, Message: fmt.Sprintf("Tool '%s' not found", args.Name)})
 	}
@@ -389,6 +413,71 @@ func handleToolCall(req *Request) {
 // =============================================================================
 // Tool Implementations
 // =============================================================================
+
+// =============================================================================
+// HTTP Request Tool Implementation
+// =============================================================================
+
+func makeHTTPRequest(method, url, body string, headers map[string]string) (string, error) {
+	client := &http.Client{Timeout: 15 * time.Second}
+
+	var reader io.Reader
+	if body != "" {
+		reader = strings.NewReader(body)
+	}
+
+	req, err := http.NewRequest(method, url, reader)
+	if err != nil {
+		return "", fmt.Errorf("invalid request: %w", err)
+	}
+
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	// Default Content-Type for non-GET requests
+	if req.Method != "GET" && req.Method != "HEAD" && req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	sb := strings.Builder{}
+	sb.WriteString(fmt.Sprintf("HTTP %s %s → %d %s\n", req.Method, url, resp.StatusCode, resp.Status))
+	sb.WriteString(strings.Repeat("-", 50) + "\n")
+	sb.WriteString("--- Response ---\n")
+
+	contentType := resp.Header.Get("Content-Type")
+	if strings.Contains(contentType, "json") {
+		sb.WriteString("Content-Type: application/json\n\n")
+		var prettyJSON interface{}
+		if err := json.Unmarshal(respBody, &prettyJSON); err == nil {
+			encoded, _ := json.MarshalIndent(prettyJSON, "", "  ")
+			sb.Write(encoded)
+			sb.WriteString("\n")
+		} else {
+			sb.Write(respBody)
+		}
+	} else {
+		sb.WriteString(fmt.Sprintf("Content-Type: %s\n", contentType))
+		sb.Write(respBody)
+	}
+
+	if len(respBody) > 1024 {
+		sb.WriteString(fmt.Sprintf("\n\n(response truncated, %d bytes total)", len(respBody)))
+	}
+
+	return sb.String(), nil
+}
 
 func readFileContent(targetPath string) (string, error) {
 	cleanPath := filepath.Clean(targetPath)

@@ -1,6 +1,6 @@
 module aig
 
-go 1.26.2
+go 1.26.0
 
 require (
 	github.com/JohannesKaufmann/html-to-markdown v1.6.0
