@@ -24,13 +24,13 @@ Performance: ~12-20 tok/s on native CPU builds of llama.cpp
 ```bash
 # Build the CLI and MCP server
 go build -o ~/.local/bin/aig chat/*.go
-go build -o mcp.exe mcp-stdio-q36/main.go
+go build -o mcp.exe mcp-stdio-go/main.go
 
 # Run interactive mode
 aig
 
-# Non-interactive one-shot
-aig /chat "your question here"
+# Non-interactive one-shot in a new session with mcp server
+aig /mcp ./mcp.exe /n /q your question here
 ```
 
 ## Commands
@@ -55,7 +55,7 @@ aig /chat "your question here"
 ## Configuration
 Settings are stored in `~/.aigdotenv`:
 - `OPENAI_URL` - API endpoint URL
-- `OPENAI_MODEL` - Default model name  
+- `OPENAI_MODEL` - Default model name
 - `OPENAI_API_KEY` - API key (if needed)
 - `TIMEOUT` - Request timeout duration
 - `SHOW_THINKING=true/false` - Show reasoning content

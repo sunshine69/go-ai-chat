@@ -986,7 +986,7 @@ func loadConfig() *Config {
 // ---------------------------------------------------------------------------
 
 func handleCommand(text string, config *Config, history *[]Message) {
-	parts := strings.SplitN(text, " ", 2)
+	parts := strings.SplitN(text, " ", -1)
 	cmd := parts[0]
 	arg := ""
 	if len(parts) > 1 {
@@ -1012,7 +1012,7 @@ func handleCommand(text string, config *Config, history *[]Message) {
 			fmt.Println("Usage: /mcpfunc <name> <auto|ask|deny>")
 			return
 		}
-		parts := strings.SplitN(arg, " ", 2)
+		// parts := strings.SplitN(arg, " ", 2)
 		if len(parts) < 2 {
 			fmt.Println("❌ Error: Missing permission level. Usage: /mcpfunc <name> <auto|ask|deny>")
 			return
@@ -1050,10 +1050,12 @@ func handleCommand(text string, config *Config, history *[]Message) {
 			if activeMCP == nil {
 				fmt.Println("ℹ️  No MCP server connected.")
 				fmt.Println("Usage:")
-				fmt.Println("  /mcp tcp://<host>:<port>   — connect to a running MCP TCP server")
+				fmt.Println("  /mcp tcp://<host>:<port>    — connect to a running MCP TCP server")
 				fmt.Println("  /mcp <cmd> [args...]        — launch and connect to an MCP stdio server")
 				fmt.Println("  /mcp off                    — disconnect current MCP server")
 				fmt.Println("  /mcp tools                  — list available tools")
+				fmt.Println("  /mcp docs list              — list available resources")
+				fmt.Println("  /mcp docs read <uri>        — read resource contents")
 			} else {
 				fmt.Printf("✅ MCP connected: %s\n", activeMCP.spec)
 				fmt.Printf("   %d tool(s) available\n", len(activeMCP.Tools()))
@@ -1062,6 +1064,55 @@ func handleCommand(text string, config *Config, history *[]Message) {
 		}
 
 		switch arg {
+		case "docs":
+			if activeMCP == nil {
+				fmt.Println("ℹ️  No MCP server connected.")
+				return
+			}
+			args := strings.SplitN(strings.TrimSpace(text[len("/mcp docs"):]), " ", 2)
+			if len(args) == 0 || args[0] == "" {
+				fmt.Println("Usage: /mcp docs <list|read [uri]>")
+				return
+			}
+			ops := args[0]
+			switch ops {
+			case "list":
+				resources, err := activeMCP.Resources()
+				if err != nil {
+					fmt.Printf("❌ resources/list: %v\n", err)
+					return
+				}
+				if len(resources) == 0 {
+					fmt.Println("ℹ️  No resources available.")
+					return
+				}
+				fmt.Printf("📄 Available resources (%d):\n", len(resources))
+				for _, r := range resources {
+					fmt.Printf("  • %s — %s\n", r.URI, r.Name)
+					if r.Description != "" {
+						fmt.Printf("    %s\n", r.Description)
+					}
+				}
+				return
+
+			case "read":
+				if len(args) < 2 || strings.TrimSpace(args[1]) == "" {
+					fmt.Println("Usage: /mcp docs read <uri>")
+					return
+				}
+				uri := args[1]
+				content, err := activeMCP.ReadResource(uri)
+				if err != nil {
+					fmt.Printf("❌ resources/read %s: %v\n", uri, err)
+					return
+				}
+				fmt.Printf("📄 Resource: %s\n%s\n", uri, content)
+				return
+
+			default:
+				fmt.Printf("❌ Unknown docs op: %q. Use 'list' or 'read [uri]'.\n", ops)
+				return
+			}
 		case "off", "disconnect":
 			if activeMCP != nil {
 				activeMCP.Close()
@@ -1123,7 +1174,7 @@ func handleCommand(text string, config *Config, history *[]Message) {
 			}
 			return
 		}
-
+		// No hit other command, treat the rest string is executing mcp server
 		// Disconnect any existing MCP first
 		if activeMCP != nil {
 			fmt.Println("🔌 Disconnecting previous MCP server...")
@@ -1140,7 +1191,7 @@ func handleCommand(text string, config *Config, history *[]Message) {
 			newMCP, err = ConnectTCP(arg)
 		} else {
 			fmt.Printf("🚀 Launching MCP stdio server: %s\n", arg)
-			newMCP, err = ConnectStdio(arg)
+			newMCP, err = ConnectStdio(parts[1:])
 		}
 
 		if err != nil {

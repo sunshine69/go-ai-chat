@@ -633,9 +633,9 @@ func htmlToMarkdown(html []byte) string {
 // =============================================================================
 
 func readResource(uri string) (string, string, error) {
-	// Strip the file:// prefix if present
 	path := uri
-	strings.TrimPrefix(path, "file://")
+	// Strip the file:// prefix if present
+	path = strings.TrimPrefix(path, "file://")
 	path = filepath.Clean(path)
 	// Reject path traversal attempts
 	if strings.Contains(path, "..") || filepath.IsAbs(path) && !strings.HasPrefix(path, "/") {

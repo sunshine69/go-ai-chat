@@ -120,8 +120,8 @@ func ConnectTCP(address string) (*MCPClient, error) {
 }
 
 // ConnectStdio launches a local MCP server process and communicates via stdio.
-func ConnectStdio(cmdLine string) (*MCPClient, error) {
-	parts := strings.Fields(cmdLine)
+func ConnectStdio(parts []string) (*MCPClient, error) {
+	// parts := strings.Fields(cmdLine)
 	if len(parts) == 0 {
 		return nil, fmt.Errorf("empty command")
 	}
@@ -137,11 +137,11 @@ func ConnectStdio(cmdLine string) (*MCPClient, error) {
 		return nil, err
 	}
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("start MCP server %q: %w", cmdLine, err)
+		return nil, fmt.Errorf("start MCP server %q: %w", parts, err)
 	}
 
 	pw := &pipeReadWriter{in: stdin, out: stdout, cmd: cmd}
-	c := &MCPClient{conn: pw, spec: cmdLine}
+	c := &MCPClient{conn: pw, spec: parts[0]}
 	c.scanner = bufio.NewScanner(stdout)
 	c.scanner.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
 	if err := c.initialize(); err != nil {
@@ -331,4 +331,85 @@ func ToOpenAITools(tools []mcpTool) []map[string]interface{} {
 		})
 	}
 	return out
+}
+
+type mcpResource struct {
+	URI         string `json:"uri"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	MimeType    string `json:"mimeType,omitempty"`
+}
+
+type mcpResourcesListResult struct {
+	Resources []mcpResource `json:"resources"`
+}
+
+type mcpResourcesReadResult struct {
+	Contents []struct {
+		URI      string `json:"uri"`
+		MimeType string `json:"mimeType,omitempty"`
+		Text     string `json:"text,omitempty"`
+		Blob     string `json:"blob,omitempty"`
+	} `json:"contents"`
+}
+
+// Resources returns the list of available MCP resources.
+func (c *MCPClient) Resources() ([]mcpResource, error) {
+	resp, err := c.call("resources/list", nil)
+	if err != nil {
+		return nil, fmt.Errorf("resources/list: %w", err)
+	}
+	if resp.Error != nil {
+		return nil, fmt.Errorf("resources/list error: %s", resp.Error.Message)
+	}
+	var result mcpResourcesListResult
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		return nil, fmt.Errorf("parse resources: %w", err)
+	}
+	return result.Resources, nil
+}
+
+// ReadResource fetches the contents of a resource by URI.
+func (c *MCPClient) ReadResource(uri string) (string, error) {
+	params := map[string]interface{}{
+		"uri": uri,
+	}
+	resp, err := c.call("resources/read", params)
+	if err != nil {
+		return "", fmt.Errorf("resources/read %s: %w", uri, err)
+	}
+	if resp.Error != nil {
+		return "", fmt.Errorf("resources/read error: %s", resp.Error.Message)
+	}
+	var result mcpResourcesReadResult
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		return "", fmt.Errorf("parse resource read: %w", err)
+	}
+	var parts []string
+	for _, r := range result.Contents {
+		if r.Text != "" {
+			parts = append(parts, r.Text)
+		} else if r.Blob != "" {
+			parts = append(parts, fmt.Sprintf("<binary resource %s>", r.URI))
+		}
+	}
+	return strings.Join(parts, "\n"), nil
+}
+
+// SubscribeResource subscribes to change notifications for a resource URI.
+func (c *MCPClient) SubscribeResource(uri string) error {
+	params := map[string]interface{}{
+		"uri": uri,
+	}
+	_, err := c.call("resources/subscribe", params)
+	return err
+}
+
+// UnsubscribeResource unsubscribes from change notifications for a resource URI.
+func (c *MCPClient) UnsubscribeResource(uri string) error {
+	params := map[string]interface{}{
+		"uri": uri,
+	}
+	_, err := c.call("resources/unsubscribe", params)
+	return err
 }

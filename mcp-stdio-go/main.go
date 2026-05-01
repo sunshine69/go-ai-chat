@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"io/fs"
@@ -435,12 +436,17 @@ func registerDirectoryResources(s *server.MCPServer, dirPath string, description
 // =============================================================================
 
 func main() {
+	doc_path := flag.String("docpath", "aidocs", "Path to the document dir where multiple .md fiels are found and list as documentation")
+	flag.Parse()
+
 	s := server.NewMCPServer(
 		"mcp-fetch-server",
 		"1.0.0",
 		server.WithToolCapabilities(true),
 		server.WithResourceCapabilities(true, true), // enable resources + subscriptions
 	)
+
+	registerDirectoryResources(s, *doc_path, "AI documentation and reference materials")
 
 	// ── Tools ──────────────────────────────────────────────────────────────
 
