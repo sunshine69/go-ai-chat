@@ -380,6 +380,19 @@ func registerDirectoryResources(s *server.MCPServer, dirPath string, description
 
 		baseName := filepath.Base(path)
 		uri := "file://" + filepath.ToSlash(filepath.Clean(path))
+		ext := strings.ToLower(filepath.Ext(baseName))
+		allowedExt := map[string]struct{}{
+			".md":   struct{}{},
+			".txt":  struct{}{},
+			".json": struct{}{},
+			".xml":  struct{}{},
+			".png":  struct{}{},
+			".jpg":  struct{}{},
+			".jpeg": struct{}{},
+		}
+		if _, ok := allowedExt[ext]; !ok {
+			return nil
+		}
 
 		resource := mcp.NewResource(
 			uri,
@@ -394,7 +407,6 @@ func registerDirectoryResources(s *server.MCPServer, dirPath string, description
 			}
 
 			var mimeType string
-			ext := strings.ToLower(filepath.Ext(baseName))
 			switch ext {
 			case ".md":
 				mimeType = "text/markdown"
