@@ -675,6 +675,11 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 				}
 				fmt.Print(delta.ReasoningContent)
 				os.Stdout.Sync()
+			} else {
+				if !thinkingStarted {
+					fmt.Print("\n> 🤔 Thinking disabled, run /showthink on to enable\n")
+					thinkingStarted = true
+				}
 			}
 		}
 
