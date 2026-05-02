@@ -129,6 +129,12 @@ func registerDirectoryResources(dirPath, description string) ([]Resource, error)
 // =============================================================================
 
 func main() {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "fatal panic recovered: %v\n", r)
+			main() // restart loop (simple but effective)
+		}
+	}()
 	scanner := bufio.NewScanner(os.Stdin)
 	buf := make([]byte, 10*1024*1024)
 	scanner.Buffer(buf, cap(buf))
@@ -138,19 +144,12 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not register aidocs resources: %v\n", err)
 	}
-
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-
+	handleLine := func(line []byte, resources []Resource) bool {
 		var req Request
 		if err := json.Unmarshal(line, &req); err != nil {
 			writeResponse(req.ID, nil, &ErrorResponse{Code: -32700, Message: "Parse error"})
-			continue
+			return true
 		}
-
 		switch req.Method {
 		case "initialize":
 			handleInitialize(&req)
@@ -164,12 +163,12 @@ func main() {
 			}
 			if err := json.Unmarshal(req.Params, &p); err != nil || p.URI == "" {
 				writeResponse(req.ID, nil, &ErrorResponse{Code: -32602, Message: "Missing or invalid 'uri' parameter"})
-				continue
+				return true
 			}
 			content, _, err := readResource(p.URI)
 			if err != nil {
 				writeResponse(req.ID, nil, &ErrorResponse{Code: -32603, Message: err.Error()})
-				continue
+				return true
 			}
 			writeResponse(req.ID, &ResponseResult{Content: []ContentBlock{{Type: "text", Text: content}}}, nil)
 		case "tools/call":
@@ -177,6 +176,23 @@ func main() {
 		default:
 			writeResponse(req.ID, nil, &ErrorResponse{Code: -32601, Message: "Method not found"})
 		}
+		return true
+	}
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					fmt.Fprintf(os.Stderr, "request panic: %v\n", r)
+				}
+			}()
+			if cont := handleLine(line, resources); cont {
+				return
+			}
+		}()
 	}
 
 	if err := scanner.Err(); err != nil {
