@@ -1492,7 +1492,6 @@ func handleCommand(text string, config *Config, history *[]Message) {
 
 func runREPLWithReader(config *Config, history *[]Message, rl *readline.Instance, histFile string) {
 	printPrompt := func() { fmt.Print("You: ") }
-	printOutput := func(s string) { fmt.Printf("AI: %s\n", s) }
 
 	doTurn := func(ctx context.Context, text string) {
 		// Ensure context path is set
@@ -1514,7 +1513,6 @@ func runREPLWithReader(config *Config, history *[]Message, rl *readline.Instance
 			return
 		}
 
-		printOutput(ans)
 		*history = append(*history, Message{
 			Role:     "assistant",
 			Content:  ans,
