@@ -37,6 +37,7 @@ type Config struct {
 	Debug          bool
 	MCPPermissions map[string]string
 	ShowThinking   bool
+	ContextLimit   int // max estimated tokens before trimming; 0 = disabled
 }
 
 type Message struct {
@@ -148,7 +149,7 @@ var (
 	currentContextPath string
 
 	// Global MCP client (single active connection)
-	activeMCP *MCPClient
+	activeMCP *ResilientMCPClient
 )
 
 func saveHistoryToFile(history []Message, index int, filename string) error {
@@ -490,6 +491,12 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 	// Build a local copy of history for the tool loop — we extend it as we call tools
 	workingMsgs := make([]Message, len(msgs))
 	copy(workingMsgs, msgs)
+	// Trim context if a limit is configured and we're over it.
+	if config.ContextLimit > 0 && estimateTokens(workingMsgs) > config.ContextLimit {
+		workingMsgs = trimContext(ctx, config, workingMsgs)
+		// Also update the caller's history so the next turn starts trimmed.
+		// (We return the trimmed slice via the global — see note below.)
+	}
 	for {
 		content, thinking, toolCalls, err := streamOnce(ctx, config, workingMsgs)
 		if err != nil {
@@ -820,6 +827,10 @@ func saveConfig() {
 	} else {
 		envVars["SHOW_THINKING"] = "false"
 	}
+	if config.ContextLimit > 0 {
+		envVars["CONTEXT_LIMIT"] = strconv.Itoa(config.ContextLimit)
+		changed = true
+	}
 	if !changed {
 		return
 	}
@@ -979,6 +990,11 @@ func loadConfig() *Config {
 				if key == "SHOW_THINKING" {
 					c.ShowThinking = (val == "true")
 				}
+				if key == "CONTEXT_LIMIT" {
+					if n, err := strconv.Atoi(val); err == nil {
+						c.ContextLimit = n
+					}
+				}
 			}
 		}
 	}
@@ -999,6 +1015,31 @@ func handleCommand(text string, config *Config, history *[]Message) {
 	}
 
 	switch cmd {
+	case "/ctx":
+		if arg == "" {
+			if config.ContextLimit == 0 {
+				fmt.Println("ℹ️  Context trimming disabled. Use /ctx <tokens> to enable (e.g. /ctx 6000).")
+			} else {
+				fmt.Printf("ℹ️  Context limit: %d tokens (~%d chars). Current usage: ~%d tokens.\n",
+					config.ContextLimit, config.ContextLimit*4, estimateTokens(*history))
+			}
+			return
+		}
+		if arg == "off" {
+			config.ContextLimit = 0
+			saveConfig()
+			fmt.Println("✅ Context trimming disabled.")
+			return
+		}
+		n, err := strconv.Atoi(arg)
+		if err != nil || n < 500 {
+			fmt.Println("❌ Usage: /ctx <tokens> (min 500) or /ctx off")
+			return
+		}
+		config.ContextLimit = n
+		saveConfig()
+		fmt.Printf("✅ Context limit set to %d tokens. Current usage: ~%d tokens.\n",
+			n, estimateTokens(*history))
 	case "/showthink":
 		switch arg {
 		case "on":
@@ -1036,12 +1077,6 @@ func handleCommand(text string, config *Config, history *[]Message) {
 		fmt.Printf("✅ Permission for '%s' set to [%s]\n", toolName, perm)
 
 	case "/edit":
-		// We don't process the turn here because handleCommand
-		// doesn't have access to the 'doTurn' function or context.
-		// We will use a special return value or a flag.
-		// For simplicity in this architecture, let's use a global-ish approach
-		// or handle it in the REPL.
-		// Let's just print a hint for the REPL.
 		fmt.Println("📝 Opening editor... Write your text, save, and exit to send.")
 		return
 
@@ -1062,7 +1097,7 @@ func handleCommand(text string, config *Config, history *[]Message) {
 				fmt.Println("  /mcp docs list              — list available resources")
 				fmt.Println("  /mcp docs read <uri>        — read resource contents")
 			} else {
-				fmt.Printf("✅ MCP connected: %s\n", activeMCP.spec)
+				fmt.Printf("✅ MCP connected: %s\n", activeMCP.Spec)
 				fmt.Printf("   %d tool(s) available\n", len(activeMCP.Tools()))
 			}
 			return
@@ -1188,18 +1223,20 @@ func handleCommand(text string, config *Config, history *[]Message) {
 		}
 
 		// Connect
-		var newMCP *MCPClient
+		var newMCP *ResilientMCPClient
 		var err error
 
 		switch {
 		case strings.HasPrefix(arg, "tcp://"):
 			fmt.Printf("🔌 Connecting to MCP TCP server: %s\n", arg)
-			newMCP, err = ConnectTCP(arg)
+			raw, e := ConnectTCP(arg)
+			newMCP, err = NewResilientPassthrough(raw), e
 		case strings.HasPrefix(arg, "http"):
-			newMCP, err = ConnectSSE(arg)
+			raw, e := ConnectSSE(arg)
+			newMCP, err = NewResilientPassthrough(raw), e
 		default:
 			fmt.Printf("🚀 Launching MCP stdio server: %s\n", arg)
-			newMCP, err = ConnectStdio(parts[1:])
+			newMCP, err = NewResilientStdio(parts[1:])
 		}
 
 		if err != nil {
@@ -1209,7 +1246,7 @@ func handleCommand(text string, config *Config, history *[]Message) {
 
 		activeMCP = newMCP
 		tools := activeMCP.Tools()
-		fmt.Printf("✅ MCP connected: %s\n", activeMCP.spec)
+		fmt.Printf("✅ MCP connected: %s\n", activeMCP.Spec)
 		fmt.Printf("   %d tool(s) available:\n", len(tools))
 		for _, t := range tools {
 			fmt.Printf("   • %s — %s\n", t.Name, t.Description)
@@ -1314,6 +1351,8 @@ func handleCommand(text string, config *Config, history *[]Message) {
 		fmt.Println("  /mcp off                      - Disconnect MCP server")
 		fmt.Println("  /mcp tools                    - List available MCP tools")
 		fmt.Println("  /mcp refresh                  - Refresh MCP tool list")
+		fmt.Println("  /mcpfunc <func> <perm>        - Set permission for tools func, auto|denied|ask")
+		fmt.Println("  /ctx <N>|off                  - Set context token limit (auto-trim when exceeded)")
 
 	case "/use":
 		if arg == "" {
@@ -1447,7 +1486,7 @@ func handleCommand(text string, config *Config, history *[]Message) {
 	case "/p":
 		fmt.Printf("Current config: %s\n", u.JsonDump(config, ""))
 		if activeMCP != nil {
-			fmt.Printf("MCP: %s (%d tools)\n", activeMCP.spec, len(activeMCP.Tools()))
+			fmt.Printf("MCP: %s (%d tools)\n", activeMCP.Spec, len(activeMCP.Tools()))
 		} else {
 			fmt.Println("MCP: not connected")
 		}
@@ -1596,7 +1635,7 @@ func runREPLWithReader(config *Config, history *[]Message, rl *readline.Instance
 			if text == "/exit" || text == "/q" {
 				return
 			}
-			if strings.HasPrefix(text, "/h") {
+			if text == "/h" {
 				printHistory(*history)
 				continue
 			}

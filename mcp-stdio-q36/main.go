@@ -189,9 +189,7 @@ func main() {
 					fmt.Fprintf(os.Stderr, "request panic: %v\n", r)
 				}
 			}()
-			if cont := handleLine(line, resources); cont {
-				return
-			}
+			handleLine(line, resources)
 		}()
 	}
 

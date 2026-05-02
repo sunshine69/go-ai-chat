@@ -135,7 +135,6 @@ func (s *sseReadWriteCloser) Write(p []byte) (int, error) {
 }
 
 // ConnectSSE connects to an MCP server via SSE (Server-Sent Events).
-// ConnectSSE connects to an MCP server via SSE (Server-Sent Events).
 func ConnectSSE(url string) (*MCPClient, error) {
 	client := &http.Client{Timeout: 0} // SSE needs no timeout for the stream
 	resp, err := client.Get(url)
@@ -501,4 +500,141 @@ func (c *MCPClient) UnsubscribeResource(uri string) error {
 	}
 	_, err := c.call("resources/unsubscribe", params)
 	return err
+}
+
+// ---------------------------------------------------------------------------
+// ResilientMCPClient — auto-reconnecting wrapper for stdio servers
+// ---------------------------------------------------------------------------
+
+// MCPClientIface abstracts the methods callers use, so ResilientMCPClient
+// can be a drop-in for *MCPClient.
+type MCPClientIface interface {
+	CallTool(name string, arguments map[string]interface{}) (string, error)
+	Tools() []mcpTool
+	Resources() ([]mcpResource, error)
+	ReadResource(uri string) (string, error)
+	refreshTools() error
+	Close() error
+}
+
+// ResilientMCPClient wraps a stdio MCPClient and transparently reconnects
+// if the child process dies.  TCP/SSE connections are passed through as-is.
+type ResilientMCPClient struct {
+	mu       sync.Mutex
+	inner    *MCPClient
+	parts    []string // nil → not a stdio connection (TCP/SSE)
+	maxRetry int
+	backoff  time.Duration
+	// exposed for /p display
+	Spec string
+}
+
+// NewResilientStdio wraps ConnectStdio with auto-reconnect behaviour.
+func NewResilientStdio(parts []string) (*ResilientMCPClient, error) {
+	inner, err := ConnectStdio(parts)
+	if err != nil {
+		return nil, err
+	}
+	return &ResilientMCPClient{
+		inner:    inner,
+		parts:    parts,
+		maxRetry: 3,
+		backoff:  500 * time.Millisecond,
+		Spec:     inner.spec,
+	}, nil
+}
+
+// NewResilientPassthrough wraps a non-stdio client (TCP/SSE) with no retry logic.
+func NewResilientPassthrough(c *MCPClient) *ResilientMCPClient {
+	return &ResilientMCPClient{inner: c, Spec: c.spec}
+}
+
+// reconnect tears down the dead inner client and starts a fresh one.
+// Caller must hold r.mu.
+func (r *ResilientMCPClient) reconnect() error {
+	if r.parts == nil {
+		return fmt.Errorf("reconnect not supported for non-stdio connections")
+	}
+	if r.inner != nil {
+		r.inner.Close() // best-effort; process may already be gone
+	}
+	fmt.Println("🔄 MCP server died — reconnecting…")
+	var lastErr error
+	for attempt := 1; attempt <= r.maxRetry; attempt++ {
+		c, err := ConnectStdio(r.parts)
+		if err == nil {
+			r.inner = c
+			fmt.Printf("✅ MCP reconnected (attempt %d)\n", attempt)
+			return nil
+		}
+		lastErr = err
+		fmt.Printf("   ⚠️  attempt %d/%d failed: %v\n", attempt, r.maxRetry, err)
+		time.Sleep(r.backoff * time.Duration(attempt)) // simple exponential-ish back-off
+	}
+	return fmt.Errorf("could not reconnect after %d attempts: %w", r.maxRetry, lastErr)
+}
+
+// isDeadErr returns true for I/O errors that indicate the child process is gone.
+func isDeadErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "EOF") ||
+		strings.Contains(msg, "broken pipe") ||
+		strings.Contains(msg, "io: read/write on closed pipe") ||
+		strings.Contains(msg, "file already closed")
+}
+
+// CallTool calls the tool; on a dead-connection error it reconnects once and retries.
+func (r *ResilientMCPClient) CallTool(name string, arguments map[string]interface{}) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	result, err := r.inner.CallTool(name, arguments)
+	if err == nil {
+		return result, nil
+	}
+	if !isDeadErr(err) || r.parts == nil {
+		return "", err // not a connectivity problem, or not stdio — surface as-is
+	}
+
+	// Connection is dead — attempt reconnect then retry once
+	if reconnErr := r.reconnect(); reconnErr != nil {
+		return "", fmt.Errorf("tool call failed and reconnect failed: %w", reconnErr)
+	}
+	return r.inner.CallTool(name, arguments)
+}
+
+func (r *ResilientMCPClient) Tools() []mcpTool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.inner.Tools()
+}
+
+func (r *ResilientMCPClient) Resources() ([]mcpResource, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.inner.Resources()
+}
+
+func (r *ResilientMCPClient) ReadResource(uri string) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.inner.ReadResource(uri)
+}
+
+func (r *ResilientMCPClient) refreshTools() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.inner.refreshTools()
+}
+
+func (r *ResilientMCPClient) Close() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.inner != nil {
+		return r.inner.Close()
+	}
+	return nil
 }
