@@ -251,7 +251,7 @@ func handleToolsList(req *Request) {
 		{
 			Name:        "http_request",
 			Description: "Sends an HTTP request to an external URL with support for custom methods, headers, and request body. Useful for API calls, data retrieval, and performing external operations. Pass headers via the 'headers' parameter for authentication.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"method":{"type":"string","description":"HTTP method (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS)"},{"url":{"type":"string","description":"The URL to send the request to"},"headers":{"type":"object","description":"Optional HTTP headers (e.g., \"Authorization\":\"Bearer XXX\", )"},{"body":{"type":"string","description":"Optional request body (string or JSON)"}},"required":["method","url"]}`),
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"method":{"type":"string","description":"HTTP method (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS)","url":{"type":"string","description":"The URL to send the request to"},"headers":{"type":"object","description":"Optional HTTP headers (e.g., Authorization: Bearer XXX, )"},"body":{"type":"string","description":"Optional request body (string or JSON)"}}},"required":["method","url"]}`),
 		},
 	}
 
