@@ -1191,10 +1191,13 @@ func handleCommand(text string, config *Config, history *[]Message) {
 		var newMCP *MCPClient
 		var err error
 
-		if strings.HasPrefix(arg, "tcp://") {
+		switch {
+		case strings.HasPrefix(arg, "tcp://"):
 			fmt.Printf("🔌 Connecting to MCP TCP server: %s\n", arg)
 			newMCP, err = ConnectTCP(arg)
-		} else {
+		case strings.HasPrefix(arg, "http"):
+			newMCP, err = ConnectSSE(arg)
+		default:
 			fmt.Printf("🚀 Launching MCP stdio server: %s\n", arg)
 			newMCP, err = ConnectStdio(parts[1:])
 		}
