@@ -138,7 +138,7 @@ func summariseMessages(ctx context.Context, cfg Config, msgs []Message) string {
 	// Suppress thinking output during background summarisation.
 	summaryCfg.ShowThinking = false
 
-	subCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	subCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
 	content, _, _, err := streamOnce(subCtx, summaryCfg, summaryMsgs)
 	if err != nil || strings.TrimSpace(content) == "" {
