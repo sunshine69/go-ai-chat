@@ -40,9 +40,8 @@ func estimateTokens(msgs []Message) int {
 //
 // If the sub-call fails it falls back to simply dropping the middle messages.
 func trimContext(ctx context.Context, cfg Config, msgs []Message) []Message {
-	const keepTail = 6 // number of recent messages to always keep verbatim
+	const keepTail = 6
 
-	// Split off leading system messages — never compress those.
 	systemHead := []Message{}
 	rest := msgs
 	for len(rest) > 0 && rest[0].Role == "system" {
@@ -50,17 +49,14 @@ func trimContext(ctx context.Context, cfg Config, msgs []Message) []Message {
 		rest = rest[1:]
 	}
 
-	// Nothing to compress if the non-system tail is tiny.
 	if len(rest) <= keepTail+2 {
 		return msgs
 	}
 
-	// Divide: compress [0 .. len-keepTail) and keep [len-keepTail .. end) verbatim.
 	toCompress := rest[:len(rest)-keepTail]
 	toKeep := rest[len(rest)-keepTail:]
 
 	fmt.Println("✂️  Context too long — summarising older messages…")
-
 	summary := summariseMessages(ctx, cfg, toCompress)
 
 	summaryMsg := Message{
@@ -74,7 +70,19 @@ func trimContext(ctx context.Context, cfg Config, msgs []Message) []Message {
 	trimmed = append(trimmed, toKeep...)
 
 	after := estimateTokens(trimmed)
-	fmt.Printf("✅ Context trimmed (now ~%d tokens)\n", after)
+	target := cfg.ContextLimit / 2
+
+	// Still over half the limit — aggressively drop tail messages until we're under target
+	for after > target && len(toKeep) > 2 {
+		toKeep = toKeep[2:] // drop oldest pair from tail
+		trimmed = trimmed[:0]
+		trimmed = append(trimmed, systemHead...)
+		trimmed = append(trimmed, summaryMsg)
+		trimmed = append(trimmed, toKeep...)
+		after = estimateTokens(trimmed)
+	}
+
+	fmt.Printf("✅ Context trimmed (now ~%d tokens, target <%d)\n", after, target)
 	return trimmed
 }
 
