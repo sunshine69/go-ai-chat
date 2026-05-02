@@ -122,13 +122,12 @@ func summariseMessages(ctx context.Context, cfg Config, msgs []Message) string {
 	// Use a short timeout for the sub-call so it doesn't block the user long.
 	subCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-
 	content, _, _, err := streamOnce(subCtx, cfg, summaryMsgs)
 	if err != nil || strings.TrimSpace(content) == "" {
-		// Fallback: plain truncated transcript
+		fmt.Println(" Fallback: plain truncated transcript")
 		t := transcript.String()
-		if len(t) > 2000 {
-			t = t[:2000] + "\n…(truncated)"
+		if len(t) > cfg.ContextLimit {
+			t = t[:cfg.ContextLimit] + "\n…(truncated)"
 		}
 		return t
 	}
