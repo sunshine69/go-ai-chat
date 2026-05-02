@@ -1018,13 +1018,13 @@ func handleCommand(text string, config *Config, history *[]Message) {
 			return
 		}
 		// parts := strings.SplitN(arg, " ", 2)
-		if len(parts) < 2 {
+		if len(parts) < 3 {
 			fmt.Println("❌ Error: Missing permission level. Usage: /mcpfunc <name> <auto|ask|deny>")
 			return
 		}
 
-		toolName := parts[0]
-		perm := strings.ToLower(parts[1])
+		toolName := parts[1]
+		perm := strings.ToLower(parts[2])
 
 		if perm != "auto" && perm != "ask" && perm != "deny" {
 			fmt.Println("❌ Error: Invalid permission level. Use 'auto', 'ask', or 'deny'.")
