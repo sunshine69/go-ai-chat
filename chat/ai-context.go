@@ -119,10 +119,20 @@ func summariseMessages(ctx context.Context, cfg Config, msgs []Message) string {
 		{Role: "user", Content: prompt},
 	}
 
-	// Use a short timeout for the sub-call so it doesn't block the user long.
+	// Build a lightweight config for the summariser: same connection details
+	// but swap in the dedicated summary model (if configured).
+	summaryCfg := cfg
+	if cfg.SummaryModel != "" {
+		summaryCfg.Model = cfg.SummaryModel
+	}
+	// Disable context trimming for the sub-call to avoid recursion.
+	summaryCfg.ContextLimit = 0
+	// Suppress thinking output during background summarisation.
+	summaryCfg.ShowThinking = false
+
 	subCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	content, _, _, err := streamOnce(subCtx, cfg, summaryMsgs)
+	content, _, _, err := streamOnce(subCtx, summaryCfg, summaryMsgs)
 	if err != nil || strings.TrimSpace(content) == "" {
 		fmt.Println(" Fallback: plain truncated transcript")
 		t := transcript.String()
@@ -132,4 +142,5 @@ func summariseMessages(ctx context.Context, cfg Config, msgs []Message) string {
 		return t
 	}
 	return content
+
 }
