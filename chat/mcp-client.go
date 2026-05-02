@@ -2,10 +2,12 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -79,12 +81,15 @@ type ToolCall struct {
 // ---------------------------------------------------------------------------
 
 type MCPClient struct {
-	mu      sync.Mutex
-	conn    io.ReadWriteCloser // TCP or pipe wrapper
-	scanner *bufio.Scanner
-	nextID  atomic.Int64
-	tools   []mcpTool
-	spec    string // original spec for display
+	mu         sync.Mutex
+	conn       io.ReadWriteCloser // TCP or pipe wrapper
+	scanner    *bufio.Scanner
+	nextID     atomic.Int64
+	tools      []mcpTool
+	spec       string // original spec for display
+	isSSE      bool   // true if using SSE/HTTP mode
+	postURL    string // the endpoint URL for POSTing requests in SSE mode
+	httpClient *http.Client
 }
 
 // pipeReadWriter wraps an exec.Cmd's stdin/stdout into a single ReadWriteCloser
@@ -116,6 +121,68 @@ func ConnectTCP(address string) (*MCPClient, error) {
 		conn.Close()
 		return nil, err
 	}
+	return c, nil
+}
+
+// sseReadWriteCloser wraps an io.ReadCloser to satisfy io.ReadWriteCloser
+// because in SSE mode, writing is handled via HTTP POST, not the stream.
+type sseReadWriteCloser struct {
+	io.ReadCloser
+}
+
+func (s *sseReadWriteCloser) Write(p []byte) (int, error) {
+	return len(p), nil // No-op
+}
+
+// ConnectSSE connects to an MCP server via SSE (Server-Sent Events).
+// ConnectSSE connects to an MCP server via SSE (Server-Sent Events).
+func ConnectSSE(url string) (*MCPClient, error) {
+	client := &http.Client{Timeout: 0} // SSE needs no timeout for the stream
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("SSE connection failed: %w", err)
+	}
+
+	c := &MCPClient{
+		isSSE:      true,
+		httpClient: client,
+		spec:       "http://" + url,
+		// Wrap resp.Body so it satisfies io.ReadWriteCloser
+		conn: &sseReadWriteCloser{ReadCloser: resp.Body},
+	}
+
+	c.scanner = bufio.NewScanner(resp.Body)
+	c.scanner.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
+
+	// The connection is the response body
+	// We must parse the SSE stream to find the 'endpoint' event
+	// which provides the URL for POSTing messages.
+	foundEndpoint := false
+	for c.scanner.Scan() {
+		line := strings.TrimSpace(c.scanner.Text())
+		if strings.HasPrefix(line, "event: endpoint") {
+			// The next line should be "data: <url>"
+			if c.scanner.Scan() {
+				dataLine := strings.TrimSpace(c.scanner.Text())
+				if strings.HasPrefix(dataLine, "data: ") {
+					c.postURL = strings.TrimPrefix(dataLine, "data: ")
+					foundEndpoint = true
+					break
+				}
+			}
+		}
+	}
+
+	if !foundEndpoint {
+		resp.Body.Close()
+		return nil, fmt.Errorf("could not find 'endpoint' event in SSE stream")
+	}
+
+	if err := c.initialize(); err != nil {
+		resp.Body.Close()
+		return nil, err
+	}
+
 	return c, nil
 }
 
@@ -160,27 +227,49 @@ func (c *MCPClient) send(req jsonRPCRequest) error {
 	if err != nil {
 		return err
 	}
+
+	if c.isSSE {
+		if c.postURL == "" {
+			return fmt.Errorf("SSE postURL not initialized")
+		}
+		resp, err := c.httpClient.Post(c.postURL, "application/json", bytes.NewBuffer(data))
+		if err != nil {
+			return err
+		}
+		resp.Body.Close()
+		return nil
+	}
+
+	// Standard TCP/Stdio: write with newline
 	data = append(data, '\n')
 	_, err = c.conn.Write(data)
 	return err
 }
 
 func (c *MCPClient) recv() (*jsonRPCResponse, error) {
-	if !c.scanner.Scan() {
-		if err := c.scanner.Err(); err != nil {
-			return nil, err
+	for c.scanner.Scan() {
+		line := strings.TrimSpace(c.scanner.Text())
+		if line == "" || strings.HasPrefix(line, "event:") {
+			continue
 		}
-		return nil, io.EOF
+
+		// For SSE, the data is prefixed with "data: "
+		if c.isSSE && strings.HasPrefix(line, "data: ") {
+			line = strings.TrimPrefix(line, "data: ")
+		}
+
+		var resp jsonRPCResponse
+		if err := json.Unmarshal([]byte(line), &resp); err != nil {
+			// If it's not a valid JSON-RPC message, skip it (e.g. other SSE events)
+			continue
+		}
+		return &resp, nil
 	}
-	line := c.scanner.Text()
-	if line == "" {
-		return nil, fmt.Errorf("empty line from server")
+
+	if err := c.scanner.Err(); err != nil {
+		return nil, err
 	}
-	var resp jsonRPCResponse
-	if err := json.Unmarshal([]byte(line), &resp); err != nil {
-		return nil, fmt.Errorf("unmarshal response %q: %w", line, err)
-	}
-	return &resp, nil
+	return nil, io.EOF
 }
 
 func (c *MCPClient) call(method string, params interface{}) (*jsonRPCResponse, error) {
