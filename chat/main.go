@@ -143,7 +143,7 @@ func handleNonInteractive(config *Config) (runmode string) {
 			}
 
 			history = append(history, Message{Role: "user", Content: question})
-			ans, thinking, err := askAI(ctx, *config, history)
+			ans, thinking, l_history, err := askAI(ctx, *config, history)
 			signal.Stop(sigChan)
 			cancel()
 
@@ -151,7 +151,7 @@ func handleNonInteractive(config *Config) (runmode string) {
 				fmt.Fprintf(os.Stderr, "\n❌ Error: %v\n", err)
 				return
 			}
-			history = append(history, Message{
+			history = append(l_history, Message{
 				Role:     "assistant",
 				Content:  ans,
 				Thinking: thinking,
@@ -782,11 +782,10 @@ func runREPLWithReader(config *Config, history *[]Message, rl *readline.Instance
 		}
 
 		*history = append(*history, Message{Role: "user", Content: text})
-
-		ans, thinking, err := askAI(ctx, *config, *history)
+		ans, thinking, l_history, err := askAI(ctx, *config, *history)
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
-			*history = (*history)[:len(*history)-1]
+			*history = (l_history)[:len(l_history)-1]
 			return
 		}
 
@@ -794,7 +793,7 @@ func runREPLWithReader(config *Config, history *[]Message, rl *readline.Instance
 			return
 		}
 
-		*history = append(*history, Message{
+		*history = append(l_history, Message{
 			Role:     "assistant",
 			Content:  ans,
 			Thinking: thinking,

@@ -16,26 +16,22 @@ import (
 // askAI — streams the response; if MCP is active, injects tools and handles
 // tool_calls returned by the model in a loop until the model gives a final answer.
 // ---------------------------------------------------------------------------
-
-func askAI(ctx context.Context, config Config, msgs []Message) (string, string, error) {
+func askAI(ctx context.Context, config Config, msgs []Message) (string, string, []Message, error) {
 	// Build a local copy of history for the tool loop — we extend it as we call tools
 	workingMsgs := make([]Message, len(msgs))
 	copy(workingMsgs, msgs)
-	// Trim context if a limit is configured and we're over it.
-	if config.ContextLimit > 0 && estimateTokens(workingMsgs) > config.ContextLimit {
-		fmt.Printf("📊 Context size: ~%d tokens (limit: %d)\n", estimateTokens(workingMsgs), config.ContextLimit)
-		workingMsgs = trimContext(ctx, config, workingMsgs)
-		// Also update the caller's history so the next turn starts trimmed.
-		// (We return the trimmed slice via the global — see note below.)
-	}
 	for {
+		if config.ContextLimit > 0 && estimateTokens(workingMsgs) > config.ContextLimit {
+			fmt.Printf("📊 Context size: ~%d tokens (limit: %d)\n", estimateTokens(workingMsgs), config.ContextLimit)
+			workingMsgs = trimContext(ctx, config, workingMsgs)
+		}
 		content, thinking, toolCalls, err := streamOnce(ctx, config, workingMsgs)
 		if err != nil {
-			return content, thinking, err
+			return content, thinking, workingMsgs, err
 		}
 		// No tool calls — we're done
 		if len(toolCalls) == 0 {
-			return content, thinking, nil
+			return content, thinking, workingMsgs, nil
 		}
 		// Append the assistant's tool-call turn
 		workingMsgs = append(workingMsgs, Message{
@@ -117,6 +113,7 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 			}
 			fmt.Print("\n> 📝 Response:\n")
 		}
+		return content, thinking, workingMsgs, nil
 	}
 }
 
@@ -215,7 +212,7 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 				os.Stdout.Sync()
 			} else {
 				if !thinkingStarted {
-					fmt.Print("\n> 🤔 Thinking disabled, run /showthink on to enable\n")
+					fmt.Print("\n> 🤔 Thinking hidden, run /showthink on to enable\n")
 					thinkingStarted = true
 				}
 			}
