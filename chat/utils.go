@@ -274,7 +274,7 @@ func saveConfig() {
 		envVars["TIMEOUT"] = config.Timeout.String()
 		changed = true
 	}
-	if config.SummaryModelTimeout != "60s" {
+	if config.SummaryModelTimeout != "" {
 		envVars["SUMMARY_MODEL_TIMEOUT"] = config.SummaryModelTimeout
 		changed = true
 	}

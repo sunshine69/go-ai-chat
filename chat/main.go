@@ -173,7 +173,7 @@ func handleNonInteractive(config *Config) (runmode string) {
 			if len(cmdArgs) > 0 {
 				fullCmd = cmd + " " + strings.Join(cmdArgs, " ")
 			}
-			handleCommand(fullCmd, config, &history)
+			handleCommand(fullCmd, &history)
 		}
 	}
 	return
@@ -231,7 +231,7 @@ func appendHistoryFile(filename, line string) error {
 // Command handler
 // ---------------------------------------------------------------------------
 
-func handleCommand(text string, config *Config, history *[]Message) {
+func handleCommand(text string, history *[]Message) {
 	parts := strings.SplitN(text, " ", -1)
 	cmd := parts[0]
 	arg := ""
@@ -878,7 +878,7 @@ func runREPLWithReader(config *Config, history *[]Message, rl *readline.Instance
 				printHistory(*history)
 				continue
 			}
-			handleCommand(text, config, history)
+			handleCommand(text, history)
 			if config.Debug {
 				fmt.Printf("[DEBUG] config: %v\n", *config)
 			}
