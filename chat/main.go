@@ -691,6 +691,13 @@ func handleCommand(text string, config *Config, history *[]Message) {
 		}
 		config.SummaryModel = arg
 		fmt.Printf("Summary Model switched to: %s\n", arg)
+	case "/msto":
+		if arg == "" {
+			fmt.Println("Usage: /msto <summary-model-timout> eg. 300s")
+			return
+		}
+		config.SummaryModelTimeout = arg
+		fmt.Printf("Summary Model Timeout switched to: %s\n", arg)
 
 	case "/url":
 		if arg == "" {

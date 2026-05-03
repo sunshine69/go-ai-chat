@@ -4,18 +4,19 @@ import "time"
 
 // https://github.com/hymkor/go-multiline-ny for multiline support TODO
 type Config struct {
-	BaseURL        string
-	Model          string
-	SummaryModel   string // model used for context summarisation; falls back to Model if empty
-	APIKey         string
-	Timeout        time.Duration
-	PromptedURL    bool
-	PromptedModel  bool
-	PromptedAPIKey bool
-	Debug          bool
-	MCPPermissions map[string]string
-	ShowThinking   bool
-	ContextLimit   int // max estimated tokens before trimming; 0 = disabled
+	BaseURL             string
+	Model               string
+	SummaryModel        string // model used for context summarisation; falls back to Model if empty
+	SummaryModelTimeout string
+	APIKey              string
+	Timeout             time.Duration
+	PromptedURL         bool
+	PromptedModel       bool
+	PromptedAPIKey      bool
+	Debug               bool
+	MCPPermissions      map[string]string
+	ShowThinking        bool
+	ContextLimit        int // max estimated tokens before trimming; 0 = disabled
 }
 
 type Message struct {

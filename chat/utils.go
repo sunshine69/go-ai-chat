@@ -274,6 +274,10 @@ func saveConfig() {
 		envVars["TIMEOUT"] = config.Timeout.String()
 		changed = true
 	}
+	if config.SummaryModelTimeout != "60s" {
+		envVars["SUMMARY_MODEL_TIMEOUT"] = config.SummaryModelTimeout
+		changed = true
+	}
 	if config.ShowThinking {
 		envVars["SHOW_THINKING"] = "true"
 	} else {
@@ -386,15 +390,16 @@ func promptForMissingConfig(config *Config) {
 
 func loadConfig() *Config {
 	c := Config{
-		BaseURL:        os.Getenv("OPENAI_URL"),
-		Model:          os.Getenv("OPENAI_MODEL"),
-		SummaryModel:   os.Getenv("SUMMARY_MODEL"),
-		APIKey:         os.Getenv("OPENAI_API_KEY"),
-		Timeout:        45 * time.Minute,
-		PromptedURL:    false,
-		PromptedModel:  false,
-		PromptedAPIKey: false,
-		MCPPermissions: make(map[string]string),
+		BaseURL:             os.Getenv("OPENAI_URL"),
+		Model:               os.Getenv("OPENAI_MODEL"),
+		SummaryModel:        os.Getenv("SUMMARY_MODEL"),
+		SummaryModelTimeout: u.Getenv("SUMMARY_MODEL_TIMEOUT", "60s"),
+		APIKey:              os.Getenv("OPENAI_API_KEY"),
+		Timeout:             45 * time.Minute,
+		PromptedURL:         false,
+		PromptedModel:       false,
+		PromptedAPIKey:      false,
+		MCPPermissions:      make(map[string]string),
 	}
 
 	if timeoutStr := os.Getenv("TIMEOUT"); timeoutStr != "" {

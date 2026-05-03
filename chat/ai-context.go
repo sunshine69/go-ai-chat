@@ -138,7 +138,13 @@ func summariseMessages(ctx context.Context, cfg Config, msgs []Message) string {
 	// Suppress thinking output during background summarisation.
 	summaryCfg.ShowThinking = false
 
-	subCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	timeout, err := time.ParseDuration(config.SummaryModelTimeout)
+	if err != nil {
+		println("[ERROR] malformed config.SummaryModelTimeout")
+		timeout, _ = time.ParseDuration("60s")
+		config.SummaryModelTimeout = "60s"
+	}
+	subCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	content, _, _, err := streamOnce(subCtx, summaryCfg, summaryMsgs)
 	if err != nil || strings.TrimSpace(content) == "" {
