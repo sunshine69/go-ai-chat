@@ -23,6 +23,7 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 	copy(workingMsgs, msgs)
 	// Trim context if a limit is configured and we're over it.
 	if config.ContextLimit > 0 && estimateTokens(workingMsgs) > config.ContextLimit {
+		fmt.Printf("📊 Context size: ~%d tokens (limit: %d)\n", estimateTokens(workingMsgs), config.ContextLimit)
 		workingMsgs = trimContext(ctx, config, workingMsgs)
 		// Also update the caller's history so the next turn starts trimmed.
 		// (We return the trimmed slice via the global — see note below.)
