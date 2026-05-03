@@ -103,17 +103,17 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 				} else {
 					toolResult = "error: no MCP client connected"
 				}
-
-				workingMsgs = append(workingMsgs, Message{
-					Role:       "tool",
-					ToolCallID: tc.ID,
-					Name:       tc.Function.Name,
-					Content:    toolResult,
-				})
 			}
-			fmt.Print("\n> 📝 Response:\n")
+			// Always append the tool result (including permission-denied errors) so the
+			// model receives a result for every tool call it made.
+			workingMsgs = append(workingMsgs, Message{
+				Role:       "tool",
+				ToolCallID: tc.ID,
+				Name:       tc.Function.Name,
+				Content:    toolResult,
+			})
 		}
-		return content, thinking, workingMsgs, nil
+		// Tool results appended — loop back to call the model for its final response.
 	}
 }
 
