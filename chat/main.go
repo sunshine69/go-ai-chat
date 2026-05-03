@@ -70,8 +70,7 @@ func main() {
 	} else {
 		// Non-Interactive Mode (One-shot commands or chat)
 		config.ShowThinking = false
-		runMode = "nonit"
-		handleNonInteractive(config)
+		runMode = handleNonInteractive(config)
 	}
 	// --- CHANGE ENDS HERE ---
 	if runMode != "nonit" {
@@ -90,7 +89,8 @@ func main() {
 // ---------------------------------------------------------------------------
 // Non-interactive mode
 // ---------------------------------------------------------------------------
-func handleNonInteractive(config *Config) {
+func handleNonInteractive(config *Config) (runmode string) {
+	runmode = "nonit"
 	args := os.Args[1:]
 	if len(args) == 0 {
 		return
@@ -115,6 +115,7 @@ func handleNonInteractive(config *Config) {
 		switch cmd {
 		case "/repl":
 			runREPL(*config)
+			runmode = ""
 			return
 
 		case "/c", "/chat", "/q", "/question":
@@ -175,6 +176,7 @@ func handleNonInteractive(config *Config) {
 			handleCommand(fullCmd, config, &history)
 		}
 	}
+	return
 }
 
 func runREPL(config Config) {
