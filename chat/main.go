@@ -66,7 +66,7 @@ func main() {
 		if err != nil {
 			rl = nil
 		}
-		runREPLWithReader(config, &history, rl, histFile)
+		runREPLWithReader(&history, rl, histFile)
 	} else {
 		// Non-Interactive Mode (One-shot commands or chat)
 		config.ShowThinking = false
@@ -114,7 +114,7 @@ func handleNonInteractive(config *Config) (runmode string) {
 
 		switch cmd {
 		case "/repl":
-			runREPL(*config)
+			runREPL()
 			runmode = ""
 			return
 
@@ -179,14 +179,14 @@ func handleNonInteractive(config *Config) (runmode string) {
 	return
 }
 
-func runREPL(config Config) {
+func runREPL() {
 	histFile := filepath.Join(homeDir, ".aig_history_lines")
 	rl, err := readline.NewEx(&readline.Config{Prompt: "> ", HistoryFile: histFile, HistoryLimit: 5000})
 	if err != nil {
 		rl = nil
 	}
-	cfgPtr := config
-	runREPLWithReader(&cfgPtr, &history, rl, histFile)
+	// cfgPtr := config
+	runREPLWithReader(&history, rl, histFile)
 }
 
 // ---------------------------------------------------------------------------
@@ -240,6 +240,82 @@ func handleCommand(text string, history *[]Message) {
 	}
 
 	switch cmd {
+
+	case "/trimctx":
+		if arg == "" {
+			fmt.Println("Usage: /trimctx <index> or /trimctx <start-end>")
+			fmt.Println("Example: /trimctx 3-5 or /trimctx -1--3")
+			return
+		}
+
+		// Helper to parse range or single integer
+		parseRange := func(s string) (int, int, bool) {
+			// Look for a hyphen that isn't the first character (to allow negative numbers)
+			for i := 1; i < len(s); i++ {
+				if s[i] == '-' {
+					leftStr := s[:i]
+					rightStr := s[i+1:]
+					l, errL := strconv.Atoi(leftStr)
+					r, errR := strconv.Atoi(rightStr)
+					if errL == nil && errR == nil {
+						return l, r, true
+					}
+				}
+			}
+			// If no range separator found, try parsing as a single integer
+			val, err := strconv.Atoi(s)
+			if err == nil {
+				return val, val, true
+			}
+			return 0, 0, false
+		}
+
+		start, end, ok := parseRange(arg)
+		if !ok {
+			fmt.Println("❌ Invalid format. Use <index> or <start-end> (e.g., 3-5-1--3)")
+
+			return
+		}
+
+		hLen := len(*history)
+		if hLen == 0 {
+			fmt.Println("ℹ️  History is empty.")
+			return
+		}
+
+		// Convert negative indices to absolute positions
+		absStart := start
+		if start < 0 {
+			absStart = hLen + start
+		}
+		absEnd := end
+		if end < 0 {
+			absEnd = hLen + end
+		}
+
+		// Determine the actual boundaries (handles cases like 5-3 or -1--3)
+		minIdx, maxIdx := absStart, absEnd
+		if absStart > absEnd {
+			minIdx, maxIdx = absEnd, absStart
+		}
+
+		// Validate bounds
+		if minIdx < 0 || maxIdx >= hLen || minIdx > maxIdx {
+			fmt.Printf("❌ Error: indices out of range (valid range: 0-%d)\n", hLen-1)
+			return
+		}
+
+		removedCount := maxIdx - minIdx + 1
+
+		// Perform the slice removal
+		// We create a new slice to avoid side effects during the append operation
+		newHistory := make([]Message, 0, hLen-removedCount)
+		newHistory = append(newHistory, (*history)[:minIdx]...)
+		newHistory = append(newHistory, (*history)[maxIdx+1:]...)
+		*history = newHistory
+
+		fmt.Printf("✂️  Removed %d messages (indices %d to %d).\n", removedCount, minIdx, maxIdx)
+
 	case "/ctx":
 		if arg == "" {
 			if config.ContextLimit == 0 {
@@ -578,6 +654,7 @@ func handleCommand(text string, history *[]Message) {
 		fmt.Println("  /mcp refresh                  - Refresh MCP tool list")
 		fmt.Println("  /mcpfunc <func> <perm>        - Set permission for tools func, auto|denied|ask")
 		fmt.Println("  /ctx <N>|off                  - Set context token limit (auto-trim when exceeded)")
+		fmt.Println("  /trimctx <idx|range>          - Remove messages at index or range (e.g. 3-5, -1--3)")
 
 	case "/use":
 		if arg == "" {
@@ -771,7 +848,7 @@ func handleCommand(text string, history *[]Message) {
 // REPL loop
 // ---------------------------------------------------------------------------
 
-func runREPLWithReader(config *Config, history *[]Message, rl *readline.Instance, histFile string) {
+func runREPLWithReader(history *[]Message, rl *readline.Instance, histFile string) {
 	printPrompt := func() { fmt.Print("You: ") }
 
 	doTurn := func(ctx context.Context, text string) {
