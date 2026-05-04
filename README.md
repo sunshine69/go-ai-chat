@@ -121,3 +121,10 @@ I intend to use pure go rather than other go ai sdk.
 But eventually I use "github.com/mark3labs/mcp-go/mcp" for the server part in one of the mcp code!
 
 Have fun!
+
+## Status
+
+- CLI chat/*.go
+Stable, most features completed.
+
+- MCP server is tested and best with mcp-stdio-q36/main.go . Users can make more and more to suit their case.
