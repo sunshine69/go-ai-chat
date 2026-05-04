@@ -7,10 +7,6 @@ import (
 	"time"
 )
 
-// ---------------------------------------------------------------------------
-// Context trimming
-// ---------------------------------------------------------------------------
-
 // estimateTokens gives a fast token count estimate (chars/4 is the standard rule of thumb).
 func estimateTokens(msgs []Message) int {
 	total := 0
@@ -23,138 +19,201 @@ func estimateTokens(msgs []Message) int {
 				total += len(p.Text) / 4
 			}
 		}
-		// Count tool call arguments too
 		for _, tc := range m.ToolCalls {
 			total += len(tc.Function.Arguments) / 4
 		}
-		total += 4 // per-message overhead (role tokens etc.)
+		total += 4
 	}
 	return total
 }
 
-// trimContext compresses the oldest messages when the token budget is exceeded.
-// It keeps:
-//   - any leading system messages untouched
-//   - the most recent 'keepTail' user/assistant turns verbatim (recent context is precious)
-//   - everything in between is summarised into one system message via a sub-call to the AI
+const (
+	keepHead = 2  // first N non-system messages to always preserve verbatim
+	keepTail = 10 // last N messages to always preserve verbatim (5 pairs)
+)
+
+// trimContext compresses the middle of the conversation when the token budget
+// is exceeded.
 //
-// If the sub-call fails it falls back to simply dropping the middle messages.
+// Strategy:
+//  1. Always keep all leading system messages untouched.
+//  2. Always keep the first keepHead non-system messages (conversation anchor).
+//  3. Always keep the last keepTail messages (recent context).
+//  4. Attempt to summarise the middle via an AI sub-call (with timeout).
+//  5. On timeout or failure, fall back to buildStructuredSummary — a fast,
+//     deterministic structured summary that extracts roles, tool calls, and
+//     content snippets without any network call.
 func trimContext(ctx context.Context, cfg Config, msgs []Message) []Message {
-	const keepTail = 6
-
-	systemHead := []Message{}
-	rest := msgs
-	for len(rest) > 0 && rest[0].Role == "system" {
-		systemHead = append(systemHead, rest[0])
-		rest = rest[1:]
-	}
-
-	if len(rest) <= keepTail+2 {
+	if estimateTokens(msgs) <= cfg.ContextLimit {
 		return msgs
 	}
 
-	toCompress := rest[:len(rest)-keepTail]
-	toKeep := rest[len(rest)-keepTail:]
+	systemHead, rest := splitSystemHead(msgs)
 
-	fmt.Println("✂️  Context too long — summarising older messages…")
-	summary := summariseMessages(ctx, cfg, toCompress)
+	if len(rest) <= keepHead+keepTail {
+		return msgs
+	}
 
+	head := rest[:keepHead]
+	middle := rest[keepHead : len(rest)-keepTail]
+	tail := rest[len(rest)-keepTail:]
+
+	if len(middle) == 0 {
+		return msgs
+	}
+
+	fmt.Printf("✂️  Context too long (~%d tokens) — compressing %d middle messages…\n",
+		estimateTokens(msgs), len(middle))
+
+	summary := tryAISummary(ctx, cfg, middle)
 	summaryMsg := Message{
 		Role:    "system",
-		Content: "[Conversation summary — earlier messages compressed]\n" + summary,
+		Content: summary,
 	}
 
-	trimmed := make([]Message, 0, len(systemHead)+1+len(toKeep))
-	trimmed = append(trimmed, systemHead...)
-	trimmed = append(trimmed, summaryMsg)
-	trimmed = append(trimmed, toKeep...)
+	trimmed := concat(systemHead, []Message{summaryMsg}, head, tail)
 
-	after := estimateTokens(trimmed)
+	// Progressive fallback: if still over half the limit, drop pairs from the
+	// older end of tail — never touch head or the last 2 messages.
 	target := cfg.ContextLimit / 2
-
-	// Still over half the limit — aggressively drop tail messages until we're under target
-	for after > target && len(toKeep) > 2 {
-		toKeep = toKeep[2:] // drop oldest pair from tail
-		trimmed = trimmed[:0]
-		trimmed = append(trimmed, systemHead...)
-		trimmed = append(trimmed, summaryMsg)
-		trimmed = append(trimmed, toKeep...)
-		after = estimateTokens(trimmed)
+	for estimateTokens(trimmed) > target && len(tail) > 2 {
+		tail = tail[2:]
+		trimmed = concat(systemHead, []Message{summaryMsg}, head, tail)
 	}
 
-	fmt.Printf("✅ Context trimmed (now ~%d tokens, target <%d)\n", after, target)
+	fmt.Printf("✅ Context trimmed to ~%d tokens (target <%d)\n",
+		estimateTokens(trimmed), target)
 	return trimmed
 }
 
-// summariseMessages asks the model to produce a concise summary of a slice of messages.
-// Falls back to a plain text concatenation if the API call fails.
-func summariseMessages(ctx context.Context, cfg Config, msgs []Message) string {
-	// Build a readable transcript to feed to the summariser.
-	var transcript strings.Builder
-	for _, m := range msgs {
-		role := m.Role
-		var text string
-		switch v := m.Content.(type) {
-		case string:
-			text = v
-		case []ContentPart:
-			for _, p := range v {
-				if p.Text != "" {
-					text += p.Text + " "
-				}
-			}
-		}
-		if text == "" && len(m.ToolCalls) > 0 {
-			names := make([]string, 0, len(m.ToolCalls))
-			for _, tc := range m.ToolCalls {
-				names = append(names, tc.Function.Name)
-			}
-			text = "[tool calls: " + strings.Join(names, ", ") + "]"
-		}
-		if text != "" {
-			transcript.WriteString(fmt.Sprintf("%s: %s\n\n", role, strings.TrimSpace(text)))
-		}
+// tryAISummary attempts to summarise msgs via the AI model within the
+// configured timeout. Returns a structured manual summary on any failure.
+func tryAISummary(ctx context.Context, cfg Config, msgs []Message) string {
+	const aiPrefix = "[Conversation summary — AI compressed]\n"
+	const manualPrefix = "[Conversation summary — auto compressed]\n"
+
+	if cfg.SummaryModel == "" && cfg.ContextLimit == 0 {
+		// Summarisation disabled entirely — go straight to manual.
+		return manualPrefix + buildStructuredSummary(msgs)
 	}
 
-	prompt := "The following is a conversation transcript. " +
-		"Produce a concise but complete summary that preserves: " +
-		"all decisions made, key facts established, file paths or code discussed, " +
-		"tool calls and their outcomes, and any open questions. " +
-		"Be dense — omit pleasantries only.\n\n" +
-		transcript.String()
-
-	summaryMsgs := []Message{
-		{Role: "user", Content: prompt},
+	timeout, err := time.ParseDuration(cfg.SummaryModelTimeout)
+	if err != nil {
+		fmt.Println("[WARN] malformed SummaryModelTimeout, defaulting to 60s")
+		timeout = 60 * time.Second
 	}
 
-	// Build a lightweight config for the summariser: same connection details
-	// but swap in the dedicated summary model (if configured).
+	subCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	summaryCfg := cfg
 	if cfg.SummaryModel != "" {
 		summaryCfg.Model = cfg.SummaryModel
 	}
-	// Disable context trimming for the sub-call to avoid recursion.
-	summaryCfg.ContextLimit = 0
-	// Suppress thinking output during background summarisation.
+	summaryCfg.ContextLimit = 0 // prevent recursion
 	summaryCfg.ShowThinking = false
 
-	timeout, err := time.ParseDuration(config.SummaryModelTimeout)
-	if err != nil {
-		println("[ERROR] malformed config.SummaryModelTimeout")
-		timeout, _ = time.ParseDuration("60s")
-		config.SummaryModelTimeout = "60s"
-	}
-	subCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+	prompt := buildSummaryPrompt(msgs)
+	summaryMsgs := []Message{{Role: "user", Content: prompt}}
+
 	content, _, _, err := streamOnce(subCtx, summaryCfg, summaryMsgs)
 	if err != nil || strings.TrimSpace(content) == "" {
-		fmt.Println(" Fallback: plain truncated transcript")
-		t := transcript.String()
-		if len(t) > cfg.ContextLimit {
-			t = t[:cfg.ContextLimit] + "\n…(truncated)"
+		if subCtx.Err() == context.DeadlineExceeded {
+			fmt.Println("⏱️  AI summary timed out — using structured fallback")
+		} else {
+			fmt.Println("⚠️  AI summary failed — using structured fallback")
 		}
-		return t
+		return manualPrefix + buildStructuredSummary(msgs)
 	}
-	return content
 
+	return aiPrefix + content
+}
+
+// buildSummaryPrompt constructs the prompt sent to the AI summariser.
+// Using the structured summary as the transcript keeps the prompt tight and
+// ensures tool calls / decisions are not lost even if the AI truncates.
+func buildSummaryPrompt(msgs []Message) string {
+	transcript := buildStructuredSummary(msgs)
+	return "The following is a structured transcript of a conversation. " +
+		"Produce a concise but complete summary preserving: " +
+		"all decisions made, key facts established, file paths or code discussed, " +
+		"tool calls and their outcomes, and any open questions. " +
+		"Be dense — omit pleasantries only.\n\n" +
+		transcript
+}
+
+// buildStructuredSummary produces a dense, structured plain-text summary of
+// the given messages without any AI call. It extracts:
+//   - each turn's role
+//   - tool calls with names and argument snippets
+//   - a content snippet per message (capped to keep the summary tight)
+//
+// This is used both as the AI prompt transcript and as the standalone fallback.
+func buildStructuredSummary(msgs []Message) string {
+	var b strings.Builder
+
+	for i, m := range msgs {
+		fmt.Fprintf(&b, "--- turn %d [%s] ---\n", i+1, m.Role)
+
+		text := extractText(m)
+		if len(text) > 400 {
+			text = text[:397] + "…"
+		}
+		if text != "" {
+			b.WriteString(text)
+			b.WriteString("\n")
+		}
+
+		for _, tc := range m.ToolCalls {
+			args := tc.Function.Arguments
+			if len(args) > 200 {
+				args = args[:197] + "…"
+			}
+			fmt.Fprintf(&b, "  [tool_call] %s(%s)\n", tc.Function.Name, args)
+		}
+
+		b.WriteString("\n")
+	}
+
+	return b.String()
+}
+
+// extractText pulls a plain string out of the polymorphic Content field.
+func extractText(m Message) string {
+	switch v := m.Content.(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case []ContentPart:
+		var parts []string
+		for _, p := range v {
+			if t := strings.TrimSpace(p.Text); t != "" {
+				parts = append(parts, t)
+			}
+		}
+		return strings.Join(parts, " ")
+	}
+	return ""
+}
+
+// splitSystemHead separates leading system-role messages from the rest.
+func splitSystemHead(msgs []Message) (system []Message, rest []Message) {
+	for i, m := range msgs {
+		if m.Role != "system" {
+			return msgs[:i], msgs[i:]
+		}
+	}
+	return msgs, nil
+}
+
+// concat joins multiple slices into one.
+func concat(slices ...[]Message) []Message {
+	total := 0
+	for _, s := range slices {
+		total += len(s)
+	}
+	out := make([]Message, 0, total)
+	for _, s := range slices {
+		out = append(out, s...)
+	}
+	return out
 }
