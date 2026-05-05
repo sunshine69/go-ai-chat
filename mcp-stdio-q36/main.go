@@ -244,7 +244,7 @@ func handleToolsList(req *Request) {
 		},
 		{
 			Name:        "create_new_file",
-			Description: "Creates a new file at the given path with the provided content. Fails if the file already exists unless overwrite is set to true.",
+			Description: "Creates a file at the given path with the provided content. If file exist and you can set overwrite to true to override.",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"The path where the new file should be created."},"content":{"type":"string","description":"The text content to write into the file."},"overwrite":{"type":"boolean","default":false}},"required":["path","content"]}`),
 		},
 		{
@@ -259,7 +259,7 @@ func handleToolsList(req *Request) {
 		},
 		{
 			Name:        "find_replace_in_file",
-			Description: "Performs a single find-and-replace operation in a file.",
+			Description: "Performs a single find-and-replace operation in a file. Support golang regex in the find string if use_regex enabled",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"find":{"type":"string"},"replace":{"type":"string"},"use_regex":{"type":"boolean","default":false},"replace_all":{"type":"boolean","default":false}},"required":["path","find","replace"]}`),
 		},
 		{
