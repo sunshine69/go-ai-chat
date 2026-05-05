@@ -19,6 +19,10 @@ import (
 	u "github.com/sunshine69/golang-tools/utils"
 )
 
+// pendingFileContent holds file content staged via /add that will be
+// prepended to the next user message instead of being sent immediately.
+var pendingFileContent string
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -47,13 +51,13 @@ func main() {
 		}
 	}
 
-	// --- CHANGE STARTS HERE ---
 	runMode := ""
 	if len(os.Args) == 1 {
 		// Standard REPL Mode
 		fmt.Println("AI Chat CLI - REPL Mode")
 		fmt.Println("Commands: /new, /add <file>, /r <cmd>, /exit, /history, /m <model>, /url <url> /list, /del <context>, /use <context>, /timeout <dur>, /mcp <spec>, /mcpfunc <func-name> <perm>")
 		fmt.Println("Use ↑/↓ arrow keys to navigate previous messages; type /history to see all.")
+		fmt.Println("Inline file attachment: include file://<path> anywhere in your message.")
 		fmt.Println("----------------------------------------")
 		if historyLoaded {
 			fmt.Printf("Loaded %d messages from previous session.\n", len(history)/2)
@@ -72,7 +76,7 @@ func main() {
 		config.ShowThinking = false
 		runMode = handleNonInteractive(config)
 	}
-	// --- CHANGE ENDS HERE ---
+
 	if runMode != "nonit" {
 		saveConfig()
 		if currentContextPath != "" {
@@ -124,8 +128,11 @@ func handleNonInteractive(config *Config) (runmode string) {
 				fmt.Fprintln(os.Stderr, "❌ No question provided after", cmd)
 				return
 			}
-			question := strings.Join(args[i:], " ")
+			rawQuestion := strings.Join(args[i:], " ")
 			i = len(args) // consume all remaining args
+
+			// Resolve inline file:// references in the question
+			question, inlineContent := extractInlineFiles(rawQuestion)
 
 			ctx, cancel := context.WithCancel(context.Background())
 			sigChan := make(chan os.Signal, 1)
@@ -142,7 +149,10 @@ func handleNonInteractive(config *Config) (runmode string) {
 				currentContextPath = filepath.Join(homeDir, ".aig", newContextName)
 			}
 
-			history = append(history, Message{Role: "user", Content: question})
+			// Build user message: staged files + inline files + question text
+			userMsg := buildUserMessage(question, inlineContent)
+
+			history = append(history, Message{Role: "user", Content: userMsg})
 			ans, thinking, l_history, err := askAI(ctx, *config, history)
 			signal.Stop(sigChan)
 			cancel()
@@ -179,13 +189,64 @@ func handleNonInteractive(config *Config) (runmode string) {
 	return
 }
 
+// ---------------------------------------------------------------------------
+// Inline file:// extraction helper
+// ---------------------------------------------------------------------------
+
+// extractInlineFiles scans text for file://<path> tokens, loads each file,
+// and returns the cleaned text (tokens removed) plus concatenated file content.
+func extractInlineFiles(text string) (cleanText string, fileContent string) {
+	words := strings.Fields(text)
+	var kept []string
+	var contents []string
+
+	for _, w := range words {
+		if strings.HasPrefix(w, "file://") {
+			path := strings.TrimPrefix(w, "file://")
+			fc, err := processFile(path)
+			if err != nil {
+				fmt.Printf("⚠️  Could not load file %s: %v\n", path, err)
+				kept = append(kept, w) // leave token in place so user sees it
+			} else {
+				fmt.Printf("📎 Loaded inline file: %s\n", path)
+				contents = append(contents, fc.(string))
+			}
+		} else {
+			kept = append(kept, w)
+		}
+	}
+
+	return strings.Join(kept, " "), strings.Join(contents, "\n")
+}
+
+// buildUserMessage assembles the final user message content from:
+// 1. Any staged file content (from /add, then clears it)
+// 2. Inline file content resolved from file:// tokens
+// 3. The user's text
+func buildUserMessage(text, inlineContent string) string {
+	var sb strings.Builder
+
+	if pendingFileContent != "" {
+		sb.WriteString(pendingFileContent)
+		sb.WriteString("\n")
+		pendingFileContent = ""
+	}
+
+	if inlineContent != "" {
+		sb.WriteString(inlineContent)
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString(text)
+	return sb.String()
+}
+
 func runREPL() {
 	histFile := filepath.Join(homeDir, ".aig_history_lines")
 	rl, err := readline.NewEx(&readline.Config{Prompt: "> ", HistoryFile: histFile, HistoryLimit: 5000})
 	if err != nil {
 		rl = nil
 	}
-	// cfgPtr := config
 	runREPLWithReader(&history, rl, histFile)
 }
 
@@ -273,7 +334,6 @@ func handleCommand(text string, history *[]Message) {
 		start, end, ok := parseRange(arg)
 		if !ok {
 			fmt.Println("❌ Invalid format. Use <index> or <start-end> (e.g., 3-5-1--3)")
-
 			return
 		}
 
@@ -307,8 +367,6 @@ func handleCommand(text string, history *[]Message) {
 
 		removedCount := maxIdx - minIdx + 1
 
-		// Perform the slice removal
-		// We create a new slice to avoid side effects during the append operation
 		newHistory := make([]Message, 0, hLen-removedCount)
 		newHistory = append(newHistory, (*history)[:minIdx]...)
 		newHistory = append(newHistory, (*history)[maxIdx+1:]...)
@@ -341,6 +399,7 @@ func handleCommand(text string, history *[]Message) {
 		saveConfig()
 		fmt.Printf("✅ Context limit set to %d tokens. Current usage: ~%d tokens.\n",
 			n, estimateTokens(*history))
+
 	case "/showthink":
 		switch arg {
 		case "on":
@@ -354,12 +413,12 @@ func handleCommand(text string, history *[]Message) {
 		default:
 			fmt.Println("Usage: /showthink on|off")
 		}
+
 	case "/mcpfunc":
 		if arg == "" {
 			fmt.Println("Usage: /mcpfunc <name> <auto|ask|deny>")
 			return
 		}
-		// parts := strings.SplitN(arg, " ", 2)
 		if len(parts) < 3 {
 			fmt.Println("❌ Error: Missing permission level. Usage: /mcpfunc <name> <auto|ask|deny>")
 			return
@@ -374,7 +433,7 @@ func handleCommand(text string, history *[]Message) {
 		}
 
 		config.MCPPermissions[toolName] = perm
-		saveConfig() // Persist immediately
+		saveConfig()
 		fmt.Printf("✅ Permission for '%s' set to [%s]\n", toolName, perm)
 
 	case "/edit":
@@ -454,6 +513,7 @@ func handleCommand(text string, history *[]Message) {
 				fmt.Printf("❌ Unknown docs op: %q. Use 'list' or 'read [uri]'.\n", ops)
 				return
 			}
+
 		case "off", "disconnect":
 			if activeMCP != nil {
 				activeMCP.Close()
@@ -515,15 +575,14 @@ func handleCommand(text string, history *[]Message) {
 			}
 			return
 		}
-		// No hit other command, treat the rest string is executing mcp server
-		// Disconnect any existing MCP first
+
+		// No sub-command matched — treat the rest as MCP server spec to connect
 		if activeMCP != nil {
 			fmt.Println("🔌 Disconnecting previous MCP server...")
 			activeMCP.Close()
 			activeMCP = nil
 		}
 
-		// Connect
 		var newMCP *ResilientMCPClient
 		var err error
 
@@ -554,7 +613,7 @@ func handleCommand(text string, history *[]Message) {
 		}
 
 	// -----------------------------------------------------------------------
-	// Original commands (unchanged)
+	// Original commands
 	// -----------------------------------------------------------------------
 
 	case "/s":
@@ -605,7 +664,6 @@ func handleCommand(text string, history *[]Message) {
 				firstUserMsg = "untitled"
 			}
 
-			// Use the existing logic to name the session we are currently leaving
 			oldName := generateContextName(config.Model, firstUserMsg)
 			if err := saveHistory(); err != nil {
 				fmt.Printf("⚠️  Could not save current session: %v\n", err)
@@ -616,16 +674,14 @@ func handleCommand(text string, history *[]Message) {
 
 		// 2. Reset the history for the new session
 		*history = []Message{}
+		pendingFileContent = "" // also clear any staged file
 
 		// 3. Handle the NEW context naming
 		if arg != "" {
-			// If the user provided a name (e.g., /new my-session),
-			// create the path immediately so doTurn doesn't overwrite it.
 			newName := generateContextName(config.Model, arg)
 			currentContextPath = filepath.Join(homeDir, ".aig", newName)
 			fmt.Printf("✅ New context started with custom name: %s\n", newName)
 		} else {
-			// If no name provided, clear path so doTurn uses the first question
 			currentContextPath = ""
 			fmt.Println("✅ New context started (name will be based on first question).")
 		}
@@ -633,7 +689,8 @@ func handleCommand(text string, history *[]Message) {
 	case "/help":
 		fmt.Println("Commands:")
 		fmt.Println("  /new , /n                     - Clear conversation history")
-		fmt.Println("  /add <file>,/a                - Add file contents to context")
+		fmt.Println("  /add <file>,/a                - Stage file for next message (user role)")
+		fmt.Println("  /addsystem <file>,/as         - Stage file for system message (system role)")
 		fmt.Println("  /r <cmd>                      - Run shell command and show output")
 		fmt.Println("  /m <model>                    - Switch model (e.g., /m gpt-4)")
 		fmt.Println("  /url <url>                    - Switch API URL")
@@ -655,6 +712,10 @@ func handleCommand(text string, history *[]Message) {
 		fmt.Println("  /mcpfunc <func> <perm>        - Set permission for tools func, auto|denied|ask")
 		fmt.Println("  /ctx <N>|off                  - Set context token limit (auto-trim when exceeded)")
 		fmt.Println("  /trimctx <idx|range>          - Remove messages at index or range (e.g. 3-5, -1--3)")
+		fmt.Println()
+		fmt.Println("Inline file attachment:")
+		fmt.Println("  Include file://<path> anywhere in your message to attach a file inline.")
+		fmt.Println("  Example: Summarise this file:/home/user/notes.txt please")
 
 	case "/use":
 		if arg == "" {
@@ -726,12 +787,12 @@ func handleCommand(text string, history *[]Message) {
 
 	case "/system", "/sys":
 		if arg == "" {
-			fmt.Println("Usage: /system <text>")
+			fmt.Println("Usage: /system <text> It will create a new session")
 			return
 		}
-		*history = append([]Message{
+		*history = []Message{
 			{Role: "system", Content: arg},
-		}, *history...)
+		}
 		fmt.Printf("✅ System prompt added: %s\n", arg)
 
 	case "/add", "/a":
@@ -744,10 +805,27 @@ func handleCommand(text string, history *[]Message) {
 			fmt.Printf("Error processing file %s: %v\n", arg, err)
 			return
 		}
-		*history = append([]Message{
-			{Role: "system", Content: content},
-		}, *history...)
-		fmt.Printf("Added '%s' to conversation context.\n", arg)
+		// Stage the content — it will be prepended to the NEXT user message
+		// as a "user" role contribution, not inserted as a "system" message.
+		pendingFileContent += content.(string) + "\n"
+		fmt.Printf("📎 Staged '%s' — will be included in your next message.\n", arg)
+		if pendingFileContent != "" {
+			fmt.Printf("   (Total staged: ~%d chars)\n", len(pendingFileContent))
+		}
+
+	case "/addsystem", "/as":
+		if arg == "" {
+			fmt.Println("Usage: /addsystem | /as <filename>. Add the file content to the system message")
+			return
+		}
+		content, err := processFile(arg)
+		if err != nil {
+			fmt.Printf("Error processing file %s: %v\n", arg, err)
+			return
+		}
+		*history = []Message{
+			{Role: "system", Content: content.(string)},
+		}
 
 	case "/r":
 		if arg == "" {
@@ -763,6 +841,7 @@ func handleCommand(text string, history *[]Message) {
 		}
 		config.Model = arg
 		fmt.Printf("Model switched to: %s\n", arg)
+
 	case "/ms":
 		if arg == "" {
 			fmt.Println("Usage: /ms <summary-model>")
@@ -770,6 +849,7 @@ func handleCommand(text string, history *[]Message) {
 		}
 		config.SummaryModel = arg
 		fmt.Printf("Summary Model switched to: %s\n", arg)
+
 	case "/msto":
 		if arg == "" {
 			fmt.Println("Usage: /msto <summary-model-timout> eg. 300s")
@@ -852,13 +932,19 @@ func runREPLWithReader(history *[]Message, rl *readline.Instance, histFile strin
 	printPrompt := func() { fmt.Print("You: ") }
 
 	doTurn := func(ctx context.Context, text string) {
+		// Resolve inline file:// references
+		cleanText, inlineContent := extractInlineFiles(text)
+
+		// Build final user message (staged files + inline files + text)
+		userMsg := buildUserMessage(cleanText, inlineContent)
+
 		// Ensure context path is set
 		if currentContextPath == "" {
-			newContextName := generateContextName(config.Model, text)
+			newContextName := generateContextName(config.Model, cleanText)
 			currentContextPath = filepath.Join(homeDir, ".aig", newContextName)
 		}
 
-		*history = append(*history, Message{Role: "user", Content: text})
+		*history = append(*history, Message{Role: "user", Content: userMsg})
 		ans, thinking, l_history, err := askAI(ctx, *config, *history)
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
@@ -913,19 +999,17 @@ func runREPLWithReader(history *[]Message, rl *readline.Instance, histFile strin
 
 		if strings.HasPrefix(text, "/") {
 			if text == "/edit" {
-				editorText, err := openInEditor("") // Start with empty file
+				editorText, err := openInEditor("")
 				if err != nil {
 					fmt.Printf("❌ Editor error: %v\n", err)
 					continue
 				}
 
-				// If user saved an empty file, just continue
 				if strings.TrimSpace(editorText) == "" {
 					fmt.Println("⚠️  Empty input. Aborting.")
 					continue
 				}
 
-				// Proceed to "doTurn" with the editor content
 				ctx, cancel := context.WithCancel(context.Background())
 				sigChan := make(chan os.Signal, 1)
 				signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
@@ -934,12 +1018,6 @@ func runREPLWithReader(history *[]Message, rl *readline.Instance, histFile strin
 					cancel()
 				}()
 
-				// We call doTurn manually here
-				// Note: We need to pass the config and history pointer
-				// Since this is inside the REPL closure, we have access.
-
-				// Define a helper within the loop to reuse the doTurn logic
-				// (Or just copy the logic from your existing doTurn)
 				doTurn(ctx, editorText)
 
 				signal.Stop(sigChan)
@@ -982,46 +1060,37 @@ func runREPLWithReader(history *[]Message, rl *readline.Instance, histFile strin
 	}
 }
 
-// openInEditor opens the user's default terminal editor (vim, nano, etc.)
-// with the provided initial text.
+// openInEditor opens the user's default terminal editor with the provided
+// initial text, waits for it to exit, and returns the saved content.
 func openInEditor(initialText string) (string, error) {
-	// 1. Determine which editor to use
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
 		editor = os.Getenv("VISUAL")
 	}
 	if editor == "" {
-		editor = "vim" // Default fallback
+		editor = "vim"
 	}
 
-	// 2. Create a temporary file
 	tmpFile, err := os.CreateTemp("", "aig-edit-*.txt")
 	if err != nil {
 		return "", fmt.Errorf("failed to create temp file: %v", err)
 	}
-	defer os.Remove(tmpFile.Name()) // Clean up after we are done
+	defer os.Remove(tmpFile.Name())
 
-	// 3. Write initial text to the temp file
 	if _, err := tmpFile.WriteString(initialText); err != nil {
 		return "", fmt.Errorf("failed to write to temp file: %v", err)
 	}
 	tmpFile.Close()
 
-	// 4. Prepare the command
-	// We use 'sh -c' to ensure environment variables and shell aliases work correctly
 	cmd := exec.Command("sh", "-c", fmt.Sprintf("%s %s", editor, tmpFile.Name()))
-
-	// 5. Connect the editor to the current terminal
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	// 6. Run the editor and wait for it to exit
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("editor exited with error: %v", err)
 	}
 
-	// 7. Read the content back from the file
 	content, err := os.ReadFile(tmpFile.Name())
 	if err != nil {
 		return "", fmt.Errorf("failed to read temp file: %v", err)

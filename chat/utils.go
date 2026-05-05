@@ -18,7 +18,7 @@ import (
 	u "github.com/sunshine69/golang-tools/utils"
 )
 
-func (p *ImageProcessor) Process(path string) (interface{}, error) {
+func (p *ImageProcessor) Process(path string) (any, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -48,7 +48,7 @@ func getFileProcessor(path string) FileProcessor {
 	}
 }
 
-func processFile(path string) (interface{}, error) {
+func processFile(path string) (any, error) {
 	return getFileProcessor(path).Process(path)
 }
 
@@ -63,7 +63,7 @@ var (
 	activeMCP *ResilientMCPClient
 )
 
-func (p *TextProcessor) Process(path string) (interface{}, error) {
+func (p *TextProcessor) Process(path string) (any, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -174,7 +174,7 @@ func printHistory(history []Message) {
 			displayContent = v
 		case []ContentPart:
 			displayContent = "[Multimodal Content]"
-		case map[string]interface{}:
+		case map[string]any:
 			displayContent = "[Structured Content]"
 		default:
 			displayContent = "[Non-text Content]"
