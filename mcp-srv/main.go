@@ -410,8 +410,6 @@ func buildServer() *server.MCPServer {
 		server.WithResourceCapabilities(true, true),
 	)
 
-	// ── Tools ──────────────────────────────────────────────────────────────
-
 	s.AddTool(mcp.NewTool("fetch_url",
 		mcp.WithDescription("Fetches a URL over HTTP and converts its HTML content into markdown text."),
 		mcp.WithString("url", mcp.Required(), mcp.Description("The URL to fetch and convert into markdown text")),
@@ -489,14 +487,14 @@ func buildServer() *server.MCPServer {
 }
 
 // =============================================================================
-// CLI flag parsing (no external deps)
+// CLI flag parsing
 // =============================================================================
 
 type config struct {
-	transport string // "stdio" | "sse"
+	transport string // "stdio" | "sse" | "streamable"
 	host      string
 	port      int
-	basePath  string // URL prefix for SSE endpoints, e.g. "/mcp"
+	basePath  string
 }
 
 func parseArgs() config {
@@ -542,25 +540,28 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, `Usage: mcp-fetch-server [options]
 
 Options:
-  --transport, -t   Transport to use: "stdio" (default) or "sse"
-  --host,      -H   Host to listen on for SSE (default: 0.0.0.0)
-  --port,      -p   Port to listen on for SSE (default: 8080)
-  --base-path       URL base path prefix for SSE endpoints (default: "")
-  --help,      -h   Show this help message
+  --transport, -t   Transport: "stdio" (default), "sse", or "streamable"
+  --host,      -H   Host to listen on (default: 0.0.0.0)
+  --port,      -p   Port to listen on (default: 8080)
+  --base-path       URL base path prefix (default: "")
+  --help,      -h   Show this help
 
 Examples:
-  # Run with stdio (default — for use with Claude Desktop / local MCP clients)
+  # stdio (default — Claude Desktop / local MCP clients)
   mcp-fetch-server
 
-  # Run as an SSE HTTP server on port 9000
-  mcp-fetch-server --transport sse --port 9000
+  # Legacy SSE transport (older MCP clients, aig)
+  mcp-fetch-server --transport sse --port 8080
+    GET  /sse      — SSE event stream
+    POST /message  — JSON-RPC messages
 
-  # SSE with a base path (e.g. behind a reverse proxy at /mcp)
-  mcp-fetch-server --transport sse --port 8080 --base-path /mcp
+  # Streamable HTTP transport (newer MCP clients, llama-server web UI)
+  mcp-fetch-server --transport streamable --port 8081
+    POST /mcp      — single endpoint for all JSON-RPC
 
-SSE endpoints (when using --transport sse):
-  GET  <base-path>/sse          — client connects here to receive events
-  POST <base-path>/message      — client sends tool calls here
+  # Both transports on different ports (serve all clients simultaneously):
+  mcp-fetch-server --transport sse        --port 8080 &
+  mcp-fetch-server --transport streamable --port 8081 &
 `)
 }
 
@@ -582,21 +583,51 @@ func main() {
 
 	case "sse":
 		addr := fmt.Sprintf("%s:%d", cfg.host, cfg.port)
-
 		sseServer := server.NewSSEServer(s,
 			server.WithBaseURL(fmt.Sprintf("http://%s%s", addr, cfg.basePath)),
 		)
-
 		log.Printf("Starting MCP server (SSE transport) on http://%s%s", addr, cfg.basePath)
-		log.Printf("  SSE endpoint  : http://%s%s/sse", addr, cfg.basePath)
-		log.Printf("  Message endpoint: http://%s%s/message", addr, cfg.basePath)
-
+		log.Printf("  SSE stream  : GET  http://%s%s/sse", addr, cfg.basePath)
+		log.Printf("  Messages    : POST http://%s%s/message", addr, cfg.basePath)
 		if err := sseServer.Start(addr); err != nil {
 			log.Fatalf("SSE server error: %v", err)
 		}
 
+	case "streamable":
+		addr := fmt.Sprintf("%s:%d", cfg.host, cfg.port)
+		endpoint := cfg.basePath + "/mcp"
+
+		streamServer := server.NewStreamableHTTPServer(s,
+			server.WithEndpointPath(endpoint),
+		)
+
+		// Wrap with CORS middleware so browser-based clients (llama-server web UI) can connect
+		corsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Set CORS headers on EVERY response, not just OPTIONS
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, DELETE")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Mcp-Session-Id, Last-Event-ID")
+			w.Header().Set("Access-Control-Expose-Headers", "Mcp-Session-Id")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Mcp-Session-Id, Last-Event-ID, Mcp-Protocol-Version")
+
+			// Must return before calling ServeHTTP — otherwise the inner handler
+			// writes its own response and headers are locked
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return // <-- never reaches streamServer.ServeHTTP
+			}
+
+			streamServer.ServeHTTP(w, r)
+		})
+
+		log.Printf("Starting MCP server (Streamable HTTP + CORS) on http://%s%s", addr, endpoint)
+		log.Printf("  Endpoint    : POST http://%s%s", addr, endpoint)
+		if err := http.ListenAndServe(addr, corsHandler); err != nil {
+			log.Fatalf("Streamable HTTP server error: %v", err)
+		}
+
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown transport %q — valid values are \"stdio\" and \"sse\"\n", cfg.transport)
+		fmt.Fprintf(os.Stderr, "Unknown transport %q — valid values: \"stdio\", \"sse\", \"streamable\"\n", cfg.transport)
 		printUsage()
 		os.Exit(1)
 	}
