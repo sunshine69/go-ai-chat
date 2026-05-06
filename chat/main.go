@@ -836,7 +836,7 @@ func handleCommand(text string, history *[]Message) {
 			fmt.Println("Usage: /r <command>")
 			return
 		}
-		runSystemCommand(arg)
+		runSystemCommand(strings.Join(parts[1:], " "))
 
 	case "/m":
 		if arg == "" {
