@@ -81,15 +81,17 @@ type ToolCall struct {
 // ---------------------------------------------------------------------------
 
 type MCPClient struct {
-	mu         sync.Mutex
-	conn       io.ReadWriteCloser // TCP or pipe wrapper
-	scanner    *bufio.Scanner
-	nextID     atomic.Int64
-	tools      []mcpTool
-	spec       string // original spec for display
-	isSSE      bool   // true if using SSE/HTTP mode
-	postURL    string // the endpoint URL for POSTing requests in SSE mode
-	httpClient *http.Client
+	mu               sync.Mutex
+	conn             io.ReadWriteCloser // TCP or pipe wrapper
+	scanner          *bufio.Scanner
+	nextID           atomic.Int64
+	tools            []mcpTool
+	spec             string // original spec for display
+	isSSE            bool   // true if using SSE/HTTP mode
+	isStreamableHTTP bool   // true if using streamable HTTP (single POST endpoint)
+	postURL          string // the endpoint URL for POSTing requests in SSE/streamable mode
+	httpClient       *http.Client
+	sessionID        string // Mcp-Session-Id for streamable HTTP sessions
 }
 
 // pipeReadWriter wraps an exec.Cmd's stdin/stdout into a single ReadWriteCloser
@@ -145,22 +147,18 @@ func ConnectSSE(url string) (*MCPClient, error) {
 	c := &MCPClient{
 		isSSE:      true,
 		httpClient: client,
-		spec:       "http://" + url,
-		// Wrap resp.Body so it satisfies io.ReadWriteCloser
-		conn: &sseReadWriteCloser{ReadCloser: resp.Body},
+		spec:       url,
+		conn:       &sseReadWriteCloser{ReadCloser: resp.Body},
 	}
 
 	c.scanner = bufio.NewScanner(resp.Body)
 	c.scanner.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
 
-	// The connection is the response body
-	// We must parse the SSE stream to find the 'endpoint' event
-	// which provides the URL for POSTing messages.
+	// Parse the SSE stream to find the 'endpoint' event which gives us the POST URL.
 	foundEndpoint := false
 	for c.scanner.Scan() {
 		line := strings.TrimSpace(c.scanner.Text())
 		if strings.HasPrefix(line, "event: endpoint") {
-			// The next line should be "data: <url>"
 			if c.scanner.Scan() {
 				dataLine := strings.TrimSpace(c.scanner.Text())
 				if strings.HasPrefix(dataLine, "data: ") {
@@ -185,33 +183,21 @@ func ConnectSSE(url string) (*MCPClient, error) {
 	return c, nil
 }
 
-// ConnectStdio launches a local MCP server process and communicates via stdio.
-func ConnectStdio(parts []string) (*MCPClient, error) {
-	// parts := strings.Fields(cmdLine)
-	if len(parts) == 0 {
-		return nil, fmt.Errorf("empty command")
-	}
-	cmd := exec.Command(parts[0], parts[1:]...)
-	cmd.Stderr = os.Stderr // let server errors appear in terminal
-
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return nil, err
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("start MCP server %q: %w", parts, err)
+// ConnectStreamableHTTP connects to a modern MCP server using the Streamable HTTP
+// transport (MCP spec 2025-03-26). Each JSON-RPC call is an independent POST —
+// no persistent SSE stream is needed. This is what llama-server and newer MCP
+// clients expect at a single endpoint like /mcp.
+func ConnectStreamableHTTP(url string) (*MCPClient, error) {
+	c := &MCPClient{
+		isStreamableHTTP: true,
+		postURL:          url,
+		spec:             url,
+		httpClient:       &http.Client{Timeout: 60 * time.Second},
+		// conn is unused for streamable HTTP but must be non-nil for Close()
+		conn: &sseReadWriteCloser{ReadCloser: io.NopCloser(strings.NewReader(""))},
 	}
 
-	pw := &pipeReadWriter{in: stdin, out: stdout, cmd: cmd}
-	c := &MCPClient{conn: pw, spec: parts[0]}
-	c.scanner = bufio.NewScanner(stdout)
-	c.scanner.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
 	if err := c.initialize(); err != nil {
-		pw.Close()
 		return nil, err
 	}
 	return c, nil
@@ -245,6 +231,83 @@ func (c *MCPClient) send(req jsonRPCRequest) error {
 	return err
 }
 
+// callStreamableHTTP performs a single POST for the streamable HTTP transport.
+// It handles both plain JSON responses and SSE-wrapped responses (data: {...}).
+// It also tracks the Mcp-Session-Id header for session continuity.
+func (c *MCPClient) callStreamableHTTP(method string, params interface{}) (*jsonRPCResponse, error) {
+	id := c.nextID.Add(1)
+	reqBody := jsonRPCRequest{
+		JSONRPC: "2.0",
+		ID:      id,
+		Method:  method,
+		Params:  params,
+	}
+
+	data, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := http.NewRequest("POST", c.postURL, bytes.NewBuffer(data))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json, text/event-stream")
+	httpReq.Header.Set("Mcp-Protocol-Version", "2025-03-26")
+	if c.sessionID != "" {
+		httpReq.Header.Set("Mcp-Session-Id", c.sessionID)
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if sid := resp.Header.Get("Mcp-Session-Id"); sid != "" {
+		c.sessionID = sid
+	}
+
+	// 202 Accepted = server acknowledged but has no response body (e.g. notifications)
+	if resp.StatusCode == http.StatusAccepted || resp.StatusCode == http.StatusNoContent {
+		return nil, nil
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response body: %w", err)
+	}
+
+	// Parse plain JSON or SSE-wrapped response
+	line := strings.TrimSpace(string(body))
+	for _, l := range strings.Split(line, "\n") {
+		l = strings.TrimSpace(l)
+		if strings.HasPrefix(l, "data: ") {
+			line = strings.TrimPrefix(l, "data: ")
+			break
+		}
+		if strings.HasPrefix(l, ":") || strings.HasPrefix(l, "event:") || l == "" {
+			continue
+		}
+		if strings.HasPrefix(l, "{") {
+			line = l
+			break
+		}
+	}
+
+	var rpcResp jsonRPCResponse
+	if err := json.Unmarshal([]byte(line), &rpcResp); err != nil {
+		return nil, fmt.Errorf("parse response: %w\nbody: %s", err, string(body))
+	}
+	return &rpcResp, nil
+}
+
 func (c *MCPClient) recv() (*jsonRPCResponse, error) {
 	for c.scanner.Scan() {
 		line := strings.TrimSpace(c.scanner.Text())
@@ -259,7 +322,6 @@ func (c *MCPClient) recv() (*jsonRPCResponse, error) {
 
 		var resp jsonRPCResponse
 		if err := json.Unmarshal([]byte(line), &resp); err != nil {
-			// If it's not a valid JSON-RPC message, skip it (e.g. other SSE events)
 			continue
 		}
 		return &resp, nil
@@ -274,6 +336,20 @@ func (c *MCPClient) recv() (*jsonRPCResponse, error) {
 func (c *MCPClient) call(method string, params interface{}) (*jsonRPCResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	// Streamable HTTP: each call is a self-contained POST/response — no scanner needed
+	if c.isStreamableHTTP {
+		resp, err := c.callStreamableHTTP(method, params)
+		if err != nil {
+			return nil, err
+		}
+		// nil response is valid for notifications (202/204)
+		if resp == nil {
+			return &jsonRPCResponse{JSONRPC: "2.0"}, nil
+		}
+
+		return resp, nil
+	}
 
 	id := c.nextID.Add(1)
 	req := jsonRPCRequest{
@@ -294,7 +370,6 @@ func (c *MCPClient) call(method string, params interface{}) (*jsonRPCResponse, e
 		if resp.ID == nil {
 			continue // notification — ignore
 		}
-		// JSON numbers unmarshal as float64 when interface{}
 		switch v := resp.ID.(type) {
 		case float64:
 			if int64(v) == id {
@@ -305,7 +380,6 @@ func (c *MCPClient) call(method string, params interface{}) (*jsonRPCResponse, e
 				return resp, nil
 			}
 		}
-		// Different ID — unexpected; skip
 	}
 }
 
@@ -331,15 +405,50 @@ func (c *MCPClient) initialize() error {
 	}
 
 	// Send initialized notification (no response expected)
-	c.mu.Lock()
-	_ = c.send(jsonRPCRequest{
-		JSONRPC: "2.0",
-		Method:  "notifications/initialized",
-	})
-	c.mu.Unlock()
+	if c.isStreamableHTTP {
+		// For streamable HTTP, send as a fire-and-forget POST (no ID = notification)
+		_ = c.sendNotification("notifications/initialized", nil)
+	} else {
+		c.mu.Lock()
+		_ = c.send(jsonRPCRequest{
+			JSONRPC: "2.0",
+			Method:  "notifications/initialized",
+		})
+		c.mu.Unlock()
+	}
 
-	// Fetch tool list
 	return c.refreshTools()
+}
+
+// sendNotification sends a JSON-RPC notification (no ID, no response expected).
+func (c *MCPClient) sendNotification(method string, params interface{}) error {
+	req := jsonRPCRequest{
+		JSONRPC: "2.0",
+		Method:  method,
+		Params:  params,
+	}
+	if c.isStreamableHTTP {
+		data, err := json.Marshal(req)
+		if err != nil {
+			return err
+		}
+		httpReq, err := http.NewRequest("POST", c.postURL, bytes.NewBuffer(data))
+		if err != nil {
+			return err
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Mcp-Protocol-Version", "2025-03-26")
+		if c.sessionID != "" {
+			httpReq.Header.Set("Mcp-Session-Id", c.sessionID)
+		}
+		resp, err := c.httpClient.Do(httpReq)
+		if err != nil {
+			return err
+		}
+		resp.Body.Close()
+		return nil
+	}
+	return c.send(req)
 }
 
 func (c *MCPClient) refreshTools() error {
@@ -486,18 +595,14 @@ func (c *MCPClient) ReadResource(uri string) (string, error) {
 
 // SubscribeResource subscribes to change notifications for a resource URI.
 func (c *MCPClient) SubscribeResource(uri string) error {
-	params := map[string]interface{}{
-		"uri": uri,
-	}
+	params := map[string]interface{}{"uri": uri}
 	_, err := c.call("resources/subscribe", params)
 	return err
 }
 
 // UnsubscribeResource unsubscribes from change notifications for a resource URI.
 func (c *MCPClient) UnsubscribeResource(uri string) error {
-	params := map[string]interface{}{
-		"uri": uri,
-	}
+	params := map[string]interface{}{"uri": uri}
 	_, err := c.call("resources/unsubscribe", params)
 	return err
 }
@@ -506,8 +611,6 @@ func (c *MCPClient) UnsubscribeResource(uri string) error {
 // ResilientMCPClient — auto-reconnecting wrapper for stdio servers
 // ---------------------------------------------------------------------------
 
-// MCPClientIface abstracts the methods callers use, so ResilientMCPClient
-// can be a drop-in for *MCPClient.
 type MCPClientIface interface {
 	CallTool(name string, arguments map[string]interface{}) (string, error)
 	Tools() []mcpTool
@@ -517,19 +620,15 @@ type MCPClientIface interface {
 	Close() error
 }
 
-// ResilientMCPClient wraps a stdio MCPClient and transparently reconnects
-// if the child process dies.  TCP/SSE connections are passed through as-is.
 type ResilientMCPClient struct {
 	mu       sync.Mutex
 	inner    *MCPClient
-	parts    []string // nil → not a stdio connection (TCP/SSE)
+	parts    []string
 	maxRetry int
 	backoff  time.Duration
-	// exposed for /p display
-	Spec string
+	Spec     string
 }
 
-// NewResilientStdio wraps ConnectStdio with auto-reconnect behaviour.
 func NewResilientStdio(parts []string) (*ResilientMCPClient, error) {
 	inner, err := ConnectStdio(parts)
 	if err != nil {
@@ -544,19 +643,16 @@ func NewResilientStdio(parts []string) (*ResilientMCPClient, error) {
 	}, nil
 }
 
-// NewResilientPassthrough wraps a non-stdio client (TCP/SSE) with no retry logic.
 func NewResilientPassthrough(c *MCPClient) *ResilientMCPClient {
 	return &ResilientMCPClient{inner: c, Spec: c.spec}
 }
 
-// reconnect tears down the dead inner client and starts a fresh one.
-// Caller must hold r.mu.
 func (r *ResilientMCPClient) reconnect() error {
 	if r.parts == nil {
 		return fmt.Errorf("reconnect not supported for non-stdio connections")
 	}
 	if r.inner != nil {
-		r.inner.Close() // best-effort; process may already be gone
+		r.inner.Close()
 	}
 	fmt.Println("🔄 MCP server died — reconnecting…")
 	var lastErr error
@@ -569,12 +665,11 @@ func (r *ResilientMCPClient) reconnect() error {
 		}
 		lastErr = err
 		fmt.Printf("   ⚠️  attempt %d/%d failed: %v\n", attempt, r.maxRetry, err)
-		time.Sleep(r.backoff * time.Duration(attempt)) // simple exponential-ish back-off
+		time.Sleep(r.backoff * time.Duration(attempt))
 	}
 	return fmt.Errorf("could not reconnect after %d attempts: %w", r.maxRetry, lastErr)
 }
 
-// isDeadErr returns true for I/O errors that indicate the child process is gone.
 func isDeadErr(err error) bool {
 	if err == nil {
 		return false
@@ -586,7 +681,6 @@ func isDeadErr(err error) bool {
 		strings.Contains(msg, "file already closed")
 }
 
-// CallTool calls the tool; on a dead-connection error it reconnects once and retries.
 func (r *ResilientMCPClient) CallTool(name string, arguments map[string]interface{}) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -596,10 +690,9 @@ func (r *ResilientMCPClient) CallTool(name string, arguments map[string]interfac
 		return result, nil
 	}
 	if !isDeadErr(err) || r.parts == nil {
-		return "", err // not a connectivity problem, or not stdio — surface as-is
+		return "", err
 	}
 
-	// Connection is dead — attempt reconnect then retry once
 	if reconnErr := r.reconnect(); reconnErr != nil {
 		return "", fmt.Errorf("tool call failed and reconnect failed: %w", reconnErr)
 	}
@@ -637,4 +730,38 @@ func (r *ResilientMCPClient) Close() error {
 		return r.inner.Close()
 	}
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// ConnectStdio launches a local MCP server process and communicates via stdio.
+// ---------------------------------------------------------------------------
+
+func ConnectStdio(parts []string) (*MCPClient, error) {
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("empty command")
+	}
+	cmd := exec.Command(parts[0], parts[1:]...)
+	cmd.Stderr = os.Stderr
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, err
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("start MCP server %q: %w", parts, err)
+	}
+
+	pw := &pipeReadWriter{in: stdin, out: stdout, cmd: cmd}
+	c := &MCPClient{conn: pw, spec: parts[0]}
+	c.scanner = bufio.NewScanner(stdout)
+	c.scanner.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
+	if err := c.initialize(); err != nil {
+		pw.Close()
+		return nil, err
+	}
+	return c, nil
 }
