@@ -2,10 +2,8 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
-	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -360,87 +358,45 @@ func fetchUrl(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolRe
 	return mcp.NewToolResultText(markdownText), nil
 }
 
-// =============================================================================
-// Resource Helpers
-// =============================================================================
-
-func registerDirectoryResources(s *server.MCPServer, dirPath string, description string) error {
-	cleanDir := filepath.Clean(dirPath)
-	if _, err := os.Stat(cleanDir); os.IsNotExist(err) {
-		return fmt.Errorf("directory not found: %s", cleanDir)
+func httpRequest(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	method := args["method"].(string)
+	url := args["url"].(string)
+	body := ""
+	if b, ok := args["body"].(string); ok {
+		body = b
 	}
 
-	return filepath.WalkDir(cleanDir, func(path string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return nil // skip unreadable entries
-		}
-		if d.IsDir() {
-			return nil
-		}
+	var req *http.Request
+	var err error
+	if body != "" {
+		req, err = http.NewRequest(method, url, strings.NewReader(body))
+	} else {
+		req, err = http.NewRequest(method, url, nil)
+	}
+	if err != nil {
+		return mcp.NewToolResultErrorFromErr("unable to create request", err), nil
+	}
 
-		baseName := filepath.Base(path)
-		uri := "file://" + filepath.ToSlash(filepath.Clean(path))
-		ext := strings.ToLower(filepath.Ext(baseName))
-		allowedExt := map[string]struct{}{
-			".md":   struct{}{},
-			".txt":  struct{}{},
-			".json": struct{}{},
-			".xml":  struct{}{},
-			".png":  struct{}{},
-			".jpg":  struct{}{},
-			".jpeg": struct{}{},
-		}
-		if _, ok := allowedExt[ext]; !ok {
-			return nil
-		}
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return mcp.NewToolResultErrorFromErr("unable to execute request", err), nil
+	}
+	defer resp.Body.Close()
 
-		resource := mcp.NewResource(
-			uri,
-			baseName,
-			mcp.WithResourceDescription(description),
-		)
+	// Check HTTP status code - non-2xx returns error with body
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return mcp.NewToolResultError(fmt.Sprintf("HTTP %d: %s\nBody: %s", resp.StatusCode, resp.Status, string(respBody))), nil
+	}
 
-		s.AddResource(resource, func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-			contentBytes, readErr := os.ReadFile(path)
-			if readErr != nil {
-				return nil, fmt.Errorf("failed to read file %s: %w", path, readErr)
-			}
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return mcp.NewToolResultErrorFromErr("unable to read request response", err), nil
+	}
 
-			var mimeType string
-			switch ext {
-			case ".md":
-				mimeType = "text/markdown"
-			case ".txt":
-				mimeType = "text/plain"
-			case ".json", ".yaml", ".yml":
-				mimeType = "application/json"
-			case ".xml":
-				mimeType = "application/xml"
-			case ".html", ".htm":
-				mimeType = "text/html"
-			case ".css":
-				mimeType = "text/css"
-			case ".js", ".ts", ".jsx", ".tsx":
-				mimeType = "application/javascript"
-			case ".png":
-				mimeType = "image/png"
-			case ".jpg", ".jpeg":
-				mimeType = "image/jpeg"
-			default:
-				mimeType = "text/plain"
-			}
-
-			return []mcp.ResourceContents{
-				mcp.TextResourceContents{
-					URI:      uri,
-					MIMEType: mimeType,
-					Text:     string(contentBytes),
-				},
-			}, nil
-		})
-
-		return nil
-	})
+	return mcp.NewToolResultText(fmt.Sprintf("Status: %d\nBody: %s", resp.StatusCode, string(respBody))), nil
 }
 
 // =============================================================================
@@ -448,18 +404,12 @@ func registerDirectoryResources(s *server.MCPServer, dirPath string, description
 // =============================================================================
 
 func main() {
-	doc_path := flag.String("docpath", "aidocs", "Path to the document dir where multiple .md fiels are found and list as documentation")
-	flag.Parse()
-
 	s := server.NewMCPServer(
 		"mcp-fetch-server",
 		"1.0.0",
 		server.WithToolCapabilities(true),
 		server.WithResourceCapabilities(true, true), // enable resources + subscriptions
 	)
-
-	registerDirectoryResources(s, *doc_path, "AI documentation and reference materials")
-
 	// ── Tools ──────────────────────────────────────────────────────────────
 
 	fetchUrlTool := mcp.NewTool("fetch_url",
@@ -542,46 +492,7 @@ func main() {
 		),
 	)
 
-	s.AddTool(httpTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		args := request.GetArguments()
-		method := args["method"].(string)
-		url := args["url"].(string)
-		body := ""
-		if b, ok := args["body"].(string); ok {
-			body = b
-		}
-
-		var req *http.Request
-		var err error
-		if body != "" {
-			req, err = http.NewRequest(method, url, strings.NewReader(body))
-		} else {
-			req, err = http.NewRequest(method, url, nil)
-		}
-		if err != nil {
-			return mcp.NewToolResultErrorFromErr("unable to create request", err), nil
-		}
-
-		client := &http.Client{}
-		resp, err := client.Do(req)
-		if err != nil {
-			return mcp.NewToolResultErrorFromErr("unable to execute request", err), nil
-		}
-		defer resp.Body.Close()
-
-		// Check HTTP status code - non-2xx returns error with body
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			respBody, _ := io.ReadAll(resp.Body)
-			return mcp.NewToolResultError(fmt.Sprintf("HTTP %d: %s\nBody: %s", resp.StatusCode, resp.Status, string(respBody))), nil
-		}
-
-		respBody, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return mcp.NewToolResultErrorFromErr("unable to read request response", err), nil
-		}
-
-		return mcp.NewToolResultText(fmt.Sprintf("Status: %d\nBody: %s", resp.StatusCode, string(respBody))), nil
-	})
+	s.AddTool(httpTool, httpRequest)
 
 	// Start the server using stdio
 	if err := server.ServeStdio(s); err != nil {
