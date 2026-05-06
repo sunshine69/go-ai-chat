@@ -19,9 +19,75 @@ import (
 	u "github.com/sunshine69/golang-tools/utils"
 )
 
-// pendingFileContent holds file content staged via /add that will be
-// prepended to the next user message instead of being sent immediately.
-var pendingFileContent string
+// 1. Change pendingFileContent from string to []ContentPart
+var pendingFileContent []ContentPart // was: var pendingFileContent string
+
+// ---------------------------------------------------------------------------
+// extractInlineFiles — now returns []ContentPart for file content
+// ---------------------------------------------------------------------------
+
+func extractInlineFiles(text string) (cleanText string, fileParts []ContentPart) {
+	words := strings.Fields(text)
+	var kept []string
+
+	for _, w := range words {
+		if strings.HasPrefix(w, "file://") {
+			path := strings.TrimPrefix(w, "file://")
+			parts, err := processFile(path)
+			if err != nil {
+				fmt.Printf("⚠️  Could not load file %s: %v\n", path, err)
+				kept = append(kept, w) // leave token so the user sees it
+			} else {
+				fmt.Printf("📎 Loaded inline file: %s\n", path)
+				fileParts = append(fileParts, parts...)
+			}
+		} else {
+			kept = append(kept, w)
+		}
+	}
+
+	return strings.Join(kept, " "), fileParts
+}
+
+// buildUserMessage assembles the final user message content from:
+// 1. Any staged file content (from /add, then clears it)
+// 2. Inline file content resolved from file:// tokens
+// 3. The user's text
+func buildUserMessage(text string, inlineParts []ContentPart) any {
+	// Collect all parts in order: staged files → inline files → user text
+	var allParts []ContentPart
+
+	if len(pendingFileContent) > 0 {
+		allParts = append(allParts, pendingFileContent...)
+		pendingFileContent = nil // clear staged content
+	}
+
+	allParts = append(allParts, inlineParts...)
+
+	// Always append the user's text as the final part
+	if text != "" {
+		allParts = append(allParts, ContentPart{Type: "text", Text: text})
+	}
+
+	// If everything is plain text parts, collapse to a single string so the
+	// conversation history stays simple for text-only exchanges.
+	allText := true
+	for _, p := range allParts {
+		if p.Type != "text" {
+			allText = false
+			break
+		}
+	}
+	if allText {
+		var sb strings.Builder
+		for _, p := range allParts {
+			sb.WriteString(p.Text)
+		}
+		return sb.String()
+	}
+
+	return allParts
+}
 
 // ---------------------------------------------------------------------------
 // Main
@@ -187,58 +253,6 @@ func handleNonInteractive(config *Config) (runmode string) {
 		}
 	}
 	return
-}
-
-// ---------------------------------------------------------------------------
-// Inline file:// extraction helper
-// ---------------------------------------------------------------------------
-
-// extractInlineFiles scans text for file://<path> tokens, loads each file,
-// and returns the cleaned text (tokens removed) plus concatenated file content.
-func extractInlineFiles(text string) (cleanText string, fileContent string) {
-	words := strings.Fields(text)
-	var kept []string
-	var contents []string
-
-	for _, w := range words {
-		if strings.HasPrefix(w, "file://") {
-			path := strings.TrimPrefix(w, "file://")
-			fc, err := processFile(path)
-			if err != nil {
-				fmt.Printf("⚠️  Could not load file %s: %v\n", path, err)
-				kept = append(kept, w) // leave token in place so user sees it
-			} else {
-				fmt.Printf("📎 Loaded inline file: %s\n", path)
-				contents = append(contents, fc.(string))
-			}
-		} else {
-			kept = append(kept, w)
-		}
-	}
-
-	return strings.Join(kept, " "), strings.Join(contents, "\n")
-}
-
-// buildUserMessage assembles the final user message content from:
-// 1. Any staged file content (from /add, then clears it)
-// 2. Inline file content resolved from file:// tokens
-// 3. The user's text
-func buildUserMessage(text, inlineContent string) string {
-	var sb strings.Builder
-
-	if pendingFileContent != "" {
-		sb.WriteString(pendingFileContent)
-		sb.WriteString("\n")
-		pendingFileContent = ""
-	}
-
-	if inlineContent != "" {
-		sb.WriteString(inlineContent)
-		sb.WriteString("\n")
-	}
-
-	sb.WriteString(text)
-	return sb.String()
 }
 
 func runREPL() {
@@ -678,7 +692,7 @@ func handleCommand(text string, history *[]Message) {
 
 		// 2. Reset the history for the new session
 		*history = []Message{}
-		pendingFileContent = "" // also clear any staged file
+		pendingFileContent = nil // also clear any staged file
 
 		// 3. Handle the NEW context naming
 		if arg != "" {
@@ -804,31 +818,39 @@ func handleCommand(text string, history *[]Message) {
 			fmt.Println("Usage: /add <filename>")
 			return
 		}
-		content, err := processFile(arg)
+		parts, err := processFile(arg)
 		if err != nil {
 			fmt.Printf("Error processing file %s: %v\n", arg, err)
 			return
 		}
-		// Stage the content — it will be prepended to the NEXT user message
-		// as a "user" role contribution, not inserted as a "system" message.
-		pendingFileContent += content.(string) + "\n"
+		pendingFileContent = append(pendingFileContent, parts...)
 		fmt.Printf("📎 Staged '%s' — will be included in your next message.\n", arg)
-		if pendingFileContent != "" {
-			fmt.Printf("   (Total staged: ~%d chars)\n", len(pendingFileContent))
-		}
+		fmt.Printf("   (Total staged parts: %d)\n", len(pendingFileContent))
 
+	// ---------------------------------------------------------------------------
+	// /addsystem handler — wrap []ContentPart into a system message
+	// ---------------------------------------------------------------------------
+
+	// Inside handleCommand, replace the "/addsystem" case:
 	case "/addsystem", "/as":
 		if arg == "" {
 			fmt.Println("Usage: /addsystem | /as <filename>. Add the file content to the system message")
 			return
 		}
-		content, err := processFile(arg)
+		parts, err := processFile(arg)
 		if err != nil {
 			fmt.Printf("Error processing file %s: %v\n", arg, err)
 			return
 		}
+		// System messages are text-only in practice; collapse if possible.
+		var content any
+		if len(parts) == 1 && parts[0].Type == "text" {
+			content = parts[0].Text
+		} else {
+			content = parts
+		}
 		*history = []Message{
-			{Role: "system", Content: content.(string)},
+			{Role: "system", Content: content},
 		}
 
 	case "/r":

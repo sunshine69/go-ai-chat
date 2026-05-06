@@ -18,7 +18,22 @@ import (
 	u "github.com/sunshine69/golang-tools/utils"
 )
 
-func (p *ImageProcessor) Process(path string) (any, error) {
+// ---- file_processors.go (replace the relevant functions) ----
+
+// TextProcessor now returns []ContentPart instead of a raw string.
+func (p *TextProcessor) Process(path string) ([]ContentPart, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	text := fmt.Sprintf("Reference File Content (%s):\n```\n%s\n```\n", filepath.Base(path), string(content))
+	return []ContentPart{
+		{Type: "text", Text: text},
+	}, nil
+}
+
+// ImageProcessor already returned []ContentPart — signature now matches.
+func (p *ImageProcessor) Process(path string) ([]ContentPart, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -38,6 +53,18 @@ func (p *ImageProcessor) Process(path string) (any, error) {
 	}, nil
 }
 
+// FileProcessor interface — update the signature here too.
+type FileProcessor interface {
+	Process(path string) ([]ContentPart, error)
+}
+
+// processFile always returns []ContentPart now.
+func processFile(path string) ([]ContentPart, error) {
+	return getFileProcessor(path).Process(path)
+}
+
+// Marker
+
 func getFileProcessor(path string) FileProcessor {
 	ext := filepath.Ext(path)
 	switch ext {
@@ -46,10 +73,6 @@ func getFileProcessor(path string) FileProcessor {
 	default:
 		return &TextProcessor{}
 	}
-}
-
-func processFile(path string) (any, error) {
-	return getFileProcessor(path).Process(path)
 }
 
 var (
@@ -62,14 +85,6 @@ var (
 	// Global MCP client (single active connection)
 	activeMCP *ResilientMCPClient
 )
-
-func (p *TextProcessor) Process(path string) (any, error) {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	return fmt.Sprintf("Reference File Content (%s):\n```\n%s\n```\n", filepath.Base(path), string(content)), nil
-}
 
 func saveHistoryToFile(history []Message, index int, filename string) error {
 	if index <= 0 || index > len(history) {

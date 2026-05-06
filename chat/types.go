@@ -39,10 +39,6 @@ type ImageURL struct {
 	URL string `json:"url"`
 }
 
-type FileProcessor interface {
-	Process(path string) (interface{}, error)
-}
-
 type TextProcessor struct{}
 type ImageProcessor struct{}
 
