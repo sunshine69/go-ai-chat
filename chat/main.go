@@ -593,6 +593,10 @@ func handleCommand(text string, history *[]Message) {
 			newMCP, err = NewResilientPassthrough(raw), e
 		case strings.HasPrefix(arg, "http"):
 			raw, e := ConnectSSE(arg)
+			if e != nil {
+				fmt.Printf("❌ MCP connect failed: %v\n", e)
+				return
+			}
 			newMCP, err = NewResilientPassthrough(raw), e
 		default:
 			fmt.Printf("🚀 Launching MCP stdio server: %s\n", arg)
