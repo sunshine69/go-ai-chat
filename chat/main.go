@@ -606,7 +606,7 @@ func handleCommand(text string, history *[]Message) {
 			raw, e := ConnectTCP(arg)
 			newMCP, err = NewResilientPassthrough(raw), e
 		case strings.HasPrefix(arg, "http"):
-			raw, e := ConnectSSE(arg)
+			raw, e := ConnectStreamableHTTP(arg)
 			if e != nil {
 				fmt.Printf("❌ MCP connect failed: %v\n", e)
 				return

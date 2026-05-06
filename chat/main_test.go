@@ -1,25 +1,21 @@
-// test_mcp/main.go
+// mcp_streamable_test.go
 package main
 
 import (
 	"fmt"
-	"os"
+	"testing"
 )
 
-func main() {
+func TestStreamableHTTP(t *testing.T) {
 	url := "http://localhost:8080/mcp"
-	if len(os.Args) > 1 {
-		url = os.Args[1]
-	}
 
 	fmt.Printf("Connecting to %s\n", url)
 	c, err := ConnectStreamableHTTP(url)
 	if err != nil {
-		fmt.Printf("❌ Failed: %v\n", err)
-		os.Exit(1)
+		t.Fatalf("❌ Failed: %v", err)
 	}
 	fmt.Printf("✅ Connected, %d tools:\n", len(c.Tools()))
-	for _, t := range c.Tools() {
-		fmt.Printf("  • %s\n", t.Name)
+	for _, tool := range c.Tools() {
+		fmt.Printf("  • %s\n", tool.Name)
 	}
 }

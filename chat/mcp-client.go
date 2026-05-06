@@ -136,58 +136,12 @@ func (s *sseReadWriteCloser) Write(p []byte) (int, error) {
 	return len(p), nil // No-op
 }
 
-// ConnectSSE connects to an MCP server via SSE (Server-Sent Events).
-func ConnectSSE(url string) (*MCPClient, error) {
-	client := &http.Client{Timeout: 0} // SSE needs no timeout for the stream
-	resp, err := client.Get(url)
-	if err != nil {
-		return nil, fmt.Errorf("SSE connection failed: %w", err)
-	}
-
-	c := &MCPClient{
-		isSSE:      true,
-		httpClient: client,
-		spec:       url,
-		conn:       &sseReadWriteCloser{ReadCloser: resp.Body},
-	}
-
-	c.scanner = bufio.NewScanner(resp.Body)
-	c.scanner.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
-
-	// Parse the SSE stream to find the 'endpoint' event which gives us the POST URL.
-	foundEndpoint := false
-	for c.scanner.Scan() {
-		line := strings.TrimSpace(c.scanner.Text())
-		if strings.HasPrefix(line, "event: endpoint") {
-			if c.scanner.Scan() {
-				dataLine := strings.TrimSpace(c.scanner.Text())
-				if strings.HasPrefix(dataLine, "data: ") {
-					c.postURL = strings.TrimPrefix(dataLine, "data: ")
-					foundEndpoint = true
-					break
-				}
-			}
-		}
-	}
-
-	if !foundEndpoint {
-		resp.Body.Close()
-		return nil, fmt.Errorf("could not find 'endpoint' event in SSE stream")
-	}
-
-	if err := c.initialize(); err != nil {
-		resp.Body.Close()
-		return nil, err
-	}
-
-	return c, nil
-}
-
 // ConnectStreamableHTTP connects to a modern MCP server using the Streamable HTTP
 // transport (MCP spec 2025-03-26). Each JSON-RPC call is an independent POST —
 // no persistent SSE stream is needed. This is what llama-server and newer MCP
 // clients expect at a single endpoint like /mcp.
 func ConnectStreamableHTTP(url string) (*MCPClient, error) {
+	fmt.Printf("[DEBUG] ConnectStreamableHTTP called: %s\n", url)
 	c := &MCPClient{
 		isStreamableHTTP: true,
 		postURL:          url,
@@ -386,7 +340,6 @@ func (c *MCPClient) call(method string, params interface{}) (*jsonRPCResponse, e
 // ---------------------------------------------------------------------------
 // MCP protocol handshake
 // ---------------------------------------------------------------------------
-
 func (c *MCPClient) initialize() error {
 	params := map[string]interface{}{
 		"protocolVersion": "2024-11-05",
@@ -404,11 +357,8 @@ func (c *MCPClient) initialize() error {
 		return fmt.Errorf("initialize error: %s", resp.Error.Message)
 	}
 
-	// Send initialized notification (no response expected)
-	if c.isStreamableHTTP {
-		// For streamable HTTP, send as a fire-and-forget POST (no ID = notification)
-		_ = c.sendNotification("notifications/initialized", nil)
-	} else {
+	if !c.isStreamableHTTP {
+		// SSE/stdio/TCP: send initialized notification normally
 		c.mu.Lock()
 		_ = c.send(jsonRPCRequest{
 			JSONRPC: "2.0",
@@ -416,39 +366,10 @@ func (c *MCPClient) initialize() error {
 		})
 		c.mu.Unlock()
 	}
+	// Streamable HTTP: skip the notification — the server holds the connection
+	// open waiting for a stream and never sends a response, causing a hang.
 
 	return c.refreshTools()
-}
-
-// sendNotification sends a JSON-RPC notification (no ID, no response expected).
-func (c *MCPClient) sendNotification(method string, params interface{}) error {
-	req := jsonRPCRequest{
-		JSONRPC: "2.0",
-		Method:  method,
-		Params:  params,
-	}
-	if c.isStreamableHTTP {
-		data, err := json.Marshal(req)
-		if err != nil {
-			return err
-		}
-		httpReq, err := http.NewRequest("POST", c.postURL, bytes.NewBuffer(data))
-		if err != nil {
-			return err
-		}
-		httpReq.Header.Set("Content-Type", "application/json")
-		httpReq.Header.Set("Mcp-Protocol-Version", "2025-03-26")
-		if c.sessionID != "" {
-			httpReq.Header.Set("Mcp-Session-Id", c.sessionID)
-		}
-		resp, err := c.httpClient.Do(httpReq)
-		if err != nil {
-			return err
-		}
-		resp.Body.Close()
-		return nil
-	}
-	return c.send(req)
 }
 
 func (c *MCPClient) refreshTools() error {

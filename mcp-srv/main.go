@@ -580,19 +580,6 @@ func main() {
 		if err := server.ServeStdio(s); err != nil {
 			log.Fatalf("Server error: %v", err)
 		}
-
-	case "sse":
-		addr := fmt.Sprintf("%s:%d", cfg.host, cfg.port)
-		sseServer := server.NewSSEServer(s,
-			server.WithBaseURL(fmt.Sprintf("http://%s%s", addr, cfg.basePath)),
-		)
-		log.Printf("Starting MCP server (SSE transport) on http://%s%s", addr, cfg.basePath)
-		log.Printf("  SSE stream  : GET  http://%s%s/sse", addr, cfg.basePath)
-		log.Printf("  Messages    : POST http://%s%s/message", addr, cfg.basePath)
-		if err := sseServer.Start(addr); err != nil {
-			log.Fatalf("SSE server error: %v", err)
-		}
-
 	case "streamable":
 		addr := fmt.Sprintf("%s:%d", cfg.host, cfg.port)
 		endpoint := cfg.basePath + "/mcp"
