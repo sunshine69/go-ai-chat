@@ -59,10 +59,11 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 			perm := getEffectivePermission(tc.Function.Name, &config)
 			allowed := true
 
-			if perm == "deny" {
+			switch perm {
+			case "deny":
 				fmt.Printf("\n🚫 Permission Denied: Tool '%s' is blocked.\n", tc.Function.Name)
 				allowed = false
-			} else if perm == "ask" {
+			case "ask":
 				fmt.Printf("\n⚠️  Tool '%s' requires permission.\n", tc.Function.Name)
 				fmt.Printf("   Arguments:\n%s\n", argsDisplay) // Print arguments BEFORE asking
 				fmt.Printf("   Allow? [y/N]: ")

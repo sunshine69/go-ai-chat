@@ -7,6 +7,53 @@ import (
 	"time"
 )
 
+// printContextSummary prints a compact table of the current message slice so
+// you can eyeball which entries are worth dropping to reclaim token budget.
+//
+//	idx  role       tokens  preview
+//	  0  system        142  You are a helpful assistant that…
+//	  1  user           18  Can you help me refactor the…
+func printContextSummary(msgs []Message) {
+	total := 0
+	fmt.Printf("\n%-4s  %-10s  %-7s  %s\n", "idx", "role", "tokens", "preview")
+	fmt.Println(strings.Repeat("─", 72))
+
+	for i, m := range msgs {
+		// Reuse the existing per-message token logic from estimateTokens.
+		tokens := 4
+		switch v := m.Content.(type) {
+		case string:
+			tokens += len(v) / 4
+		case []ContentPart:
+			for _, p := range v {
+				tokens += len(p.Text) / 4
+			}
+		}
+		for _, tc := range m.ToolCalls {
+			tokens += len(tc.Function.Arguments) / 4
+		}
+
+		// Build a one-line preview: tool call names take priority over text.
+		preview := extractText(m)
+		if len(m.ToolCalls) > 0 {
+			names := make([]string, len(m.ToolCalls))
+			for j, tc := range m.ToolCalls {
+				names[j] = tc.Function.Name + "()"
+			}
+			preview = "[tools: " + strings.Join(names, ", ") + "] " + preview
+		}
+		if len(preview) > 45 {
+			preview = preview[:42] + "…"
+		}
+
+		fmt.Printf("%-4d  %-10s  %-7d  %s\n", i, m.Role, tokens, preview)
+		total += tokens
+	}
+
+	fmt.Println(strings.Repeat("─", 72))
+	fmt.Printf("%-4s  %-10s  %-7d\n\n", "tot", "", total)
+}
+
 // estimateTokens gives a fast token count estimate (chars/4 is the standard rule of thumb).
 func estimateTokens(msgs []Message) int {
 	total := 0

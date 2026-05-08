@@ -18,6 +18,28 @@ import (
 	u "github.com/sunshine69/golang-tools/utils"
 )
 
+// Input like 3-5 or -1--5 return slice index - if negative return from the right end
+func ParseRangeFromInputString(s string) (int, int, bool) {
+	// Look for a hyphen that isn't the first character (to allow negative numbers)
+	for i := 1; i < len(s); i++ {
+		if s[i] == '-' {
+			leftStr := s[:i]
+			rightStr := s[i+1:]
+			l, errL := strconv.Atoi(leftStr)
+			r, errR := strconv.Atoi(rightStr)
+			if errL == nil && errR == nil {
+				return l, r, true
+			}
+		}
+	}
+	// If no range separator found, try parsing as a single integer
+	val, err := strconv.Atoi(s)
+	if err == nil {
+		return val, val, true
+	}
+	return 0, 0, false
+}
+
 // ---- file_processors.go (replace the relevant functions) ----
 
 // TextProcessor now returns []ContentPart instead of a raw string.

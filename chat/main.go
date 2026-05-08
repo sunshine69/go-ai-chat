@@ -322,30 +322,7 @@ func handleCommand(text string, history *[]Message) {
 			fmt.Println("Example: /trimctx 3-5 or /trimctx -1--3")
 			return
 		}
-
-		// Helper to parse range or single integer
-		parseRange := func(s string) (int, int, bool) {
-			// Look for a hyphen that isn't the first character (to allow negative numbers)
-			for i := 1; i < len(s); i++ {
-				if s[i] == '-' {
-					leftStr := s[:i]
-					rightStr := s[i+1:]
-					l, errL := strconv.Atoi(leftStr)
-					r, errR := strconv.Atoi(rightStr)
-					if errL == nil && errR == nil {
-						return l, r, true
-					}
-				}
-			}
-			// If no range separator found, try parsing as a single integer
-			val, err := strconv.Atoi(s)
-			if err == nil {
-				return val, val, true
-			}
-			return 0, 0, false
-		}
-
-		start, end, ok := parseRange(arg)
+		start, end, ok := ParseRangeFromInputString(arg)
 		if !ok {
 			fmt.Println("❌ Invalid format. Use <index> or <start-end> (e.g., 3-5-1--3)")
 			return
@@ -389,7 +366,8 @@ func handleCommand(text string, history *[]Message) {
 		fmt.Printf("✂️  Removed %d messages (indices %d to %d).\n", removedCount, minIdx, maxIdx)
 
 	case "/ctx":
-		if arg == "" {
+		switch {
+		case arg == "":
 			if config.ContextLimit == 0 {
 				fmt.Println("ℹ️  Context trimming disabled. Use /ctx <tokens> to enable (e.g. /ctx 6000).")
 			} else {
@@ -397,22 +375,25 @@ func handleCommand(text string, history *[]Message) {
 					config.ContextLimit, config.ContextLimit*4, estimateTokens(*history))
 			}
 			return
-		}
-		if arg == "off" {
+		case arg == "off":
 			config.ContextLimit = 0
 			saveConfig()
 			fmt.Println("✅ Context trimming disabled.")
 			return
-		}
-		n, err := strconv.Atoi(arg)
-		if err != nil || n < 500 {
-			fmt.Println("❌ Usage: /ctx <tokens> (min 500) or /ctx off")
+		case arg == "sum":
+			printContextSummary(*history)
 			return
+		default:
+			n, err := strconv.Atoi(arg)
+			if err != nil || n < 500 {
+				fmt.Println("❌ Usage: /ctx <tokens> (min 500) or /ctx off")
+				return
+			}
+			config.ContextLimit = n
+			saveConfig()
+			fmt.Printf("✅ Context limit set to %d tokens. Current usage: ~%d tokens.\n",
+				n, estimateTokens(*history))
 		}
-		config.ContextLimit = n
-		saveConfig()
-		fmt.Printf("✅ Context limit set to %d tokens. Current usage: ~%d tokens.\n",
-			n, estimateTokens(*history))
 
 	case "/showthink":
 		switch arg {
