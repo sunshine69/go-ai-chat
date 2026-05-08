@@ -809,9 +809,9 @@ func handleCommand(text string, history *[]Message) {
 			return
 		}
 		*history = []Message{
-			{Role: "system", Content: arg},
+			{Role: "system", Content: strings.Join(parts[1:], " ")},
 		}
-		fmt.Printf("✅ System prompt added: %s\n", arg)
+		fmt.Println("✅ System prompt added")
 
 	case "/add", "/a":
 		if arg == "" {
