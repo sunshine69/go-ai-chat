@@ -106,6 +106,8 @@ func main() {
 	aigDir := filepath.Join(homeDir, ".aig")
 	_ = os.MkdirAll(aigDir, 0755)
 
+	StartStatsServer(statServerPort)
+
 	latestPath := getLatestContextPath(config.Model)
 	if latestPath != "" {
 		if err := loadHistory(latestPath, &history); err == nil {
@@ -712,6 +714,9 @@ func handleCommand(text string, history *[]Message) {
 		fmt.Println("  /ctx <N>|off                  - Set context token limit (auto-trim when exceeded)")
 		fmt.Println("  /trimctx <idx|range>          - Remove messages at index or range (e.g. 3-5, -1--3)")
 		fmt.Println()
+		fmt.Printf("Curl mode: using curl http://localhost:%d as base for these below cmds\n", statServerPort)
+		fmt.Println("  currently only reporting stats")
+
 		fmt.Println("Inline file attachment:")
 		fmt.Println("  Include file://<path> anywhere in your message to attach a file inline.")
 		fmt.Println("  Example: Summarise this file:/home/user/notes.txt please")

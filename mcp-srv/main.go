@@ -397,6 +397,61 @@ func httpRequest(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToo
 
 	return mcp.NewToolResultText(fmt.Sprintf("Status: %d\nBody: %s", resp.StatusCode, string(respBody))), nil
 }
+func registerPlaywrightTools(s *server.MCPServer, pw *PlaywrightProxy) {
+	// The most useful Playwright tools — add more as needed
+	playwrightTools := []struct {
+		name, desc string
+		params     []mcp.ToolOption
+	}{
+		{
+			"browser_navigate",
+			"Navigate the browser to a URL",
+			[]mcp.ToolOption{mcp.WithString("url", mcp.Required(), mcp.Description("URL to navigate to"))},
+		},
+		{
+			"browser_screenshot",
+			"Take a screenshot of the current browser page",
+			nil,
+		},
+		{
+			"browser_click",
+			"Click on an element on the page",
+			[]mcp.ToolOption{mcp.WithString("element", mcp.Required(), mcp.Description("Human-readable description of the element to click"))},
+		},
+		{
+			"browser_type",
+			"Type text into an input field",
+			[]mcp.ToolOption{
+				mcp.WithString("element", mcp.Required(), mcp.Description("Element to type into")),
+				mcp.WithString("text", mcp.Required(), mcp.Description("Text to type")),
+			},
+		},
+		{
+			"browser_get_text",
+			"Extract all visible text from the current page",
+			nil,
+		},
+		{
+			"browser_evaluate",
+			"Execute JavaScript in the browser context",
+			[]mcp.ToolOption{mcp.WithString("script", mcp.Required(), mcp.Description("JavaScript to execute"))},
+		},
+	}
+
+	for _, t := range playwrightTools {
+		toolName := t.name
+		opts := append([]mcp.ToolOption{mcp.WithDescription(t.desc)}, t.params...)
+		s.AddTool(mcp.NewTool(toolName, opts...), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			args := req.GetArguments()
+			// Convert map[string]any to map[string]any (already correct type)
+			result, err := pw.CallTool(toolName, args)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return mcp.NewToolResultText(result), nil
+		})
+	}
+}
 
 // =============================================================================
 // Server builder — registers all tools onto an MCPServer instance
@@ -409,6 +464,13 @@ func buildServer() *server.MCPServer {
 		server.WithToolCapabilities(true),
 		server.WithResourceCapabilities(true, true),
 	)
+
+	pwProxy, err := NewPlaywrightProxy()
+	if err != nil {
+		log.Printf("Warning: Playwright MCP unavailable: %v", err)
+	} else {
+		registerPlaywrightTools(s, pwProxy)
+	}
 
 	s.AddTool(mcp.NewTool("fetch_url",
 		mcp.WithDescription("Fetches a URL over HTTP and converts its HTML content into markdown text."),
@@ -444,7 +506,7 @@ func buildServer() *server.MCPServer {
 	), createNewFile)
 
 	s.AddTool(mcp.NewTool("run_terminal_command",
-		mcp.WithDescription("Runs a shell command and returns its stdout and stderr."),
+		mcp.WithDescription("Runs a shell command and returns its stdout and stderr. you should try other tools first and only use this as last resort. If the command does not return it will block you."),
 		mcp.WithString("command", mcp.Required(), mcp.Description("The shell command to execute.")),
 		mcp.WithString("working_dir", mcp.Description("Optional working directory for the command. Defaults to the server's current directory.")),
 		mcp.WithBoolean("confirmed", mcp.DefaultBool(false), mcp.Description("Must be explicitly set to true to actually run the command. When false or omitted a confirmation message is returned and nothing is executed.")),

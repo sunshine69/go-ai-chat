@@ -120,6 +120,9 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 
 // streamOnce does one SSE request and returns (content, thinking, toolCalls, error).
 func streamOnce(ctx context.Context, config Config, msgs []Message) (string, string, []ToolCall, error) {
+	globalStats.StreamStarted() // ← top of function
+	defer globalStats.StreamFinished()
+
 	url := config.BaseURL
 	if !strings.Contains(url, "/chat/completions") {
 		url = strings.TrimSuffix(url, "/") + "/chat/completions"
@@ -201,6 +204,9 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 
 		// Thinking content
 		if delta.ReasoningContent != "" {
+			tokenCount := len(strings.Fields(delta.ReasoningContent))
+			globalStats.TokenArrived(tokenCount)
+
 			// ALWAYS capture the content so the history is complete
 			thinkingContent.WriteString(delta.ReasoningContent)
 			// ONLY print if the user has enabled it
@@ -221,6 +227,9 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 
 		// Regular text content
 		if delta.Content != "" {
+			tokenCount := len(strings.Fields(delta.Content))
+			globalStats.TokenArrived(tokenCount)
+
 			if !headerPrinted {
 				fmt.Print("\n> 📝 Response:\n")
 				headerPrinted = true

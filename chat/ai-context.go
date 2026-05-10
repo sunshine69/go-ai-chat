@@ -156,7 +156,10 @@ func tryAISummary(ctx context.Context, cfg Config, msgs []Message) string {
 	summaryCfg := cfg
 	if cfg.SummaryModel != "" {
 		summaryCfg.Model = cfg.SummaryModel
+	} else {
+		return manualPrefix + buildStructuredSummary(msgs)
 	}
+
 	summaryCfg.ContextLimit = 0 // prevent recursion
 	summaryCfg.ShowThinking = false
 
