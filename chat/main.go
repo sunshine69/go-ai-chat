@@ -106,6 +106,12 @@ func main() {
 	aigDir := filepath.Join(homeDir, ".aig")
 	_ = os.MkdirAll(aigDir, 0755)
 
+	if sport := os.Getenv("STAT_SERVER_PORT"); sport != "" {
+		if _port, err := strconv.Atoi(sport); err == nil {
+			statServerPort = _port
+		}
+	}
+
 	StartStatsServer(statServerPort)
 
 	latestPath := getLatestContextPath(config.Model)
