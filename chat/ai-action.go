@@ -104,6 +104,7 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 				} else {
 					toolResult = "error: no MCP client connected"
 				}
+				fmt.Println("\n✅ Calling tool: done")
 			}
 			// Always append the tool result (including permission-denied errors) so the
 			// model receives a result for every tool call it made.
@@ -241,6 +242,7 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 
 		// Tool call deltas: keyed by the `index` field OpenAI streams per chunk.
 		// This is the only reliable merge key -- do NOT use ID or name matching.
+		var toolCallReady bool
 		for _, tcDelta := range delta.ToolCalls {
 			key := tcDelta.Index
 			if _, exists := toolCallAccum[key]; !exists {
@@ -255,6 +257,10 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 			}
 			if tcDelta.Function.Name != "" {
 				tc.Function.Name += tcDelta.Function.Name
+				var tmp interface{}
+				if json.Unmarshal([]byte(tc.Function.Arguments), &tmp) == nil {
+					toolCallReady = true
+				}
 			}
 			prevArgs := tc.Function.Arguments
 			tc.Function.Arguments += tcDelta.Function.Arguments
@@ -262,6 +268,9 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 			if tc.Function.Name != "" && prevArgs == "" && tcDelta.Function.Arguments != "" {
 				fmt.Printf("\n> 🔧 Planning tool call: %s\n", tc.Function.Name)
 			}
+		}
+		if toolCallReady { // Stop model like Qwen3.6 continue emitting text which confused the parser
+			break
 		}
 	}
 
@@ -273,9 +282,31 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 	var toolCalls []ToolCall
 	for i := 0; i < len(toolCallAccum); i++ {
 		tc := toolCallAccum[i]
-		if tc != nil && tc.Function.Name != "" {
-			toolCalls = append(toolCalls, *tc)
+		if tc == nil {
+			continue
 		}
+		// Must be a function tool call
+		if tc.Type != "function" {
+			continue
+		}
+		// Must have a tool name
+		if strings.TrimSpace(tc.Function.Name) == "" {
+			continue
+		}
+		// Must have arguments
+		args := strings.TrimSpace(tc.Function.Arguments)
+		if args == "" {
+			fmt.Printf("\n> ⚠️ Ignoring incomplete tool call (missing args): %s\n", tc.Function.Name)
+			continue
+		}
+		// Arguments must be valid JSON
+		var tmp interface{}
+		if err := json.Unmarshal([]byte(args), &tmp); err != nil {
+			fmt.Printf("\n> ⚠️ Ignoring malformed tool call %s: %v\n", tc.Function.Name, err)
+			continue
+		}
+		fmt.Printf("CALL TOOL: %+v\n", tc)
+		toolCalls = append(toolCalls, *tc)
 	}
 
 	return fullContent.String(), thinkingContent.String(), toolCalls, nil

@@ -590,10 +590,6 @@ func handleCommand(text string, history *[]Message) {
 		var err error
 
 		switch {
-		case strings.HasPrefix(arg, "tcp://"):
-			fmt.Printf("🔌 Connecting to MCP TCP server: %s\n", arg)
-			raw, e := ConnectTCP(arg)
-			newMCP, err = NewResilientPassthrough(raw), e
 		case strings.HasPrefix(arg, "http"):
 			raw, e := ConnectStreamableHTTP(arg)
 			if e != nil {
@@ -798,6 +794,9 @@ func handleCommand(text string, history *[]Message) {
 	case "/system", "/sys":
 		if arg == "" {
 			fmt.Println("Usage: /system <text> It will create a new session")
+			if len(*history) > 0 {
+				fmt.Printf("Current %s prompt: '%s'\n", (*history)[0].Role, (*history)[0].Content)
+			}
 			return
 		}
 		*history = []Message{

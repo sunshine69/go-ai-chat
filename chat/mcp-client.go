@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -107,23 +106,6 @@ func (p *pipeReadWriter) Close() error {
 	p.in.Close()
 	p.out.Close()
 	return p.cmd.Wait()
-}
-
-// ConnectTCP connects to a running MCP server over TCP.
-func ConnectTCP(address string) (*MCPClient, error) {
-	address = strings.TrimPrefix(address, "tcp://")
-	conn, err := net.DialTimeout("tcp", address, 10*time.Second)
-	if err != nil {
-		return nil, fmt.Errorf("TCP connect to %s: %w", address, err)
-	}
-	c := &MCPClient{conn: conn, spec: "tcp://" + address}
-	c.scanner = bufio.NewScanner(conn)
-	c.scanner.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
-	if err := c.initialize(); err != nil {
-		conn.Close()
-		return nil, err
-	}
-	return c, nil
 }
 
 // sseReadWriteCloser wraps an io.ReadCloser to satisfy io.ReadWriteCloser
