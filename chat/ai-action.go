@@ -305,7 +305,9 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 			fmt.Printf("\n> ⚠️ Ignoring malformed tool call %s: %v\n", tc.Function.Name, err)
 			continue
 		}
-		fmt.Printf("CALL TOOL: %+v\n", tc)
+		if config.Debug {
+			fmt.Printf("CALL TOOL: %+v\n", tc)
+		}
 		toolCalls = append(toolCalls, *tc)
 	}
 
