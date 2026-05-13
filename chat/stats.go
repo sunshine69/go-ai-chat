@@ -113,7 +113,7 @@ func StartStatsServer(port int) {
 
 	go func() {
 		if err := http.ListenAndServe(addr, mux); err != nil {
-			fmt.Printf("⚠️  Stats server error: %v\n", err)
+			fmt.Printf("⚠️  Stats server error: %v. Change the port if it is not available using env var STAT_SERVER_PORT\n", err)
 		}
 	}()
 }

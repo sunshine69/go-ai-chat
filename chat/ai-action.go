@@ -12,10 +12,8 @@ import (
 	"strings"
 )
 
-// ---------------------------------------------------------------------------
 // askAI — streams the response; if MCP is active, injects tools and handles
 // tool_calls returned by the model in a loop until the model gives a final answer.
-// ---------------------------------------------------------------------------
 func askAI(ctx context.Context, config Config, msgs []Message) (string, string, []Message, error) {
 	// Build a local copy of history for the tool loop — we extend it as we call tools
 	workingMsgs := make([]Message, len(msgs))

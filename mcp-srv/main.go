@@ -11,10 +11,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
-// =============================================================================
 // CLI flag parsing
-// =============================================================================
-
 type config struct {
 	transport string // "stdio" | "sse" | "streamable"
 	host      string
@@ -68,9 +65,7 @@ Examples:
 `)
 }
 
-// =============================================================================
 // Server builder — registers all tools onto an MCPServer instance
-// =============================================================================
 func buildServer(cfg config) *server.MCPServer {
 	s := server.NewMCPServer(
 		"mcp-fetch-server",
@@ -101,10 +96,6 @@ func buildServer(cfg config) *server.MCPServer {
 	registerBaseTool(s)
 	return s
 }
-
-// =============================================================================
-// Main
-// =============================================================================
 
 func main() {
 	cfg := parseArgs()
