@@ -4,6 +4,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,9 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	mcp "github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 )
 
 type PlaywrightProxy struct {
@@ -34,6 +38,62 @@ type jsonRPCResponse struct {
 	Error  *struct {
 		Message string `json:"message"`
 	} `json:"error,omitempty"`
+}
+
+func registerPlaywrightTools(s *server.MCPServer, pw *PlaywrightProxy) {
+	// The most useful Playwright tools — add more as needed
+	playwrightTools := []struct {
+		name, desc string
+		params     []mcp.ToolOption
+	}{
+		{
+			"browser_navigate",
+			"Navigate the browser to a URL",
+			[]mcp.ToolOption{mcp.WithString("url", mcp.Required(), mcp.Description("URL to navigate to"))},
+		},
+		{
+			"browser_screenshot",
+			"Take a screenshot of the current browser page",
+			nil,
+		},
+		{
+			"browser_click",
+			"Click on an element on the page",
+			[]mcp.ToolOption{mcp.WithString("element", mcp.Required(), mcp.Description("Human-readable description of the element to click"))},
+		},
+		{
+			"browser_type",
+			"Type text into an input field",
+			[]mcp.ToolOption{
+				mcp.WithString("element", mcp.Required(), mcp.Description("Element to type into")),
+				mcp.WithString("text", mcp.Required(), mcp.Description("Text to type")),
+			},
+		},
+		{
+			"browser_get_text",
+			"Extract all visible text from the current page",
+			nil,
+		},
+		{
+			"browser_evaluate",
+			"Execute JavaScript in the browser context",
+			[]mcp.ToolOption{mcp.WithString("script", mcp.Required(), mcp.Description("JavaScript to execute"))},
+		},
+	}
+
+	for _, t := range playwrightTools {
+		toolName := t.name
+		opts := append([]mcp.ToolOption{mcp.WithDescription(t.desc)}, t.params...)
+		s.AddTool(mcp.NewTool(toolName, opts...), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			args := req.GetArguments()
+			// Convert map[string]any to map[string]any (already correct type)
+			result, err := pw.CallTool(toolName, args)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return mcp.NewToolResultText(result), nil
+		})
+	}
 }
 
 func NewPlaywrightProxy() (*PlaywrightProxy, error) {

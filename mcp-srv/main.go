@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -11,68 +12,9 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
-// Tool Implementations in other file
-
-func registerPlaywrightTools(s *server.MCPServer, pw *PlaywrightProxy) {
-	// The most useful Playwright tools — add more as needed
-	playwrightTools := []struct {
-		name, desc string
-		params     []mcp.ToolOption
-	}{
-		{
-			"browser_navigate",
-			"Navigate the browser to a URL",
-			[]mcp.ToolOption{mcp.WithString("url", mcp.Required(), mcp.Description("URL to navigate to"))},
-		},
-		{
-			"browser_screenshot",
-			"Take a screenshot of the current browser page",
-			nil,
-		},
-		{
-			"browser_click",
-			"Click on an element on the page",
-			[]mcp.ToolOption{mcp.WithString("element", mcp.Required(), mcp.Description("Human-readable description of the element to click"))},
-		},
-		{
-			"browser_type",
-			"Type text into an input field",
-			[]mcp.ToolOption{
-				mcp.WithString("element", mcp.Required(), mcp.Description("Element to type into")),
-				mcp.WithString("text", mcp.Required(), mcp.Description("Text to type")),
-			},
-		},
-		{
-			"browser_get_text",
-			"Extract all visible text from the current page",
-			nil,
-		},
-		{
-			"browser_evaluate",
-			"Execute JavaScript in the browser context",
-			[]mcp.ToolOption{mcp.WithString("script", mcp.Required(), mcp.Description("JavaScript to execute"))},
-		},
-	}
-
-	for _, t := range playwrightTools {
-		toolName := t.name
-		opts := append([]mcp.ToolOption{mcp.WithDescription(t.desc)}, t.params...)
-		s.AddTool(mcp.NewTool(toolName, opts...), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			// Convert map[string]any to map[string]any (already correct type)
-			result, err := pw.CallTool(toolName, args)
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			return mcp.NewToolResultText(result), nil
-		})
-	}
-}
-
 // =============================================================================
 // Server builder — registers all tools onto an MCPServer instance
 // =============================================================================
-
 func buildServer() *server.MCPServer {
 	s := server.NewMCPServer(
 		"mcp-fetch-server",
@@ -186,63 +128,37 @@ func parseArgs() config {
 		basePath:  "",
 	}
 
-	args := os.Args[1:]
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--transport", "-t":
-			if i+1 < len(args) {
-				i++
-				cfg.transport = args[i]
-			}
-		case "--host", "-H":
-			if i+1 < len(args) {
-				i++
-				cfg.host = args[i]
-			}
-		case "--port", "-p":
-			if i+1 < len(args) {
-				i++
-				fmt.Sscanf(args[i], "%d", &cfg.port)
-			}
-		case "--base-path":
-			if i+1 < len(args) {
-				i++
-				cfg.basePath = args[i]
-			}
-		case "--help", "-h":
-			printUsage()
-			os.Exit(0)
-		}
-	}
+	// Define flags
+	flag.StringVar(&cfg.transport, "t", cfg.transport, "Transport: \"stdio\" (default), \"sse\", or \"streamable\"")
+	flag.StringVar(&cfg.host, "H", cfg.host, "Host to listen on (shorthand)")
+	flag.IntVar(&cfg.port, "p", cfg.port, "Port to listen on (shorthand)")
+	flag.StringVar(&cfg.basePath, "base-path", cfg.basePath, "URL base path prefix")
+
+	flag.Usage = printUsage
+	flag.Parse()
 	return cfg
 }
 
 func printUsage() {
-	fmt.Fprintf(os.Stderr, `Usage: mcp-fetch-server [options]
+	fmt.Fprintf(os.Stderr, `Usage: mcp-server [options]
 
 Options:
-  --transport, -t   Transport: "stdio" (default), "sse", or "streamable"
-  --host,      -H   Host to listen on (default: 0.0.0.0)
-  --port,      -p   Port to listen on (default: 8080)
-  --base-path       URL base path prefix (default: "")
-  --help,      -h   Show this help
+  -t   		  Transport: "stdio" (default), "streamable"
+  -H   		  Host to listen on (default: 0.0.0.0)
+  -p   		  Port to listen on (default: 8080)
+  -base-path  URL base path prefix (default: "")
+  -h    	  Show this help
 
 Examples:
   # stdio (default — Claude Desktop / local MCP clients)
-  mcp-fetch-server
-
-  # Legacy SSE transport (older MCP clients, aig)
-  mcp-fetch-server --transport sse --port 8080
-    GET  /sse      — SSE event stream
-    POST /message  — JSON-RPC messages
+  mcp-server
 
   # Streamable HTTP transport (newer MCP clients, llama-server web UI)
-  mcp-fetch-server --transport streamable --port 8081
+  mcp-server -t streamable -p 8081
     POST /mcp      — single endpoint for all JSON-RPC
 
   # Both transports on different ports (serve all clients simultaneously):
-  mcp-fetch-server --transport sse        --port 8080 &
-  mcp-fetch-server --transport streamable --port 8081 &
+  mcp-server -t streamable -p 8081 &
 `)
 }
 
@@ -252,7 +168,6 @@ Examples:
 
 func main() {
 	cfg := parseArgs()
-
 	s := buildServer()
 
 	switch cfg.transport {
