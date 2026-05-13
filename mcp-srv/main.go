@@ -6,37 +6,10 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/server"
 )
-
-// =============================================================================
-// Server builder — registers all tools onto an MCPServer instance
-// =============================================================================
-func buildServer() *server.MCPServer {
-	s := server.NewMCPServer(
-		"mcp-fetch-server",
-		"1.0.0",
-		server.WithToolCapabilities(true),
-		server.WithResourceCapabilities(true, true),
-	)
-
-	pwProxy, err := NewPlaywrightProxy()
-	if err != nil {
-		log.Printf("Warning: Playwright MCP unavailable: %v", err)
-	} else {
-		registerPlaywrightTools(s, pwProxy)
-	}
-
-	pg := NewPostgresManager()
-	registerPostgresTools(s, pg)
-
-	octo := NewOctopusManager()
-	registerOctopusTools(s, octo)
-
-	registerBaseTool(s)
-	return s
-}
 
 // =============================================================================
 // CLI flag parsing
@@ -47,6 +20,7 @@ type config struct {
 	host      string
 	port      int
 	basePath  string
+	toolSet   string // extra tools to laod, coma sep
 }
 
 func parseArgs() config {
@@ -62,6 +36,7 @@ func parseArgs() config {
 	flag.StringVar(&cfg.host, "H", cfg.host, "Host to listen on (shorthand)")
 	flag.IntVar(&cfg.port, "p", cfg.port, "Port to listen on (shorthand)")
 	flag.StringVar(&cfg.basePath, "base-path", cfg.basePath, "URL base path prefix")
+	flag.StringVar(&cfg.toolSet, "tools", "", "Extra tools name to load in addition to base. Coma sep string. Possible values: postgres,octo,browser or all")
 
 	flag.Usage = printUsage
 	flag.Parse()
@@ -76,6 +51,8 @@ Options:
   -H   		  Host to listen on (default: 0.0.0.0)
   -p   		  Port to listen on (default: 8080)
   -base-path  URL base path prefix (default: "")
+  -tools      [all,postgres,octo,browser] List of tools name to load in addition to basic tools in coma separated list.
+			  Default: empty (no load). all to load all of them.  
   -h    	  Show this help
 
 Examples:
@@ -92,12 +69,46 @@ Examples:
 }
 
 // =============================================================================
+// Server builder — registers all tools onto an MCPServer instance
+// =============================================================================
+func buildServer(cfg config) *server.MCPServer {
+	s := server.NewMCPServer(
+		"mcp-fetch-server",
+		"1.0.0",
+		server.WithToolCapabilities(true),
+		server.WithResourceCapabilities(true, true),
+	)
+
+	if strings.Contains(cfg.toolSet, "all") || strings.Contains(cfg.toolSet, "postgres") {
+		pg := NewPostgresManager()
+		registerPostgresTools(s, pg)
+	}
+
+	if strings.Contains(cfg.toolSet, "all") || strings.Contains(cfg.toolSet, "octo") {
+		octo := NewOctopusManager()
+		registerOctopusTools(s, octo)
+	}
+
+	if strings.Contains(cfg.toolSet, "all") || strings.Contains(cfg.toolSet, "browser") {
+		pwProxy, err := NewPlaywrightProxy()
+		if err != nil {
+			log.Printf("Warning: Playwright MCP unavailable: %v", err)
+		} else {
+			registerPlaywrightTools(s, pwProxy)
+		}
+	}
+
+	registerBaseTool(s)
+	return s
+}
+
+// =============================================================================
 // Main
 // =============================================================================
 
 func main() {
 	cfg := parseArgs()
-	s := buildServer()
+	s := buildServer(cfg)
 
 	switch cfg.transport {
 	case "stdio":
