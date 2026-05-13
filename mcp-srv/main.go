@@ -176,7 +176,7 @@ func main() {
 		if err := server.ServeStdio(s); err != nil {
 			log.Fatalf("Server error: %v", err)
 		}
-	case "streamable":
+	case "streamable", "streamablehttp":
 		addr := fmt.Sprintf("%s:%d", cfg.host, cfg.port)
 		endpoint := cfg.basePath + "/mcp"
 
