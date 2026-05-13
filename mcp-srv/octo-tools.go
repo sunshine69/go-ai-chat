@@ -17,7 +17,7 @@ import (
 )
 
 // OctopusManager handles all Octopus Deploy MCP tool operations.
-// Reads OCTO_URL and OCTO_API_KEY from environment variables.
+// Reads OCTOPUS_URL and OCTOPUS_API_KEY from environment variables.
 type OctopusManager struct {
 	baseURL    string
 	apiKey     string
@@ -26,8 +26,8 @@ type OctopusManager struct {
 
 func NewOctopusManager() *OctopusManager {
 	return &OctopusManager{
-		baseURL: strings.TrimRight(os.Getenv("OCTO_URL"), "/"),
-		apiKey:  os.Getenv("OCTO_API_KEY"),
+		baseURL: strings.TrimRight(os.Getenv("OCTOPUS_URL"), "/"),
+		apiKey:  os.Getenv("OCTOPUS_API_KEY"),
 		httpClient: &http.Client{
 			Timeout: 60 * time.Second,
 		},
@@ -59,19 +59,7 @@ func (o *OctopusManager) octopusGet(path string) ([]byte, error) {
 	return body, nil
 }
 
-// argString extracts a named string argument from a CallToolRequest, returning
-// "" if the argument is absent or not a string.
-func argString(req mcp.CallToolRequest, key string) string {
-	args, ok := req.Params.Arguments.(map[string]any)
-	if !ok {
-		return ""
-	}
-	v, _ := args[key].(string)
-	return v
-}
-
 // ── octo_download_package ────────────────────────────────────────────────────
-
 // handleDownloadPackage searches the Octopus package feed for all packages
 // whose ID matches the given pattern (case-insensitive substring match) and
 // downloads every matching version into the current working directory.
@@ -90,8 +78,11 @@ func (o *OctopusManager) handleDownloadPackage(_ context.Context, req mcp.CallTo
 		return mcp.NewToolResultError(fmt.Sprintf("cannot create dest_dir: %v", err)), nil
 	}
 
-	// 1. Search packages matching the pattern
-	searchURL := fmt.Sprintf("/api/packages?nugetPackageId=%s&take=100", url.QueryEscape(pattern))
+	// 1. Search packages matching the pattern.
+	// latest=true collapses results to one entry per package ID (the newest version).
+	// limit controls how many matching package IDs to download (default: 1).
+	limit := argInt(req, "limit", 1)
+	searchURL := fmt.Sprintf("/api/packages?nugetPackageId=%s&latest=true&take=%d", url.QueryEscape(pattern), limit)
 	body, err := o.octopusGet(searchURL)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("package search failed: %v", err)), nil
@@ -176,11 +167,17 @@ func (o *OctopusManager) handleDownloadPackage(_ context.Context, req mcp.CallTo
 
 func (o *OctopusManager) handleListPackages(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	pattern := argString(req, "pattern")
-	take := 50
+	latestOnly := argString(req, "latest_only")
+	limit := argInt(req, "limit", 1)
 
-	searchURL := fmt.Sprintf("/api/packages?take=%d", take)
+	searchURL := fmt.Sprintf("/api/packages?take=%d", limit)
 	if pattern != "" {
 		searchURL += "&nugetPackageId=" + url.QueryEscape(pattern)
+	}
+	// Default to latest=true so we get one row per package ID (newest version).
+	// Pass latest_only=false to see all versions.
+	if latestOnly != "false" {
+		searchURL += "&latest=true"
 	}
 
 	body, err := o.octopusGet(searchURL)
@@ -236,8 +233,9 @@ func (o *OctopusManager) handleServerStats(_ context.Context, _ mcp.CallToolRequ
 func (o *OctopusManager) handleListDeployments(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	project := argString(req, "project")
 	env := argString(req, "environment")
+	limit := argInt(req, "limit", 1)
 
-	apiURL := "/api/deployments?take=30"
+	apiURL := fmt.Sprintf("/api/deployments?take=%d", limit)
 	if project != "" {
 		apiURL += "&projects=" + url.QueryEscape(project)
 	}
@@ -309,13 +307,16 @@ func (o *OctopusManager) handleGetRelease(_ context.Context, req mcp.CallToolReq
 func registerOctopusTools(s *server.MCPServer, o *OctopusManager) {
 	// octo_download_package
 	s.AddTool(mcp.NewTool("octo_download_package",
-		mcp.WithDescription("Search the Octopus package feed for packages whose ID matches the given pattern and download all matching versions to disk."),
+		mcp.WithDescription("Search the Octopus package feed for packages whose ID matches the given pattern and download to disk. Downloads the single latest matching package by default."),
 		mcp.WithString("pattern",
 			mcp.Required(),
 			mcp.Description("Substring pattern to match against package IDs (case-insensitive). E.g. \"MyApp\" matches MyApp.Web, MyApp.Api, etc."),
 		),
 		mcp.WithString("dest_dir",
 			mcp.Description("Local directory to save downloaded packages to (default: current directory)."),
+		),
+		mcp.WithNumber("limit",
+			mcp.Description("Number of matching packages to download (default: 1)."),
 		),
 	), o.handleDownloadPackage)
 
@@ -324,6 +325,12 @@ func registerOctopusTools(s *server.MCPServer, o *OctopusManager) {
 		mcp.WithDescription("List packages available in the Octopus built-in package feed, optionally filtered by a name pattern."),
 		mcp.WithString("pattern",
 			mcp.Description("Optional substring filter for package IDs."),
+		),
+		mcp.WithString("latest_only",
+			mcp.Description("Return only the latest version per package ID. true (default) or false to see all versions."),
+		),
+		mcp.WithNumber("limit",
+			mcp.Description("Maximum number of packages to return (default: 1)."),
 		),
 	), o.handleListPackages)
 
@@ -340,6 +347,9 @@ func registerOctopusTools(s *server.MCPServer, o *OctopusManager) {
 		),
 		mcp.WithString("environment",
 			mcp.Description("Environment name or ID to filter by (default: all environments)."),
+		),
+		mcp.WithNumber("limit",
+			mcp.Description("Maximum number of deployments to return (default: 1)."),
 		),
 	), o.handleListDeployments)
 

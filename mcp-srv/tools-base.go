@@ -11,19 +11,9 @@ import (
 	"regexp"
 	"strings"
 
-	html2md "github.com/JohannesKaufmann/html-to-markdown"
 	mcp "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
-
-func readFileContent(targetPath string) (string, error) {
-	cleanPath := filepath.Clean(targetPath)
-	content, err := os.ReadFile(cleanPath)
-	if err != nil {
-		return "", fmt.Errorf("failed to read file: %w", err)
-	}
-	return string(content), nil
-}
 
 func listDirectory(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.GetArguments()
@@ -301,39 +291,6 @@ func findReplaceInFile(ctx context.Context, request mcp.CallToolRequest) (*mcp.C
 		noun = "occurrences"
 	}
 	return mcp.NewToolResultText(fmt.Sprintf("Replaced %d %s of %q in %s.", count, noun, find, cleanPath)), nil
-}
-
-func fetchAndConvert(url string) (string, error) {
-	client := &http.Client{}
-	httpReq, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return "", fmt.Errorf("invalid URL: %w", err)
-	}
-	httpReq.Header.Set("User-Agent", "MCP-Stdio-Server/1.0")
-
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return "", fmt.Errorf("fetch failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("HTTP error: %d %s\nResponse body: %s", resp.StatusCode, resp.Status, string(body))
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("read body failed: %w", err)
-	}
-
-	converter := html2md.NewConverter("", true, nil)
-	md, err := converter.ConvertString(string(body))
-	if err != nil {
-		return "", fmt.Errorf("html to md conversion failed: %w", err)
-	}
-
-	return strings.TrimSpace(md), nil
 }
 
 func fetchUrl(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
