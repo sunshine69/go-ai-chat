@@ -1,7 +1,0 @@
-# Test File - Overwritten!
-
-This file has been overwritten by the create_new_file tool using overwrite=true.
-
-## New Content
-- Tool: create_new_file (with overwrite)
-- Status: Success

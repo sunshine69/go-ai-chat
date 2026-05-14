@@ -1,3 +1,0 @@
-test content
-line 2 REPLACED
-line 3

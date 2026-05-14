@@ -1,6 +1,0 @@
-# Tool Test Results - May 1, 2026
-## Tested Resources:
-- list_directory ✅ Works (lists files with emoji icons)
-- read_file ✅ Works (reads file content as string)  
-- run_terminal_command ✅ Works (supports confirmed flag, returns stdout/stderr)
-- file_glob_search ✅ Works (pattern matching in directories)
