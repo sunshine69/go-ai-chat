@@ -89,8 +89,8 @@ func TestIntegration_DownloadPackage(t *testing.T) {
 
 	destDir := t.TempDir()
 	res, err := o.handleDownloadPackage(context.Background(), makeReq(map[string]any{
-		"pattern":  pattern,
-		"dest_dir": destDir,
+		"name_pattern": pattern,
+		"dest_dir":     destDir,
 	}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -111,6 +111,7 @@ func TestIntegration_DownloadPackage(t *testing.T) {
 			t.Errorf("file %s is empty — raw download endpoint may have changed", e.Name())
 		}
 	}
+	t.Logf("dest dir is: %s\n", destDir)
 }
 
 // ── octo_list_deployments ────────────────────────────────────────────────────
@@ -118,7 +119,9 @@ func TestIntegration_DownloadPackage(t *testing.T) {
 func TestIntegration_ListDeployments_All(t *testing.T) {
 	o := newRealOctopus(t)
 
-	res, err := o.handleListDeployments(context.Background(), makeReq(nil))
+	res, err := o.handleListDeployments(context.Background(), makeReq(map[string]any{
+		"project": "", "environment": "",
+	}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
