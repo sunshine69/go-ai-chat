@@ -439,14 +439,6 @@ func handleCommand(text string, history *[]Message) {
 		saveConfig()
 		fmt.Printf("✅ Permission for '%s' set to [%s]\n", toolName, perm)
 
-	case "/edit":
-		fmt.Println("📝 Opening editor... Write your text, save, and exit to send.")
-		return
-
-	// -----------------------------------------------------------------------
-	// MCP commands
-	// -----------------------------------------------------------------------
-
 	case "/mcp":
 		if arg == "" {
 			// Show current MCP status
@@ -692,6 +684,11 @@ func handleCommand(text string, history *[]Message) {
 	case "/help":
 		fmt.Println("Commands:")
 		fmt.Println("  /new , /n                     - Clear conversation history")
+		fmt.Println("  /edit,                        - Open EDITOR to edit user message")
+		fmt.Println("  /edit <index>,                - Open EDITOR to edit user message using existing conversation index")
+		fmt.Println("  /s <hist_index:filename>      - Save the history index to a file")
+		fmt.Println("  /history or /h                - Show current chat history")
+		fmt.Println("  /list, /l                     - List contexts for current model")
 		fmt.Println("  /add <file>,/a                - Stage file for next message (user role)")
 		fmt.Println("  /addsystem <file>,/as         - Stage file for system message (system role)")
 		fmt.Println("  /r <cmd>                      - Run shell command and show output")
@@ -699,14 +696,11 @@ func handleCommand(text string, history *[]Message) {
 		fmt.Println("  /url <url>                    - Switch API URL")
 		fmt.Println("  /timeout or /t <dur>          - Set request timeout (e.g., 30s, 5m, 1h)")
 		fmt.Println("  /exit or /q                   - Exit REPL")
-		fmt.Println("  /history or /h                - Show current chat history")
-		fmt.Println("  /list, /l                     - List contexts for current model")
 		fmt.Println("  /use <name>                   - Switch to an existing context")
 		fmt.Println("  /del <name>                   - Delete specific context")
 		fmt.Println("  /del all                      - Delete all contexts for current model")
 		fmt.Println("  /debug <0|1>                  - Enable/Disable debug")
 		fmt.Println("  /show <thing>                 - Show details (e.g., /show context <name>)")
-		fmt.Println("  /s <hist_index:filename>      - Save the history index to a file")
 		fmt.Println("  /cd <dirname>                 - Change to directory")
 		fmt.Println("  /mcp <spec>                   - Connect MCP server (tcp://host:port or cmd)")
 		fmt.Println("  /mcp off                      - Disconnect MCP server")
@@ -1015,18 +1009,32 @@ func runREPLWithReader(history *[]Message, rl *readline.Instance, histFile strin
 		}
 
 		if strings.HasPrefix(text, "/") {
-			if text == "/edit" {
-				editorText, err := openInEditor("")
+			if strings.HasPrefix(text, "/edit") {
+				parts := strings.SplitN(text, " ", -1)
+				initialMsg := ""
+				if len(parts) > 1 {
+					idx, err := strconv.Atoi(parts[1])
+					if err != nil {
+						fmt.Println("⚠️ Second args detected but malformed. It should be the conversation index number. Run /h to show history and see what number is.")
+					} else {
+						msg := (*history)[idx-1]
+						switch v := msg.Content.(type) {
+						case string:
+							initialMsg = v
+						default:
+							fmt.Println("⚠️ skip editing non text content")
+						}
+					}
+				}
+				editorText, err := openInEditor(initialMsg)
 				if err != nil {
 					fmt.Printf("❌ Editor error: %v\n", err)
 					continue
 				}
-
 				if strings.TrimSpace(editorText) == "" {
 					fmt.Println("⚠️  Empty input. Aborting.")
 					continue
 				}
-
 				ctx, cancel := context.WithCancel(context.Background())
 				sigChan := make(chan os.Signal, 1)
 				signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
@@ -1036,7 +1044,6 @@ func runREPLWithReader(history *[]Message, rl *readline.Instance, histFile strin
 				}()
 
 				doTurn(ctx, editorText)
-
 				signal.Stop(sigChan)
 				cancel()
 				continue
