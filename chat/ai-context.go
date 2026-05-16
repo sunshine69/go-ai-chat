@@ -95,13 +95,13 @@ func trimContext(ctx context.Context, cfg Config, msgs []Message) []Message {
 		return msgs
 	}
 
-	systemHead, rest := splitSystemHead(msgs)
+	_, rest := splitSystemHead(msgs)
 
 	if len(rest) <= keepHead+keepTail {
 		return msgs
 	}
 
-	head := rest[:keepHead]
+	// head := rest[:keepHead]
 	middle := rest[keepHead : len(rest)-keepTail]
 	tail := rest[len(rest)-keepTail:]
 
@@ -114,18 +114,18 @@ func trimContext(ctx context.Context, cfg Config, msgs []Message) []Message {
 
 	summary := tryAISummary(ctx, cfg, middle)
 	summaryMsg := Message{
-		Role:    "system",
+		Role:    "user",
 		Content: summary,
 	}
 
-	trimmed := concat(systemHead, []Message{summaryMsg}, head, tail)
+	trimmed := concat([]Message{summaryMsg}, tail)
 
 	// Progressive fallback: if still over half the limit, drop pairs from the
 	// older end of tail — never touch head or the last 2 messages.
 	target := cfg.ContextLimit / 2
 	for estimateTokens(trimmed) > target && len(tail) > 2 {
 		tail = tail[2:]
-		trimmed = concat(systemHead, []Message{summaryMsg}, head, tail)
+		trimmed = concat([]Message{summaryMsg}, tail)
 	}
 
 	fmt.Printf("✅ Context trimmed to ~%d tokens (target <%d)\n",

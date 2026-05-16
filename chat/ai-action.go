@@ -163,7 +163,7 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
+	scanner.Buffer(make([]byte, 4194304), 4194304) // 4Mb
 
 	var fullContent strings.Builder
 	var thinkingContent strings.Builder
@@ -216,11 +216,13 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 				}
 				fmt.Print(delta.ReasoningContent)
 				os.Stdout.Sync()
+				continue
 			} else {
 				if !thinkingStarted {
 					fmt.Print("\n> 🤔 Thinking hidden, run /showthink on to enable\n")
 					thinkingStarted = true
 				}
+				continue
 			}
 		}
 
@@ -236,6 +238,7 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 			fmt.Print(delta.Content)
 			os.Stdout.Sync()
 			fullContent.WriteString(delta.Content)
+			continue
 		}
 
 		// Tool call deltas: keyed by the `index` field OpenAI streams per chunk.
@@ -268,7 +271,7 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 			}
 		}
 		if toolCallReady { // Stop model like Qwen3.6 continue emitting text which confused the parser
-			break
+			continue
 		}
 	}
 
