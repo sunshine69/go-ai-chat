@@ -408,7 +408,7 @@ func promptForMissingConfig(config *Config) {
 	}
 
 	if needsAPIKey {
-		fmt.Printf("API Key (will not be displayed): ")
+		fmt.Printf("API Key (will not be displayed). If no need type anything and hit enter: ")
 		apiKey, _ := reader.ReadString('\n')
 		apiKey = strings.TrimSpace(string(apiKey))
 		if apiKey != "" {
