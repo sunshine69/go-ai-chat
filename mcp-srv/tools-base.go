@@ -13,6 +13,7 @@ import (
 
 	mcp "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	u "github.com/sunshine69/golang-tools/utils"
 )
 
 func listDirectory(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -407,6 +408,15 @@ func registerBaseTool(s *server.MCPServer) {
 		mcp.WithBoolean("replace_all", mcp.DefaultBool(false), mcp.Description("Replace all occurrences instead of just the first.")),
 	), findReplaceInFile)
 
+	s.AddTool(mcp.NewTool("block_in_file",
+		mcp.WithDescription("Replace a block of text in a file based on start_block_ptn, end_block_ptn,  marker_ptn pattern. Marker is in the midle. Three lines pattern must be matched in order to replace. The new block will replace from start_block_ptn line to the end_block_ptn line. Use golang regex syntax."),
+		mcp.WithString("path", mcp.Required(), mcp.Description("Path to the file to modify.")),
+		mcp.WithString("start_block_ptn", mcp.Required(), mcp.Description("The regex pattern to match the start line of the block.")),
+		mcp.WithString("end_block_ptn", mcp.Required(), mcp.Description("The regex pattern to match the end line of the block.")),
+		mcp.WithString("marker_ptn", mcp.Required(), mcp.Description("The regex pattern to match in between the block.")),
+		mcp.WithString("replace", mcp.Required(), mcp.Description("The replacement string.")),
+	), blockInFile)
+
 	s.AddTool(mcp.NewTool("http_request",
 		mcp.WithDescription("Make HTTP requests to external APIs"),
 		mcp.WithString("method",
@@ -423,4 +433,38 @@ func registerBaseTool(s *server.MCPServer) {
 			mcp.Description("Request body (for POST/PUT)"),
 		),
 	), httpRequest)
+}
+
+func blockInFile(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	path := ""
+	if p, ok := args["path"]; ok {
+		path = fmt.Sprintf("%v", p)
+	}
+	upper_bound_ptn := []string{}
+	if f, ok := args["start_block_ptn"]; ok {
+		upper_bound_ptn = []string{f.(string)}
+	}
+	lower_bound_ptn := []string{}
+	if f, ok := args["end_block_ptn"]; ok {
+		lower_bound_ptn = []string{f.(string)}
+	}
+	marker_ptn := []string{}
+	if f, ok := args["marker_ptn"]; ok {
+		marker_ptn = []string{f.(string)}
+	}
+	replace := ""
+	if r, ok := args["replace"]; ok {
+		replace = fmt.Sprintf("%v", r)
+	}
+
+	cleanPath := filepath.Clean(path)
+
+	oldBlock, start, _, _ := u.BlockInFile(cleanPath, upper_bound_ptn, lower_bound_ptn, marker_ptn, replace, false, false, 0)
+
+	if start == -1 {
+		return mcp.NewToolResultText(fmt.Sprintf("Sone error happened, file unchanged.", cleanPath)), nil
+	} else {
+		return mcp.NewToolResultText(fmt.Sprintf("Success - Old text block: %s :end block", oldBlock)), nil
+	}
 }
