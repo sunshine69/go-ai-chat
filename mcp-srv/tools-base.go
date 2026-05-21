@@ -460,11 +460,11 @@ func blockInFile(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolR
 
 	cleanPath := filepath.Clean(path)
 
-	oldBlock, start, _, _ := u.BlockInFile(cleanPath, upper_bound_ptn, lower_bound_ptn, marker_ptn, replace, false, false, 0)
+	_, start, _, _ := u.BlockInFile(cleanPath, upper_bound_ptn, lower_bound_ptn, marker_ptn, replace, false, false, 0)
 
 	if start == -1 {
-		return mcp.NewToolResultText(fmt.Sprint("Sone error happened, file unchanged.")), nil
+		return mcp.NewToolResultText("Sone error happened, file unchanged."), nil
 	} else {
-		return mcp.NewToolResultText(fmt.Sprintf("Success. This block\n```%s```\n has been replaced", oldBlock)), nil
+		return mcp.NewToolResultText("Success."), nil
 	}
 }
