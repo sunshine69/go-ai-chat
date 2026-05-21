@@ -2,13 +2,13 @@
 
 This is simple, pure go, console based AI chat with support for mcp in agent mode.
 
-## Features 
+## Features
 
 - Model selection
 - Can connect to MCP server currently support stdio. Not tested with tcp or http sse yet.
   I provided one will full tools to enable coding agent mode in mcp-stdio-q36 dir.
   User can implement new one based on the existing pattern.
-- Context trimming. Support different model for sumarizing the context (faster)  
+- Context trimming. Support different model for sumarizing the context (faster)
 - Session management, be able to save conversations into file in order to be read by other editor (vim)
 - Support multiline input using /edit at prompt
 - Simple code, minimum dependencies and ideal for extentions.
@@ -44,7 +44,7 @@ As of now
 - Build the aig cli and the mcp.exe
 ```
 go build -o ~/.local/bin/aig chat/*.go
-go build -o mcp.exe mcp-stdio-q36/main.go
+go build -o mcp.exe mcp-srv/main.go
 ```
 
 - Run the `aig` and answer the first prompts
@@ -142,12 +142,12 @@ Stable, most features completed.
 
 ## Issues
 
-- TODO - some how in the midle of session we insert system message wrongly - llama-server return 
+- TODO - some how in the midle of session we insert system message wrongly - llama-server return
 ```
 error: API Error: {"error":{"code":500,"message":"\n------------\nWhile executing CallExpression at line 85, column 32 in source:\n...first %}↵            {{- raise_exception('System message must be at the beginnin...\n                                           ^\nError: Jinja Exception: System message must be at the beginning.","type":"server_error"}}
 ```
 
-Or qwen3.6 apex return some random binary and error 
+Or qwen3.6 apex return some random binary and error
 
 Never happened with gemma family yet though
 
