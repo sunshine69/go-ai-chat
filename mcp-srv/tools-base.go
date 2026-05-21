@@ -409,7 +409,7 @@ func registerBaseTool(s *server.MCPServer) {
 	), findReplaceInFile)
 
 	s.AddTool(mcp.NewTool("block_in_file",
-		mcp.WithDescription("Replace a block of text in a file based on start_block_ptn, end_block_ptn,  marker_ptn pattern. Marker is in the midle. Three lines pattern must be matched in order to replace. The new block will replace from start_block_ptn line to the end_block_ptn line. Use golang regex syntax."),
+		mcp.WithDescription("Replaces a multi-line block of text within a file using three regex anchor patterns that must appear in sequence. The tool searches the specified `path` for three lines matching the provided regular expressionns in this order: first `start_block_ptn`, then `marker_ptn`, and finally `end_block_ptn`. These markers act as anchors; there can be any number of intermediate lines between them. Once found, the entire range—starting from the line matching start_block_ptn` through to the end of the line matching `end_block_ptn`—is replaced by the string provided in `replace`"),
 		mcp.WithString("path", mcp.Required(), mcp.Description("Path to the file to modify.")),
 		mcp.WithString("start_block_ptn", mcp.Required(), mcp.Description("The regex pattern to match the start line of the block.")),
 		mcp.WithString("end_block_ptn", mcp.Required(), mcp.Description("The regex pattern to match the end line of the block.")),
@@ -463,8 +463,8 @@ func blockInFile(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolR
 	oldBlock, start, _, _ := u.BlockInFile(cleanPath, upper_bound_ptn, lower_bound_ptn, marker_ptn, replace, false, false, 0)
 
 	if start == -1 {
-		return mcp.NewToolResultText(fmt.Sprintf("Sone error happened, file unchanged.", cleanPath)), nil
+		return mcp.NewToolResultText(fmt.Sprint("Sone error happened, file unchanged.")), nil
 	} else {
-		return mcp.NewToolResultText(fmt.Sprintf("Success - Old text block: %s :end block", oldBlock)), nil
+		return mcp.NewToolResultText(fmt.Sprintf("Success. This block\n```%s```\n has been replaced", oldBlock)), nil
 	}
 }
