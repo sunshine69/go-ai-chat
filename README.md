@@ -52,9 +52,10 @@ To build with completely portable golang code so you can run it in a chroot envi
 Most tools are still available except the run_terminal_command - it also works if your chroot has shell and having the required commands.
 
 ```
-# For fish shell, if u use bash adjust it
-for os in windows linux ; export GOOS=$os && export CGO_ENABLED=0 && export outfile="mcp-$os-amd64.exe" && export buildpath="mcp-srv
-" && cd $buildpath && go build -trimpath -ldflags="-X main.version=v1.0.1+"(date +'%Y%m%d')" -X main.buildTime="(date +'%Y-%m-%d_%H:%M:%S')" -extldflags=-static -w -s" --tags "osusergo,netgo" -o ../$outfile . ; end
+# For fish shell, if u use bash adjust it.
+for os in windows linux ; export GOOS=$os && export CGO_ENABLED=0 && export outfile="mcp-$os-amd64.exe" && export buildpath="mcp-srv" && cd $buildpath && go build -trimpath -ldflags="-X main.version=v1.0.1+"(date +'%Y%m%d')" -X main.buildTime="(date +'%Y-%m-%d_%H:%M:%S')" -extldflags=-static -w -s" --tags "osusergo,netgo" -o ../$outfile . ; end
+
+for os in windows linux ; export GOOS=$os && export CGO_ENABLED=0 && export outfile="aig-$os-amd64.exe" && export buildpath="chat" && cd $buildpath && go build -trimpath -ldflags="-X main.version=v1.0.1+"(date +'%Y%m%d')" -X main.buildTime="(date +'%Y-%m-%d_%H:%M:%S')" -extldflags=-static -w -s" --tags "osusergo,netgo" -o ../$outfile . ; end
 
 # Create a root dir
 mkdir my-mcp-root
@@ -69,7 +70,7 @@ chroot my-mcp-root ./aig-linux-amd64.exe
 
 - Run the `aig` and answer the first prompts
 - Select the model properly
-- after startup load the mcp using command `/mcp ./mcp.exe`
+- after startup load the mcp using command `/mcp ./mcp-linux-amd64.exe`
 - Ask for news headline (output below is shorten) `fetch a google news and show me news headline`
 
 ```
