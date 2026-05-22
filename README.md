@@ -47,6 +47,26 @@ go build -o ~/.local/bin/aig chat/*.go
 go build -o mcp.exe mcp-srv/main.go
 ```
 
+To build with completely portable golang code so you can run it in a chroot environment (to be safe for agent tasks for example)
+
+Most tools are still available except the run_terminal_command - it also works if your chroot has shell and having the required commands.
+
+```
+# For fish shell, if u use bash adjust it
+for os in windows linux ; export GOOS=$os && export CGO_ENABLED=0 && export outfile="mcp-$os-amd64.exe" && export buildpath="mcp-srv
+" && cd $buildpath && go build -trimpath -ldflags="-X main.version=v1.0.1+"(date +'%Y%m%d')" -X main.buildTime="(date +'%Y-%m-%d_%H:%M:%S')" -extldflags=-static -w -s" --tags "osusergo,netgo" -o ../$outfile . ; end
+
+# Create a root dir
+mkdir my-mcp-root
+# Copy binaries over to the root
+# Create minimum network files
+mkdir my-mcp-root/etc
+echo "nameserver 8.8.8.8" > my-mcp-root/etc/resolve.conf
+echo "127.0.0.1 localhost" > my-mcp-root/etc/hosts
+
+chroot my-mcp-root ./aig-linux-amd64.exe
+```
+
 - Run the `aig` and answer the first prompts
 - Select the model properly
 - after startup load the mcp using command `/mcp ./mcp.exe`
@@ -142,14 +162,6 @@ Stable, most features completed.
 
 ## Issues
 
-- TODO - some how in the midle of session we insert system message wrongly - llama-server return
-```
-error: API Error: {"error":{"code":500,"message":"\n------------\nWhile executing CallExpression at line 85, column 32 in source:\n...first %}↵            {{- raise_exception('System message must be at the beginnin...\n                                           ^\nError: Jinja Exception: System message must be at the beginning.","type":"server_error"}}
-```
+- Some times Qwen3.6 stop in the middle of something.
 
-Or qwen3.6 apex return some random binary and error
-
-Never happened with gemma family yet though
-
-Looks like command /a <file> insert it intot eh role system which is incorrect?
-
+There are a lots of efforts to bypass, ignore some strange `think outloud` from Qween! However it may still happen. You just need to type continue to make the model continue. It is not just this prog, many other ai gant has the similar like this as well eg. vscode continue, it is just the model producing some quirky texts at times
