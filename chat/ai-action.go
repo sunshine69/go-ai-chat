@@ -18,6 +18,8 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 	// Build a local copy of history for the tool loop — we extend it as we call tools
 	workingMsgs := make([]Message, len(msgs))
 	copy(workingMsgs, msgs)
+	var accumulatedContent strings.Builder
+	var accumulatedThinking strings.Builder
 	for {
 		if config.ContextLimit > 0 && estimateTokens(workingMsgs) > config.ContextLimit {
 			fmt.Printf("📊 Context size: ~%d tokens (limit: %d)\n", estimateTokens(workingMsgs), config.ContextLimit)
@@ -25,16 +27,40 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 		}
 		content, thinking, toolCalls, err := streamOnce(ctx, config, workingMsgs)
 		if err != nil {
-			return content, thinking, workingMsgs, err
+			return accumulatedContent.String() + content, accumulatedThinking.String() + thinking, workingMsgs, err
+		}
+		// Always gather whatever text it managed to output
+		if content != "" {
+			accumulatedContent.WriteString(content)
+		}
+		if thinking != "" {
+			accumulatedThinking.WriteString(thinking)
+		}
+
+		// --- 🛌 THE LAZY MODEL AUTO-NUDGE TRAP HAHA ---
+		// If it chose to "stop" naturally, but left you with ZERO tools and ZERO text
+		// after doing a bunch of thinking, it's being lazy. Wake it up!
+		if len(toolCalls) == 0 && content == "" && thinking != "" {
+			fmt.Println("\n> ⚡ [System Nudge]: AI went to sleep after planning. Forcing execution...")
+
+			// Save its thoughts into the history so it doesn't forget the plan
+			workingMsgs = append(workingMsgs, Message{
+				Role:    "assistant",
+				Content: thinking,
+			})
+
+			// Add a firm nudge telling it to execute step 1 immediately
+			workingMsgs = append(workingMsgs, Message{
+				Role:    "user",
+				Content: "Do not just plan. Execute the first necessary tool call or code modification from your checklist right now.",
+			})
+
+			// Loop right back up to force it to talk again!
+			continue
 		}
 		// No tool calls — we're done
 		if len(toolCalls) == 0 {
-			// the model chose to stop but left both tools and chat content blank
-			if content == "" && thinking != "" {
-				fmt.Println("\n> 💭 [System]: Model finished thinking but did not issue a chat response.")
-				fmt.Println("> You can type 'continue' to force it to execute the next step.")
-			}
-			return content, thinking, workingMsgs, nil
+			return accumulatedContent.String(), accumulatedThinking.String(), workingMsgs, nil
 		}
 		// Append the assistant's tool-call turn
 		workingMsgs = append(workingMsgs, Message{
