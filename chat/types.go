@@ -14,6 +14,7 @@ type Config struct {
 	PromptedModel       bool
 	PromptedAPIKey      bool
 	Debug               bool
+	DebugLevel          string
 	MCPPermissions      map[string]string
 	ShowThinking        bool
 	ContextLimit        int    // max estimated tokens before trimming; 0 = disabled

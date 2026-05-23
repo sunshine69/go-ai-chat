@@ -722,7 +722,7 @@ func handleCommand(text string, history *[]Message) {
 		fmt.Println("  /use <name>                   - Switch to an existing context")
 		fmt.Println("  /del <name>                   - Delete specific context")
 		fmt.Println("  /del all                      - Delete all contexts for current model")
-		fmt.Println("  /debug <0|1>                  - Enable/Disable debug")
+		fmt.Println("  /debug <0|1|2>                - Enable/Disable debug and set debug level")
 		fmt.Println("  /show <thing>                 - Show details (e.g., /show context <name>)")
 		fmt.Println("  /showthink <on|off>           - Show thinking process. Default is off")
 		fmt.Println("  /cd <dirname>                 - Change to directory")
@@ -804,14 +804,15 @@ func handleCommand(text string, history *[]Message) {
 
 	case "/debug":
 		if arg == "" {
-			fmt.Println("Usage: /debug <0|1>")
+			fmt.Println("Usage: /debug <0|1|2>")
 			return
 		}
 		switch arg {
 		case "0", "off":
 			config.Debug = false
-		case "1", "on":
+		default:
 			config.Debug = true
+			config.DebugLevel = strings.TrimSpace(arg)
 		}
 		// Reload it
 		if config.Debug && debugFile == nil {

@@ -192,6 +192,10 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 		}
 
 		line := strings.TrimSpace(scanner.Text())
+		if config.DebugLevel == "2" {
+			debugFile.WriteString(line + "\n")
+			debugFile.Sync()
+		}
 		debugHistory[historyIdx%10] = line
 		historyIdx++
 		if line == "" || line == "data: [DONE]" || !strings.HasPrefix(line, "data: ") {
@@ -220,9 +224,10 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 
 		// Handle explicit server finish signals safely
 		if choice.FinishReason != "" {
-			if choice.FinishReason == "tool_calls" {
+			switch choice.FinishReason {
+			case "tool_calls":
 				serverSignaledStop = true
-			} else if choice.FinishReason == "stop" {
+			case "stop":
 				// If we have any tools gathered (JSON or text-fallback), halt cleanly
 				if len(toolCallAccum) > 0 {
 					serverSignaledStop = true

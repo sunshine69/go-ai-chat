@@ -316,6 +316,9 @@ func saveConfig() {
 		envVars["SUMMARY_MODEL_TIMEOUT"] = config.SummaryModelTimeout
 		changed = true
 	}
+	if config.DebugLevel != "" {
+		envVars["DEBUG_LEVEL"] = config.DebugLevel
+	}
 	if config.ShowThinking {
 		envVars["SHOW_THINKING"] = "on"
 	} else {
@@ -443,6 +446,7 @@ func loadConfig() *Config {
 		MCPPermissions:      make(map[string]string),
 		ShowThinking:        os.Getenv("SHOW_THINKING") == "on",
 		BlockedTools:        os.Getenv("BLOCKED_TOOLS"),
+		DebugLevel:          os.Getenv("DEBUG_LEVEL"),
 	}
 
 	if timeoutStr := os.Getenv("TIMEOUT"); timeoutStr != "" {
@@ -457,7 +461,7 @@ func loadConfig() *Config {
 		c.BaseURL = "https://api.openai.com/v1/chat/completions"
 	}
 	if c.Model == "" {
-		c.Model = "gpt-3.5-turbo"
+		c.Model = "qwen3.6"
 	}
 
 	if strings.Contains(c.BaseURL, "localhost:11434") || strings.Contains(c.BaseURL, "localhost:4333") {
