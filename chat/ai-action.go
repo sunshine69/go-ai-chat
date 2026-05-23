@@ -184,7 +184,6 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 		if ctx.Err() != nil {
 			break
 		}
-
 		// If the server explicitly declared it is done with tool calls,
 		// ignore any runaway conversational text that follows (fixes Qwen runaway text bug)
 		if serverSignaledStop {
@@ -192,6 +191,11 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 		}
 
 		line := strings.TrimSpace(scanner.Text())
+		// DUMP EVERYTHING: Write the exact raw line coming from the network socket
+		if config.Debug {
+			debugFile.WriteString(line + "\n")
+			debugFile.Sync()
+		}
 		if line == "" || line == "data: [DONE]" || !strings.HasPrefix(line, "data: ") {
 			continue
 		}

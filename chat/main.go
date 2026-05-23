@@ -92,6 +92,9 @@ func buildUserMessage(text string, inlineParts []ContentPart) any {
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
+
+var debugFile *os.File
+
 func main() {
 	_ = godotenv.Load()
 	homeEnv, _ := godotenv.Read(homeDir + "/.aigdotenv")
@@ -101,6 +104,14 @@ func main() {
 		}
 	}
 	config = loadConfig()
+	if config.Debug && debugFile == nil {
+		debugFile, _ = os.OpenFile("aig_stream_debug.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	}
+	defer func() {
+		if debugFile != nil {
+			debugFile.Close()
+		}
+	}()
 
 	aigDir := filepath.Join(homeDir, ".aig")
 	_ = os.MkdirAll(aigDir, 0755)
@@ -796,7 +807,16 @@ func handleCommand(text string, history *[]Message) {
 			fmt.Println("Usage: /debug <0|1>")
 			return
 		}
-		config.Debug = arg == "1"
+		switch arg {
+		case "0", "off":
+			config.Debug = false
+		case "1", "on":
+			config.Debug = true
+		}
+		// Reload it
+		if config.Debug && debugFile == nil {
+			debugFile, _ = os.OpenFile("aig_stream_debug.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+		}
 
 	case "/system", "/sys":
 		if arg == "" {
