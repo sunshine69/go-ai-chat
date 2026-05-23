@@ -179,7 +179,15 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 		<-ctx.Done()
 		resp.Body.Close()
 	}()
+	// 1. Create a slice to hold the last 10 lines in memory (RAM)
+	debugHistory := make([]string, 10)
+	historyIdx := 0
+	// Dealing with llama and Qwen3 bug when it corrupted stream
+	// The Qwen "Multi-Session Mixup" (The Core Root Cause)
+	//The Late-Arriving XML Tags inside reasoning_content
+	//The Server Sends finish_reason: "stop" instead of "tool_calls"
 
+	var expectedSessionID string
 	for scanner.Scan() {
 		if ctx.Err() != nil {
 			break
@@ -191,11 +199,8 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 		}
 
 		line := strings.TrimSpace(scanner.Text())
-		// DUMP EVERYTHING: Write the exact raw line coming from the network socket
-		if config.Debug {
-			debugFile.WriteString(line + "\n")
-			debugFile.Sync()
-		}
+		debugHistory[historyIdx%10] = line
+		historyIdx++
 		if line == "" || line == "data: [DONE]" || !strings.HasPrefix(line, "data: ") {
 			continue
 		}
@@ -205,7 +210,14 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 		if err := json.Unmarshal([]byte(streamData), &streamResp); err != nil {
 			continue
 		}
-
+		// Set the unique ID on the very first valid line
+		if expectedSessionID == "" && streamResp.ID != "" {
+			expectedSessionID = streamResp.ID
+		}
+		// CRITICAL: Drop any chunks belonging to a leaked parallel request!
+		if expectedSessionID != "" && streamResp.ID != expectedSessionID {
+			continue
+		}
 		if len(streamResp.Choices) == 0 {
 			continue
 		}
@@ -220,6 +232,14 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 
 		// 1. Unpack Thinking content
 		if delta.ReasoningContent != "" {
+			rc := delta.ReasoningContent
+			// If Qwen attempts to close its tool syntax in the wrong block, handle it gracefully
+			if strings.Contains(rc, "</function>") || strings.Contains(rc, "</tool_call>") {
+				if len(toolCallAccum) > 0 {
+					serverSignaledStop = true
+				}
+				continue
+			}
 			tokenCount := len(strings.Fields(delta.ReasoningContent))
 			globalStats.TokenArrived(tokenCount)
 
@@ -236,6 +256,14 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 				thinkingStarted = true
 			}
 			continue
+		}
+
+		// 🛡️ CRITICAL FIX 3: Trigger tool capture even if server flags a standard "stop" status
+		if choice.FinishReason != "" && (choice.FinishReason == "tool_calls" || choice.FinishReason == "stop") {
+			if len(toolCallAccum) > 0 {
+				serverSignaledStop = true
+				continue
+			}
 		}
 
 		// 2. Unpack Regular text content
@@ -310,5 +338,22 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 		toolCalls = append(toolCalls, *tc)
 	}
 
+	// 3. If the loop finished but we didn't get tools or text (a freeze/cutoff happened)
+	// You can print out the exact history from RAM to see what went wrong.
+	if len(toolCalls) == 0 && fullContent.Len() == 0 {
+		fmt.Fprintln(os.Stderr, "\n--- 🚨 STREAM CUTOFF DETECTED (LAST 10 LINES) ---")
+		for i := 0; i < 10; i++ {
+			// Print the lines in chronological order
+			line := debugHistory[(historyIdx+i)%10]
+			if line != "" {
+				if config.Debug {
+					debugFile.WriteString(line + "\n")
+					debugFile.Sync()
+				} else {
+					fmt.Fprintln(os.Stderr, line)
+				}
+			}
+		}
+	}
 	return fullContent.String(), thinkingContent.String(), toolCalls, nil
 }
