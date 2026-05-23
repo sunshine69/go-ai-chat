@@ -668,3 +668,34 @@ func ConnectStdio(parts []string) (*MCPClient, error) {
 	}
 	return c, nil
 }
+
+// parseAndFilterTools takes a comma-separated string of tool names to block
+// and filters them out of the provided mcpTool slice.
+func parseAndFilterTools(allTools []mcpTool, blockedToolsStr string) []mcpTool {
+	// If the string is empty, return all tools immediately
+	if strings.TrimSpace(blockedToolsStr) == "" {
+		return allTools
+	}
+
+	// 1. Parse the comma-separated string into a lookup map
+	blockedMap := make(map[string]bool)
+	segments := strings.Split(blockedToolsStr, ",")
+
+	for _, segment := range segments {
+		cleanName := strings.TrimSpace(segment)
+		if cleanName != "" {
+			blockedMap[cleanName] = true
+		}
+	}
+
+	// 2. Filter the mcpTool slice directly
+	var allowedTools []mcpTool
+	for _, tool := range allTools {
+		if blockedMap[tool.Name] {
+			continue // Skip this tool, it's blocked!
+		}
+		allowedTools = append(allowedTools, tool)
+	}
+
+	return allowedTools
+}

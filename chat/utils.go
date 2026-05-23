@@ -316,9 +316,9 @@ func saveConfig() {
 		changed = true
 	}
 	if config.ShowThinking {
-		envVars["SHOW_THINKING"] = "true"
+		envVars["SHOW_THINKING"] = "on"
 	} else {
-		envVars["SHOW_THINKING"] = "false"
+		envVars["SHOW_THINKING"] = "off"
 	}
 	if config.ContextLimit > 0 {
 		envVars["CONTEXT_LIMIT"] = strconv.Itoa(config.ContextLimit)
@@ -487,7 +487,7 @@ func loadConfig() *Config {
 					c.MCPPermissions[toolName] = val
 				}
 				if key == "SHOW_THINKING" {
-					c.ShowThinking = (val == "true")
+					c.ShowThinking = (val == "on")
 				}
 				if key == "CONTEXT_LIMIT" {
 					if n, err := strconv.Atoi(val); err == nil {

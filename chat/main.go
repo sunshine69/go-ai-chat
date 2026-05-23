@@ -419,23 +419,31 @@ func handleCommand(text string, history *[]Message) {
 
 	case "/mcpfunc":
 		if arg == "" {
-			fmt.Println("Usage: /mcpfunc <name> <auto|ask|deny>")
+			fmt.Println("Usage: /mcpfunc <name> <auto|ask|deny|block> - If you set block you can set the next string which is a coma sep. tools name to block. If not set the current tool name will be block")
 			return
 		}
 		if len(parts) < 3 {
-			fmt.Println("❌ Error: Missing permission level. Usage: /mcpfunc <name> <auto|ask|deny>")
+			fmt.Println("❌ Error: Missing permission level. Usage: /mcpfunc <name> <auto|ask|deny|block [tool1,tool2]>")
 			return
 		}
 
 		toolName := parts[1]
 		perm := strings.ToLower(parts[2])
 
-		if perm != "auto" && perm != "ask" && perm != "deny" {
-			fmt.Println("❌ Error: Invalid permission level. Use 'auto', 'ask', or 'deny'.")
+		if perm != "auto" && perm != "ask" && perm != "deny" && perm != "block" {
+			fmt.Println("❌ Error: Invalid permission level. Use 'auto', 'ask', 'deny', 'block'.")
 			return
 		}
-
-		config.MCPPermissions[toolName] = perm
+		switch perm {
+		case "block":
+			blockString := arg
+			if len(parts) == 4 {
+				blockString = parts[3]
+			}
+			config.BlockedTools = blockString
+		default:
+			config.MCPPermissions[toolName] = perm
+		}
 		saveConfig()
 		fmt.Printf("✅ Permission for '%s' set to [%s]\n", toolName, perm)
 

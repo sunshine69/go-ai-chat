@@ -117,15 +117,11 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 	}
 }
 
-// streamOnce does one SSE request and returns (content, thinking, toolCalls, error).
+// streamOnce does one SSE request, printing text, prepare tools for one turn and returns
+// (content, thinking, toolCalls, error). Tool call if detected and parsed ok will end the turn
 func streamOnce(ctx context.Context, config Config, msgs []Message) (string, string, []ToolCall, error) {
-	globalStats.StreamStarted() // ← top of function
+	globalStats.StreamStarted()
 	defer globalStats.StreamFinished()
-
-	url := config.BaseURL
-	if !strings.Contains(url, "/chat/completions") {
-		url = strings.TrimSuffix(url, "/") + "/chat/completions"
-	}
 
 	reqBody := map[string]interface{}{
 		"model":    config.Model,
@@ -135,14 +131,19 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 
 	// Inject MCP tools if connected
 	if activeMCP != nil && len(activeMCP.Tools()) > 0 {
-		reqBody["tools"] = ToOpenAITools(activeMCP.Tools())
-		reqBody["tool_choice"] = "auto"
+		// Pass the tools slice and your comma-separated blocklist string directly
+		// Example value for config.BlockedTools: "dangerous_delete, format_hard_drive"
+		visibleTools := parseAndFilterTools(activeMCP.Tools(), config.BlockedTools)
+		if len(visibleTools) > 0 {
+			reqBody["tools"] = ToOpenAITools(visibleTools)
+			reqBody["tool_choice"] = "auto"
+		}
 	}
 
 	jsonValue, _ := json.Marshal(reqBody)
 	client := &http.Client{Timeout: config.Timeout}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonValue))
+	req, err := http.NewRequestWithContext(ctx, "POST", config.BaseURL, bytes.NewBuffer(jsonValue))
 	if err != nil {
 		return "", "", nil, err
 	}
@@ -163,15 +164,15 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 4194304), 4194304) // 4Mb
+	scanner.Buffer(make([]byte, 4194304), 4194304) // 4Mb large enough for one turn
 
 	var fullContent strings.Builder
 	var thinkingContent strings.Builder
 	var thinkingStarted = false
 	var headerPrinted = false
+	var serverSignaledStop = false
 
 	// Accumulate tool calls across streaming chunks (indexed by tool call index)
-	// OpenAI streams tool calls delta by delta
 	toolCallAccum := map[int]*ToolCall{}
 
 	go func() {
@@ -182,6 +183,12 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 	for scanner.Scan() {
 		if ctx.Err() != nil {
 			break
+		}
+
+		// If the server explicitly declared it is done with tool calls,
+		// ignore any runaway conversational text that follows (fixes Qwen runaway text bug)
+		if serverSignaledStop {
+			continue
 		}
 
 		line := strings.TrimSpace(scanner.Text())
@@ -199,16 +206,20 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 			continue
 		}
 
-		delta := streamResp.Choices[0].Delta
+		choice := streamResp.Choices[0]
+		delta := choice.Delta
 
-		// Thinking content
+		// Handle explicit server finish signals safely
+		if choice.FinishReason != "" && (choice.FinishReason == "tool_calls" || choice.FinishReason == "stop") {
+			serverSignaledStop = true
+		}
+
+		// 1. Unpack Thinking content
 		if delta.ReasoningContent != "" {
 			tokenCount := len(strings.Fields(delta.ReasoningContent))
 			globalStats.TokenArrived(tokenCount)
 
-			// ALWAYS capture the content so the history is complete
 			thinkingContent.WriteString(delta.ReasoningContent)
-			// ONLY print if the user has enabled it
 			if config.ShowThinking {
 				if !thinkingStarted {
 					fmt.Print("\n> 🤔 Thinking...\n")
@@ -216,17 +227,14 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 				}
 				fmt.Print(delta.ReasoningContent)
 				os.Stdout.Sync()
-				continue
-			} else {
-				if !thinkingStarted {
-					fmt.Print("\n> 🤔 Thinking hidden, run /showthink on to enable\n")
-					thinkingStarted = true
-				}
-				continue
+			} else if !thinkingStarted {
+				fmt.Print("\n> 🤔 Thinking hidden, run /showthink on to enable\n")
+				thinkingStarted = true
 			}
+			continue
 		}
 
-		// Regular text content
+		// 2. Unpack Regular text content
 		if delta.Content != "" {
 			tokenCount := len(strings.Fields(delta.Content))
 			globalStats.TokenArrived(tokenCount)
@@ -235,15 +243,13 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 				fmt.Print("\n> 📝 Response:\n")
 				headerPrinted = true
 			}
+			fullContent.WriteString(delta.Content)
 			fmt.Print(delta.Content)
 			os.Stdout.Sync()
-			fullContent.WriteString(delta.Content)
 			continue
 		}
 
-		// Tool call deltas: keyed by the `index` field OpenAI streams per chunk.
-		// This is the only reliable merge key -- do NOT use ID or name matching.
-		var toolCallReady bool
+		// 3. Unpack Tool call deltas safely
 		for _, tcDelta := range delta.ToolCalls {
 			key := tcDelta.Index
 			if _, exists := toolCallAccum[key]; !exists {
@@ -258,54 +264,42 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 			}
 			if tcDelta.Function.Name != "" {
 				tc.Function.Name += tcDelta.Function.Name
-				var tmp interface{}
-				if json.Unmarshal([]byte(tc.Function.Arguments), &tmp) == nil {
-					toolCallReady = true
-				}
 			}
+
 			prevArgs := tc.Function.Arguments
 			tc.Function.Arguments += tcDelta.Function.Arguments
-			// Print indicator on first argument chunk (name arrives before args)
+
+			// Print visual anchor on first argument chunk arrival
 			if tc.Function.Name != "" && prevArgs == "" && tcDelta.Function.Arguments != "" {
 				fmt.Printf("\n> 🔧 Planning tool call: %s\n", tc.Function.Name)
 			}
 		}
-		if toolCallReady { // Stop model like Qwen3.6 continue emitting text which confused the parser
-			continue
-		}
-	}
+	} // scanner end
 
 	if err := scanner.Err(); err != nil && ctx.Err() == nil {
 		return fullContent.String(), thinkingContent.String(), nil, fmt.Errorf("stream error: %v", err)
 	}
 
-	// Collect accumulated tool calls
+	// Collect accumulated tool calls safely using a range loop over the map
 	var toolCalls []ToolCall
-	for i := 0; i < len(toolCallAccum); i++ {
-		tc := toolCallAccum[i]
-		if tc == nil {
+	for _, tc := range toolCallAccum {
+		if tc == nil || tc.Type != "function" || strings.TrimSpace(tc.Function.Name) == "" {
 			continue
 		}
-		// Must be a function tool call
-		if tc.Type != "function" {
-			continue
-		}
-		// Must have a tool name
-		if strings.TrimSpace(tc.Function.Name) == "" {
-			continue
-		}
-		// Must have arguments
+
 		args := strings.TrimSpace(tc.Function.Arguments)
 		if args == "" {
 			fmt.Printf("\n> ⚠️ Ignoring incomplete tool call (missing args): %s\n", tc.Function.Name)
 			continue
 		}
-		// Arguments must be valid JSON
+
+		// Perform JSON validation only ONCE here after streaming is entirely complete
 		var tmp interface{}
 		if err := json.Unmarshal([]byte(args), &tmp); err != nil {
 			fmt.Printf("\n> ⚠️ Ignoring malformed tool call %s: %v\n", tc.Function.Name, err)
 			continue
 		}
+
 		if config.Debug {
 			fmt.Printf("CALL TOOL: %+v\n", tc)
 		}

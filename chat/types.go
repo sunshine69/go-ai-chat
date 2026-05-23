@@ -16,7 +16,8 @@ type Config struct {
 	Debug               bool
 	MCPPermissions      map[string]string
 	ShowThinking        bool
-	ContextLimit        int // max estimated tokens before trimming; 0 = disabled
+	ContextLimit        int    // max estimated tokens before trimming; 0 = disabled
+	BlockedTools        string // coma sep of tools name we dont want AI to see and use
 }
 
 type Message struct {
