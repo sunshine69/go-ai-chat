@@ -133,7 +133,7 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 	if activeMCP != nil && len(activeMCP.Tools()) > 0 {
 		// Pass the tools slice and your comma-separated blocklist string directly
 		// Example value for config.BlockedTools: "dangerous_delete, format_hard_drive"
-		visibleTools := parseAndFilterTools(activeMCP.Tools(), config.BlockedTools)
+		visibleTools := parseAndFilterToolsRegex(activeMCP.Tools(), config.BlockedTools)
 		if len(visibleTools) > 0 {
 			reqBody["tools"] = ToOpenAITools(visibleTools)
 			reqBody["tool_choice"] = "auto"

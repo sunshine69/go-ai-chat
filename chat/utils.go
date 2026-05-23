@@ -320,6 +320,9 @@ func saveConfig() {
 	} else {
 		envVars["SHOW_THINKING"] = "off"
 	}
+	if config.BlockedTools != "" {
+		envVars["BLOCKED_TOOLS"] = config.BlockedTools
+	}
 	if config.ContextLimit > 0 {
 		envVars["CONTEXT_LIMIT"] = strconv.Itoa(config.ContextLimit)
 		changed = true
@@ -437,6 +440,8 @@ func loadConfig() *Config {
 		PromptedModel:       false,
 		PromptedAPIKey:      false,
 		MCPPermissions:      make(map[string]string),
+		ShowThinking:        os.Getenv("SHOW_THINKING") == "on",
+		BlockedTools:        os.Getenv("BLOCKED_TOOLS"),
 	}
 
 	if timeoutStr := os.Getenv("TIMEOUT"); timeoutStr != "" {
@@ -463,14 +468,8 @@ func loadConfig() *Config {
 	if len(os.Args) == 1 {
 		promptForMissingConfig(&c)
 	}
-	// NEW: Parse MCP Permissions from environment
-	// Since we use godotenv, all vars in .aigdotenv are in the env
-	// We'll iterate through keys if possible, but since we can't easily
-	// list all env vars in Go without platform specific calls,
-	// we'll rely on the fact that we are reading the file manually below
-	// or we can just scan the file in loadConfig.
 
-	// Let's update loadConfig to read the file manually for permissions
+	// Transform config data type example, where in dotenv value is just string but config type is different
 	dotEnvPath := filepath.Join(homeDir, ".aigdotenv")
 	if data, err := os.ReadFile(dotEnvPath); err == nil {
 		lines := strings.Split(string(data), "\n")

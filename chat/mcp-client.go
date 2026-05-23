@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -669,30 +670,39 @@ func ConnectStdio(parts []string) (*MCPClient, error) {
 	return c, nil
 }
 
-// parseAndFilterTools takes a comma-separated string of tool names to block
-// and filters them out of the provided mcpTool slice.
-func parseAndFilterTools(allTools []mcpTool, blockedToolsStr string) []mcpTool {
-	// If the string is empty, return all tools immediately
-	if strings.TrimSpace(blockedToolsStr) == "" {
+// parseAndFilterToolsRegex treats each comma-separated segment as a regex pattern.
+// If a tool name matches any of the patterns, it will be blocked.
+func parseAndFilterToolsRegex(allTools []mcpTool, blockedPatternsStr string) []mcpTool {
+	if strings.TrimSpace(blockedPatternsStr) == "" {
 		return allTools
 	}
 
-	// 1. Parse the comma-separated string into a lookup map
-	blockedMap := make(map[string]bool)
-	segments := strings.Split(blockedToolsStr, ",")
+	segments := strings.Split(blockedPatternsStr, ",")
+	var activeRegexes []*regexp.Regexp
 
 	for _, segment := range segments {
-		cleanName := strings.TrimSpace(segment)
-		if cleanName != "" {
-			blockedMap[cleanName] = true
+		cleanPattern := strings.TrimSpace(segment)
+		if cleanPattern == "" {
+			continue
+		}
+		if expr, err := regexp.Compile(cleanPattern); err == nil {
+			activeRegexes = append(activeRegexes, expr)
 		}
 	}
 
-	// 2. Filter the mcpTool slice directly
 	var allowedTools []mcpTool
 	for _, tool := range allTools {
-		if blockedMap[tool.Name] {
-			continue // Skip this tool, it's blocked!
+		isBlocked := false
+
+		for _, expr := range activeRegexes {
+			if expr.MatchString(tool.Name) {
+				isBlocked = true
+				break
+			}
+		}
+
+		if isBlocked {
+			continue
 		}
 		allowedTools = append(allowedTools, tool)
 	}
