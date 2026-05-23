@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -495,4 +496,56 @@ func loadConfig() *Config {
 	}
 
 	return &c
+}
+
+// Handle buggy llama-server not to populate tool call with Qwen model
+func parseRawXmlTools(rawText string) []ToolCall {
+	var toolCalls []ToolCall
+
+	// 1. Regex to isolate individual <tool_call>...</tool_call> wrappers
+	toolCallBlockRegex := regexp.MustCompile(`<tool_call>([\s\S]*?)</tool_call>`)
+	funcRegex := regexp.MustCompile(`<function=([^>]+)>`)
+	paramRegex := regexp.MustCompile(`<parameter=([^>]+)>\s*([\s\S]*?)\s*</parameter>`)
+
+	// Find all distinct tool call blocks in the accumulated text
+	blocks := toolCallBlockRegex.FindAllStringSubmatch(rawText, -1)
+
+	for i, block := range blocks {
+		if len(block) < 2 {
+			continue
+		}
+		innerContent := block[1]
+
+		// Extract the function name (e.g., read_file)
+		funcMatch := funcRegex.FindStringSubmatch(innerContent)
+		if len(funcMatch) < 2 {
+			continue
+		}
+
+		tc := ToolCall{
+			Index: i,
+			Type:  "function",
+		}
+		tc.Function.Name = strings.TrimSpace(funcMatch[1])
+
+		// Extract all individual parameters inside this specific block
+		pMatches := paramRegex.FindAllStringSubmatch(innerContent, -1)
+		paramMap := make(map[string]interface{})
+
+		for _, pMatch := range pMatches {
+			if len(pMatch) >= 3 {
+				key := strings.TrimSpace(pMatch[1])
+				val := strings.TrimSpace(pMatch[2])
+				paramMap[key] = val
+			}
+		}
+
+		// Convert the parameters map into a valid JSON string for your tool executor
+		jsonBytes, _ := json.Marshal(paramMap)
+		tc.Function.Arguments = string(jsonBytes)
+
+		toolCalls = append(toolCalls, tc)
+	}
+
+	return toolCalls
 }

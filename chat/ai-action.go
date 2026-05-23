@@ -131,8 +131,6 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 
 	// Inject MCP tools if connected
 	if activeMCP != nil && len(activeMCP.Tools()) > 0 {
-		// Pass the tools slice and your comma-separated blocklist string directly
-		// Example value for config.BlockedTools: "dangerous_delete, format_hard_drive"
 		visibleTools := parseAndFilterToolsRegex(activeMCP.Tools(), config.BlockedTools)
 		if len(visibleTools) > 0 {
 			reqBody["tools"] = ToOpenAITools(visibleTools)
@@ -168,6 +166,7 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 
 	var fullContent strings.Builder
 	var thinkingContent strings.Builder
+	var rawTextBuffer strings.Builder
 	var thinkingStarted = false
 	var headerPrinted = false
 	var serverSignaledStop = false
@@ -179,21 +178,15 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 		<-ctx.Done()
 		resp.Body.Close()
 	}()
-	// 1. Create a slice to hold the last 10 lines in memory (RAM)
+
 	debugHistory := make([]string, 10)
 	historyIdx := 0
-	// Dealing with llama and Qwen3 bug when it corrupted stream
-	// The Qwen "Multi-Session Mixup" (The Core Root Cause)
-	//The Late-Arriving XML Tags inside reasoning_content
-	//The Server Sends finish_reason: "stop" instead of "tool_calls"
-
 	var expectedSessionID string
+
 	for scanner.Scan() {
 		if ctx.Err() != nil {
 			break
 		}
-		// If the server explicitly declared it is done with tool calls,
-		// ignore any runaway conversational text that follows (fixes Qwen runaway text bug)
 		if serverSignaledStop {
 			continue
 		}
@@ -210,11 +203,11 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 		if err := json.Unmarshal([]byte(streamData), &streamResp); err != nil {
 			continue
 		}
-		// Set the unique ID on the very first valid line
+
+		// Protect against interleaved multi-session packet bleeding
 		if expectedSessionID == "" && streamResp.ID != "" {
 			expectedSessionID = streamResp.ID
 		}
-		// CRITICAL: Drop any chunks belonging to a leaked parallel request!
 		if expectedSessionID != "" && streamResp.ID != expectedSessionID {
 			continue
 		}
@@ -226,30 +219,54 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 		delta := choice.Delta
 
 		// Handle explicit server finish signals safely
-		if choice.FinishReason != "" && (choice.FinishReason == "tool_calls" || choice.FinishReason == "stop") {
-			serverSignaledStop = true
-		}
-
-		// 1. Unpack Thinking content
-		if delta.ReasoningContent != "" {
-			rc := delta.ReasoningContent
-			// If Qwen attempts to close its tool syntax in the wrong block, handle it gracefully
-			if strings.Contains(rc, "</function>") || strings.Contains(rc, "</tool_call>") {
+		if choice.FinishReason != "" {
+			if choice.FinishReason == "tool_calls" {
+				serverSignaledStop = true
+			} else if choice.FinishReason == "stop" {
+				// If we have any tools gathered (JSON or text-fallback), halt cleanly
 				if len(toolCallAccum) > 0 {
 					serverSignaledStop = true
 				}
-				continue
 			}
-			tokenCount := len(strings.Fields(delta.ReasoningContent))
+		}
+
+		// 1. Unpack Thinking content (Handles raw XML parallel tool leakages)
+		if delta.ReasoningContent != "" {
+			rc := delta.ReasoningContent
+			thinkingContent.WriteString(rc)
+			rawTextBuffer.WriteString(rc)
+
+			// Check if a raw text XML tool block has completed its declaration
+			if strings.Contains(rawTextBuffer.String(), "</tool_call>") {
+				parsedCalls := parseRawXmlTools(rawTextBuffer.String())
+				for _, tc := range parsedCalls {
+					// Map parallel text tools using a non-colliding key index offset
+					key := 100 + tc.Index
+					if _, exists := toolCallAccum[key]; !exists {
+						localCopy := tc // Create local scope copy for map pointer preservation
+						toolCallAccum[key] = &localCopy
+						fmt.Printf("\n> 🔧 Planning tool call (Text-Fallback): %s\n", localCopy.Function.Name)
+					}
+				}
+				// Find the position of the last closing tag we just processed
+				lastCloseIdx := strings.LastIndex(rawTextBuffer.String(), "</tool_call>")
+				if lastCloseIdx != -1 {
+					// Keep everything that came AFTER the closing tag (like the next opening tag)
+					remainingText := rawTextBuffer.String()[lastCloseIdx+len("</tool_call>"):]
+					rawTextBuffer.Reset()
+					rawTextBuffer.WriteString(remainingText)
+				}
+			}
+
+			tokenCount := len(strings.Fields(rc))
 			globalStats.TokenArrived(tokenCount)
 
-			thinkingContent.WriteString(delta.ReasoningContent)
 			if config.ShowThinking {
 				if !thinkingStarted {
 					fmt.Print("\n> 🤔 Thinking...\n")
 					thinkingStarted = true
 				}
-				fmt.Print(delta.ReasoningContent)
+				fmt.Print(rc)
 				os.Stdout.Sync()
 			} else if !thinkingStarted {
 				fmt.Print("\n> 🤔 Thinking hidden, run /showthink on to enable\n")
@@ -258,7 +275,7 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 			continue
 		}
 
-		// 🛡️ CRITICAL FIX 3: Trigger tool capture even if server flags a standard "stop" status
+		// Handle late finish triggers safely if the server flags stop state
 		if choice.FinishReason != "" && (choice.FinishReason == "tool_calls" || choice.FinishReason == "stop") {
 			if len(toolCallAccum) > 0 {
 				serverSignaledStop = true
@@ -281,13 +298,19 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 			continue
 		}
 
-		// 3. Unpack Tool call deltas safely
+		// 3. Unpack standard JSON Tool call deltas safely
 		for _, tcDelta := range delta.ToolCalls {
 			key := tcDelta.Index
 			if _, exists := toolCallAccum[key]; !exists {
 				toolCallAccum[key] = &ToolCall{Index: key}
 			}
 			tc := toolCallAccum[key]
+
+			// Announce the JSON call as soon as the function name arrives
+			if tcDelta.Function.Name != "" && tc.Function.Name == "" {
+				fmt.Printf("\n> 🔧 Planning tool call (JSON): %s\n", tcDelta.Function.Name)
+			}
+
 			if tcDelta.ID != "" {
 				tc.ID = tcDelta.ID
 			}
@@ -297,14 +320,7 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 			if tcDelta.Function.Name != "" {
 				tc.Function.Name += tcDelta.Function.Name
 			}
-
-			prevArgs := tc.Function.Arguments
 			tc.Function.Arguments += tcDelta.Function.Arguments
-
-			// Print visual anchor on first argument chunk arrival
-			if tc.Function.Name != "" && prevArgs == "" && tcDelta.Function.Arguments != "" {
-				fmt.Printf("\n> 🔧 Planning tool call: %s\n", tc.Function.Name)
-			}
 		}
 	} // scanner end
 
@@ -325,7 +341,7 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 			continue
 		}
 
-		// Perform JSON validation only ONCE here after streaming is entirely complete
+		// Perform validation check on completed strings
 		var tmp interface{}
 		if err := json.Unmarshal([]byte(args), &tmp); err != nil {
 			fmt.Printf("\n> ⚠️ Ignoring malformed tool call %s: %v\n", tc.Function.Name, err)
@@ -338,15 +354,13 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 		toolCalls = append(toolCalls, *tc)
 	}
 
-	// 3. If the loop finished but we didn't get tools or text (a freeze/cutoff happened)
-	// You can print out the exact history from RAM to see what went wrong.
-	if len(toolCalls) == 0 && fullContent.Len() == 0 {
+	// Trigger cutoff dumps only if the turn processed completely empty
+	if len(toolCalls) == 0 && fullContent.Len() == 0 && thinkingContent.Len() == 0 {
 		fmt.Fprintln(os.Stderr, "\n--- 🚨 STREAM CUTOFF DETECTED (LAST 10 LINES) ---")
 		for i := 0; i < 10; i++ {
-			// Print the lines in chronological order
 			line := debugHistory[(historyIdx+i)%10]
 			if line != "" {
-				if config.Debug {
+				if config.Debug && debugFile != nil {
 					debugFile.WriteString(line + "\n")
 					debugFile.Sync()
 				} else {
