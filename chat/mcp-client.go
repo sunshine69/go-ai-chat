@@ -367,7 +367,7 @@ func (c *MCPClient) refreshTools() error {
 	if err := json.Unmarshal(resp.Result, &result); err != nil {
 		return fmt.Errorf("parse tools: %w", err)
 	}
-	c.tools = result.Tools
+	c.tools = parseAndFilterToolsRegex(result.Tools, config.BlockedTools)
 	return nil
 }
 

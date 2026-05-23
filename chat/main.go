@@ -96,11 +96,10 @@ func main() {
 	_ = godotenv.Load()
 	homeEnv, _ := godotenv.Read(homeDir + "/.aigdotenv")
 	for k, v := range homeEnv {
-		if os.Getenv(k) == "" {
-			_ = os.Setenv(k, v)
+		if err := os.Setenv(k, v); err != nil {
+			fmt.Println(err.Error())
 		}
 	}
-
 	config = loadConfig()
 
 	aigDir := filepath.Join(homeDir, ".aig")
@@ -192,6 +191,8 @@ func handleNonInteractive(config *Config) (runmode string) {
 
 		switch cmd {
 		case "/repl":
+			// Set back show think mode form config
+			config.ShowThinking = os.Getenv("SHOW_THINKING") == "on"
 			runREPL()
 			runmode = ""
 			return
@@ -441,6 +442,7 @@ func handleCommand(text string, history *[]Message) {
 				blockString = parts[3]
 			}
 			config.BlockedTools = blockString
+			activeMCP.refreshTools()
 		default:
 			config.MCPPermissions[toolName] = perm
 		}

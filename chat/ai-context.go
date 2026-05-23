@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	u "github.com/sunshine69/golang-tools/utils"
 )
 
 // printContextSummary prints a compact table of the current message slice so
@@ -153,7 +155,10 @@ func tryAISummary(ctx context.Context, cfg Config, msgs []Message) string {
 	subCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	summaryCfg := cfg
+	summaryCfg, err := u.DeepClone(cfg)
+	if err != nil {
+		panic(err.Error())
+	}
 	if cfg.SummaryModel != "" {
 		summaryCfg.Model = cfg.SummaryModel
 	} else {

@@ -485,9 +485,6 @@ func loadConfig() *Config {
 					toolName := strings.TrimPrefix(key, "MCP_PERM_")
 					c.MCPPermissions[toolName] = val
 				}
-				if key == "SHOW_THINKING" {
-					c.ShowThinking = (val == "on")
-				}
 				if key == "CONTEXT_LIMIT" {
 					if n, err := strconv.Atoi(val); err == nil {
 						c.ContextLimit = n
