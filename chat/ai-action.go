@@ -40,7 +40,7 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 		// --- 🛌 THE LAZY MODEL AUTO-NUDGE TRAP HAHA ---
 		// If it chose to "stop" naturally, but left you with ZERO tools and ZERO text
 		// after doing a bunch of thinking, it's being lazy. Wake it up!
-		if len(toolCalls) == 0 && content == "" && thinking != "" {
+		if !strings.Contains(accumulatedContent.String(), "Task completed") && len(toolCalls) == 0 && ((content == "" && thinking != "") || aiRestResponsePatern.MatchString(accumulatedContent.String())) {
 			fmt.Println("\n> ⚡ [System Nudge]: AI went to sleep after planning. Forcing execution...")
 
 			// Save its thoughts into the history so it doesn't forget the plan
@@ -52,7 +52,7 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 			// Add a firm nudge telling it to execute step 1 immediately
 			workingMsgs = append(workingMsgs, Message{
 				Role:    "user",
-				Content: "Do not just plan. Execute the first necessary tool call or code modification from your checklist right now.",
+				Content: "Continue. If completed replied with string 'Task completed'",
 			})
 
 			// Loop right back up to force it to talk again!
