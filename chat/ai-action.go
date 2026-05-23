@@ -29,6 +29,11 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 		}
 		// No tool calls — we're done
 		if len(toolCalls) == 0 {
+			// the model chose to stop but left both tools and chat content blank
+			if content == "" && thinking != "" {
+				fmt.Println("\n> 💭 [System]: Model finished thinking but did not issue a chat response.")
+				fmt.Println("> You can type 'continue' to force it to execute the next step.")
+			}
 			return content, thinking, workingMsgs, nil
 		}
 		// Append the assistant's tool-call turn
