@@ -8,7 +8,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/lib/pq v1.12.3
 	github.com/mark3labs/mcp-go v0.54.0
-	github.com/sunshine69/golang-tools/utils v0.0.0-20260523005613-deb4724b0bdd
+	github.com/sunshine69/golang-tools/utils v0.0.0-20260524033438-3fe63f84538f
 )
 
 require (

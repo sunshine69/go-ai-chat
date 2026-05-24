@@ -87,6 +87,8 @@ github.com/sunshine69/golang-tools/utils v0.0.0-20260521124014-dfe6a49f7f2a h1:s
 github.com/sunshine69/golang-tools/utils v0.0.0-20260521124014-dfe6a49f7f2a/go.mod h1:nYDXS72dNFTClrGzEYYPK/C//gyrTVP92IMO6Xy5nak=
 github.com/sunshine69/golang-tools/utils v0.0.0-20260523005613-deb4724b0bdd h1:L6IUWItEvvxHjd5Sh+r+En5QWDHtpx86d7vx1PvPNXk=
 github.com/sunshine69/golang-tools/utils v0.0.0-20260523005613-deb4724b0bdd/go.mod h1:nYDXS72dNFTClrGzEYYPK/C//gyrTVP92IMO6Xy5nak=
+github.com/sunshine69/golang-tools/utils v0.0.0-20260524033438-3fe63f84538f h1:dH8JqZcrmo400uqWZujcZGFmIHcGwXnJc9jsWtoKVEE=
+github.com/sunshine69/golang-tools/utils v0.0.0-20260524033438-3fe63f84538f/go.mod h1:/6M9QQ/Oq67l8nSGiY0HOihux+DDvavJ894pL/mi+iM=
 github.com/ulikunitz/xz v0.5.15 h1:9DNdB5s+SgV3bQ2ApL10xRc35ck0DuIX/isZvIk+ubY=
 github.com/ulikunitz/xz v0.5.15/go.mod h1:nbz6k7qbPmH4IRqmfOplQw/tblSgqTqBwxkY0oWt/14=
 github.com/yosida95/uritemplate/v3 v3.0.2 h1:Ed3Oyj9yrmi9087+NczuL5BwkIc4wvTb5zIM+UJPGz4=
