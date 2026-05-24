@@ -93,10 +93,6 @@ const (
 //     deterministic structured summary that extracts roles, tool calls, and
 //     content snippets without any network call.
 func trimContext(ctx context.Context, cfg Config, msgs []Message) []Message {
-	if estimateTokens(msgs) <= cfg.ContextLimit {
-		return msgs
-	}
-
 	_, rest := splitSystemHead(msgs)
 
 	if len(rest) <= keepHead+keepTail {
