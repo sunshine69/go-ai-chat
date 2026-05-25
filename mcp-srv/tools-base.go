@@ -409,7 +409,7 @@ func registerBaseTool(s *server.MCPServer) {
 	), findReplaceInFile)
 
 	s.AddTool(mcp.NewTool("block_in_file",
-		mcp.WithDescription("Replaces a multi-line block of text within a file using three regex anchor patterns that must appear in sequence. The tool searches the specified `path` for three lines matching the provided regular expressionns in this order: first `start_block_ptn`, then `marker_ptn`, and finally `end_block_ptn`. These markers act as anchors; there can be any number of intermediate lines between them. Once found, the entire range—starting from the line matching start_block_ptn` through to the end of the line matching `end_block_ptn`—is replaced by the string provided in `replace`"),
+		mcp.WithDescription("Replaces a multi-line block of text within a file using three regex anchor patterns that must appear in sequence. The tool searches the specified `path` for three lines matching the provided regular expressions in this order: first `start_block_ptn`, then `marker_ptn`, and finally `end_block_ptn`. These markers act as anchors; there can be any number of intermediate lines between them. Once found, the entire range starting from the line matching `start_block_ptn` through to the end of the line matching `end_block_ptn` is replaced by the string provided in `replace`. To be sure of accuracy all patterns must uniquely identify the block. Recommend full-line matching (use anchors ^ and $). If `end_block_ptn` contains EOF, reaching end-of-file counts as a match. `marker_ptn` is optional, give empty string if you want to bypass. On any error the function returns the error message"),
 		mcp.WithString("path", mcp.Required(), mcp.Description("Path to the file to modify.")),
 		mcp.WithString("start_block_ptn", mcp.Required(), mcp.Description("The regex pattern to match the start line of the block.")),
 		mcp.WithString("end_block_ptn", mcp.Required(), mcp.Description("The regex pattern to match the end line of the block.")),
@@ -460,10 +460,10 @@ func blockInFile(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolR
 
 	cleanPath := filepath.Clean(path)
 
-	_, start, _, _ := u.BlockInFile(cleanPath, upper_bound_ptn, lower_bound_ptn, marker_ptn, replace, false, false, 0)
+	output, start, _, _ := u.BlockInFile(cleanPath, upper_bound_ptn, lower_bound_ptn, marker_ptn, replace, false, false, 0)
 
 	if start == -1 {
-		return mcp.NewToolResultText("Sone error happened, file unchanged."), nil
+		return mcp.NewToolResultText("[ERROR] " + output), nil
 	} else {
 		return mcp.NewToolResultText("Success."), nil
 	}

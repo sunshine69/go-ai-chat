@@ -6,7 +6,7 @@ import (
 )
 
 // Qwen response this and stop!
-var aiRestResponsePatern = regexp.MustCompile(`Now I need to|I can`)
+var aiRestResponsePatern = regexp.MustCompile(`Now I need to|I can|Let me`)
 
 // https://github.com/hymkor/go-multiline-ny for multiline support TODO
 type Config struct {
