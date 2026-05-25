@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 )
 
 // askAI — streams the response; if MCP is active, injects tools and handles
@@ -40,8 +41,9 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 		// --- 🛌 THE LAZY MODEL AUTO-NUDGE TRAP HAHA ---
 		// If it chose to "stop" naturally, but left you with ZERO tools and ZERO text
 		// after doing a bunch of thinking, it's being lazy. Wake it up!
-		if ctx.Err() == nil && !strings.Contains(accumulatedContent.String(), "Task completed") && len(toolCalls) == 0 && ((content == "" && thinking != "") || aiRestResponsePatern.MatchString(accumulatedContent.String())) {
-			fmt.Println("\n> ⚡ [System Nudge]: AI went to sleep after planning. Forcing execution...")
+		if ctx.Err() == nil && !strings.Contains(accumulatedContent.String(), "Task completed") && !strings.Contains(accumulatedContent.String(), "has been successfully") && len(toolCalls) == 0 && ((content == "" && thinking != "") || aiRestResponsePatern.MatchString(accumulatedContent.String())) {
+			fmt.Println("\n> ⚡ [System Nudge]: AI went to sleep after planning. Forcing execution in 5 secs...")
+			time.Sleep(5 * time.Second)
 
 			// Save its thoughts into the history so it doesn't forget the plan
 			workingMsgs = append(workingMsgs, Message{
