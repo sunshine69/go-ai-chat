@@ -49,7 +49,7 @@ Options:
   -p   		  Port to listen on (default: 8080)
   -base-path  URL base path prefix (default: "")
   -tools      [all,postgres,octo,browser] List of tools name to load in addition to basic tools in coma separated list.
-			  Default: empty (no load). all to load all of them.  
+			  Default: empty (no load). all to load all of them.
   -h    	  Show this help
 
 Examples:
@@ -90,6 +90,16 @@ func buildServer(cfg config) *server.MCPServer {
 			log.Printf("Warning: Playwright MCP unavailable: %v", err)
 		} else {
 			registerPlaywrightTools(s, pwProxy)
+		}
+	}
+
+	if strings.Contains(cfg.toolSet, "all") || strings.Contains(cfg.toolSet, "godoc") {
+		pwProxy, err := NewPlaywrightProxy()
+		if err != nil {
+			log.Printf("Warning: Playwright MCP unavailable: %v", err)
+		} else {
+			registerPlaywrightTools(s, pwProxy)
+			registerGoDocTools(s, pwProxy)
 		}
 	}
 
