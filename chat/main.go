@@ -14,16 +14,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/chzyer/readline"
 	"github.com/joho/godotenv"
+	"github.com/reeflective/readline"
 	u "github.com/sunshine69/golang-tools/utils"
 )
 
-// 1. Change pendingFileContent from string to []ContentPart
-var pendingFileContent []ContentPart // was: var pendingFileContent string
+var pendingFileContent []ContentPart
 
 // ---------------------------------------------------------------------------
-// extractInlineFiles — now returns []ContentPart for file content
+// extractInlineFiles — returns []ContentPart for file content
 // ---------------------------------------------------------------------------
 
 func extractInlineFiles(text string) (cleanText string, fileParts []ContentPart) {
@@ -36,7 +35,7 @@ func extractInlineFiles(text string) (cleanText string, fileParts []ContentPart)
 			parts, err := processFile(path)
 			if err != nil {
 				fmt.Printf("⚠️  Could not load file %s: %v\n", path, err)
-				kept = append(kept, w) // leave token so the user sees it
+				kept = append(kept, w)
 			} else {
 				fmt.Printf("📎 Loaded inline file: %s\n", path)
 				fileParts = append(fileParts, parts...)
@@ -54,23 +53,20 @@ func extractInlineFiles(text string) (cleanText string, fileParts []ContentPart)
 // 2. Inline file content resolved from file:// tokens
 // 3. The user's text
 func buildUserMessage(text string, inlineParts []ContentPart) any {
-	// Collect all parts in order: staged files → inline files → user text
 	var allParts []ContentPart
 
 	if len(pendingFileContent) > 0 {
 		allParts = append(allParts, pendingFileContent...)
-		pendingFileContent = nil // clear staged content
+		pendingFileContent = nil
 	}
 
 	allParts = append(allParts, inlineParts...)
 
-	// Always append the user's text as the final part
 	if text != "" {
 		allParts = append(allParts, ContentPart{Type: "text", Text: text})
 	}
 
-	// If everything is plain text parts, collapse to a single string so the
-	// conversation history stays simple for text-only exchanges.
+	// Collapse to a plain string when everything is text — keeps history simple.
 	allText := true
 	for _, p := range allParts {
 		if p.Type != "text" {
@@ -140,7 +136,7 @@ func main() {
 		// Standard REPL Mode
 		fmt.Println("AI Chat CLI - REPL Mode")
 		fmt.Println("Commands: /new, /add <file>, /r <cmd>, /exit, /history, /m <model>, /url <url> /list, /del <context>, /use <context>, /timeout <dur>, /mcp <spec>, /mcpfunc <func-name> <perm>")
-		fmt.Println("Use ↑/↓ arrow keys to navigate previous messages; type /history to see all.")
+		fmt.Println("Use ↑/↓ to navigate history; Ctrl-R to search; type /h to see all.")
 		fmt.Println("Inline file attachment: include file://<path> anywhere in your message.")
 		fmt.Println("----------------------------------------")
 		if historyLoaded {
@@ -149,14 +145,9 @@ func main() {
 			fmt.Println()
 		}
 
-		histFile := filepath.Join(homeDir, ".aig_history_lines")
-		rl, err := readline.NewEx(&readline.Config{Prompt: "> ", HistoryFile: histFile, HistoryLimit: 5000})
-		if err != nil {
-			rl = nil
-		}
-		runREPLWithReader(&history, rl, histFile)
+		runREPL()
 	} else {
-		// Non-Interactive Mode (One-shot commands or chat)
+		// Non-Interactive Mode
 		config.ShowThinking = false
 		runMode = handleNonInteractive(config)
 	}
@@ -177,6 +168,7 @@ func main() {
 // ---------------------------------------------------------------------------
 // Non-interactive mode
 // ---------------------------------------------------------------------------
+
 func handleNonInteractive(config *Config) (runmode string) {
 	runmode = "nonit"
 	args := os.Args[1:]
@@ -188,7 +180,6 @@ func handleNonInteractive(config *Config) (runmode string) {
 	for i < len(args) {
 		arg := args[i]
 
-		// A command must start with "/" but NOT be a relative path like "./foo" or "../foo"
 		isCommand := strings.HasPrefix(arg, "/") && !strings.HasPrefix(arg, "./") && !strings.HasPrefix(arg, "../")
 
 		if !isCommand {
@@ -202,22 +193,19 @@ func handleNonInteractive(config *Config) (runmode string) {
 
 		switch cmd {
 		case "/repl":
-			// Set back show think mode form config
 			config.ShowThinking = os.Getenv("SHOW_THINKING") == "on"
 			runREPL()
 			runmode = ""
 			return
 
 		case "/c", "/chat", "/q", "/question":
-			// Collect the rest of the args as the question
 			if i >= len(args) {
 				fmt.Fprintln(os.Stderr, "❌ No question provided after", cmd)
 				return
 			}
 			rawQuestion := strings.Join(args[i:], " ")
-			i = len(args) // consume all remaining args
+			i = len(args)
 
-			// Resolve inline file:// references in the question
 			question, inlineContent := extractInlineFiles(rawQuestion)
 
 			ctx, cancel := context.WithCancel(context.Background())
@@ -229,13 +217,11 @@ func handleNonInteractive(config *Config) (runmode string) {
 				cancel()
 			}()
 
-			// Set context path if not already set
 			if currentContextPath == "" {
 				newContextName := generateContextName(config.Model, question)
 				currentContextPath = filepath.Join(homeDir, ".aig", newContextName)
 			}
 
-			// Build user message: staged files + inline files + question text
 			userMsg := buildUserMessage(question, inlineContent)
 
 			history = append(history, Message{Role: "user", Content: userMsg})
@@ -254,7 +240,6 @@ func handleNonInteractive(config *Config) (runmode string) {
 			})
 
 		default:
-			// Generic command: collect args until the next slash-command
 			var cmdArgs []string
 			for i < len(args) {
 				next := args[i]
@@ -275,13 +260,151 @@ func handleNonInteractive(config *Config) (runmode string) {
 	return
 }
 
+// ---------------------------------------------------------------------------
+// REPL — reeflective/readline
+// ---------------------------------------------------------------------------
+
 func runREPL() {
 	histFile := filepath.Join(homeDir, ".aig_history_lines")
-	rl, err := readline.NewEx(&readline.Config{Prompt: "> ", HistoryFile: histFile, HistoryLimit: 5000})
+
+	shell := readline.NewShell()
+
+	// Set the prompt using the correct API: shell.Prompt.Primary takes a func.
+	shell.Prompt.Primary(func() string { return "> " })
+
+	// Use the built-in file-backed history source — no custom struct needed.
+	hist, err := readline.NewHistoryFromFile(histFile)
 	if err != nil {
-		rl = nil
+		// Non-fatal: fall back to in-memory history.
+		hist = readline.NewInMemoryHistory()
 	}
-	runREPLWithReader(&history, rl, histFile)
+	shell.History.Add("aig", hist)
+
+	runREPLWithShell(&history, shell, histFile)
+}
+
+// runREPLWithShell is the main REPL loop.
+func runREPLWithShell(history *[]Message, shell *readline.Shell, histFile string) {
+	doTurn := func(ctx context.Context, text string) {
+		cleanText, inlineContent := extractInlineFiles(text)
+		userMsg := buildUserMessage(cleanText, inlineContent)
+
+		if currentContextPath == "" {
+			newContextName := generateContextName(config.Model, cleanText)
+			currentContextPath = filepath.Join(homeDir, ".aig", newContextName)
+		}
+
+		*history = append(*history, Message{Role: "user", Content: userMsg})
+		ans, thinking, l_history, err := askAI(ctx, *config, *history)
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			*history = l_history[:len(l_history)-1]
+			return
+		}
+
+		if ctx.Err() != nil {
+			return
+		}
+
+		*history = append(l_history, Message{
+			Role:     "assistant",
+			Content:  ans,
+			Thinking: thinking,
+		})
+
+		if err := saveHistory(); err != nil {
+			fmt.Fprintf(os.Stderr, "⚠️  Could not save history: %v\n", err)
+		}
+	}
+
+	for {
+		line, err := shell.Readline()
+		if err != nil {
+			// io.EOF == Ctrl-D, readline.ErrInterrupt == Ctrl-C
+			fmt.Println()
+			break
+		}
+
+		text := strings.TrimSpace(line)
+		if text == "" {
+			continue
+		}
+
+		if strings.HasPrefix(text, "/") {
+			// ------------------------------------------------------------------
+			// /edit [index] — open $EDITOR
+			// ------------------------------------------------------------------
+			if strings.HasPrefix(text, "/edit") {
+				parts := strings.SplitN(text, " ", -1)
+				initialMsg := ""
+				if len(parts) > 1 {
+					idx, err := strconv.Atoi(parts[1])
+					if err != nil {
+						fmt.Println("⚠️ Second arg should be a conversation index number. Run /h to see history.")
+					} else {
+						msg := (*history)[idx-1]
+						switch v := msg.Content.(type) {
+						case string:
+							initialMsg = v
+						default:
+							fmt.Println("⚠️ skip editing non text content")
+						}
+					}
+				}
+				editorText, err := openInEditor(initialMsg)
+				if err != nil {
+					fmt.Printf("❌ Editor error: %v\n", err)
+					continue
+				}
+				if strings.TrimSpace(editorText) == "" {
+					fmt.Println("⚠️  Empty input. Aborting.")
+					continue
+				}
+				ctx, cancel := context.WithCancel(context.Background())
+				sigChan := make(chan os.Signal, 1)
+				signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+				go func() { <-sigChan; cancel() }()
+				doTurn(ctx, editorText)
+				signal.Stop(sigChan)
+				cancel()
+				continue
+			}
+
+			if text == "/exit" || text == "/q" {
+				return
+			}
+
+			if text == "/h" {
+				printHistory(*history)
+				continue
+			}
+
+			handleCommand(text, history)
+			if config.Debug {
+				fmt.Printf("[DEBUG] config: %v\n", *config)
+			}
+			continue
+		}
+
+		// Non-command: reeflective/readline writes to the history source
+		// automatically on successful Readline() return, BUT only non-slash
+		// lines reach here anyway. appendHistoryFile is still called so the
+		// file stays in sync if NewHistoryFromFile fell back to in-memory.
+		appendHistoryFile(histFile, text)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+		go func() {
+			<-sigChan
+			fmt.Print("\n⏹️  Interrupted. Stopping response...\n")
+			cancel()
+		}()
+
+		doTurn(ctx, text)
+		signal.Stop(sigChan)
+		cancel()
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -354,7 +477,6 @@ func handleCommand(text string, history *[]Message) {
 			return
 		}
 
-		// Convert negative indices to absolute positions
 		absStart := start
 		if start < 0 {
 			absStart = hLen + start
@@ -364,20 +486,17 @@ func handleCommand(text string, history *[]Message) {
 			absEnd = hLen + end
 		}
 
-		// Determine the actual boundaries (handles cases like 5-3 or -1--3)
 		minIdx, maxIdx := absStart, absEnd
 		if absStart > absEnd {
 			minIdx, maxIdx = absEnd, absStart
 		}
 
-		// Validate bounds
 		if minIdx < 0 || maxIdx >= hLen || minIdx > maxIdx {
 			fmt.Printf("❌ Error: indices out of range (valid range: 0-%d)\n", hLen-1)
 			return
 		}
 
 		removedCount := maxIdx - minIdx + 1
-
 		newHistory := make([]Message, 0, hLen-removedCount)
 		newHistory = append(newHistory, (*history)[:minIdx]...)
 		newHistory = append(newHistory, (*history)[maxIdx+1:]...)
@@ -462,7 +581,6 @@ func handleCommand(text string, history *[]Message) {
 
 	case "/mcp":
 		if arg == "" {
-			// Show current MCP status
 			if activeMCP == nil {
 				fmt.Println("ℹ️  No MCP server connected.")
 				fmt.Println("Usage:")
@@ -592,7 +710,7 @@ func handleCommand(text string, history *[]Message) {
 			return
 		}
 
-		// No sub-command matched — treat the rest as MCP server spec to connect
+		// No sub-command matched — treat rest as MCP server spec to connect
 		if activeMCP != nil {
 			fmt.Println("🔌 Disconnecting previous MCP server...")
 			activeMCP.Close()
@@ -628,10 +746,6 @@ func handleCommand(text string, history *[]Message) {
 			fmt.Printf("   • %s — %s\n", t.Name, t.Description)
 		}
 
-	// -----------------------------------------------------------------------
-	// Original commands
-	// -----------------------------------------------------------------------
-
 	case "/s":
 		if arg == "" {
 			fmt.Println("Usage: /s <index:filename>")
@@ -664,7 +778,6 @@ func handleCommand(text string, history *[]Message) {
 		}
 
 	case "/new", "/n":
-		// 1. Save the OLD history if it exists before clearing
 		if len(*history) > 0 {
 			firstUserMsg := ""
 			for _, m := range *history {
@@ -688,11 +801,9 @@ func handleCommand(text string, history *[]Message) {
 			}
 		}
 
-		// 2. Reset the history for the new session
 		*history = []Message{}
-		pendingFileContent = nil // also clear any staged file
+		pendingFileContent = nil
 
-		// 3. Handle the NEW context naming
 		if arg != "" {
 			newName := generateContextName(config.Model, arg)
 			currentContextPath = filepath.Join(homeDir, ".aig", newName)
@@ -736,7 +847,6 @@ func handleCommand(text string, history *[]Message) {
 		fmt.Println()
 		fmt.Printf("Curl mode: using curl http://localhost:%d as base for these below cmds\n", statServerPort)
 		fmt.Println("  currently only reporting stats")
-
 		fmt.Println("Inline file attachment:")
 		fmt.Println("  Include file://<path> anywhere in your message to attach a file inline.")
 		fmt.Println("  Example: Summarise this file:/home/user/notes.txt please")
@@ -814,7 +924,6 @@ func handleCommand(text string, history *[]Message) {
 			config.Debug = true
 			config.DebugLevel = strings.TrimSpace(arg)
 		}
-		// Reload it
 		if config.Debug && debugFile == nil {
 			debugFile, _ = os.OpenFile("aig_stream_debug.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 		}
@@ -846,11 +955,6 @@ func handleCommand(text string, history *[]Message) {
 		fmt.Printf("📎 Staged '%s' — will be included in your next message.\n", arg)
 		fmt.Printf("   (Total staged parts: %d)\n", len(pendingFileContent))
 
-	// ---------------------------------------------------------------------------
-	// /addsystem handler — wrap []ContentPart into a system message
-	// ---------------------------------------------------------------------------
-
-	// Inside handleCommand, replace the "/addsystem" case:
 	case "/addsystem", "/as":
 		if arg == "" {
 			fmt.Println("Usage: /addsystem | /as <filename>. Add the file content to the system message")
@@ -861,7 +965,6 @@ func handleCommand(text string, history *[]Message) {
 			fmt.Printf("Error processing file %s: %v\n", arg, err)
 			return
 		}
-		// System messages are text-only in practice; collapse if possible.
 		var content any
 		if len(parts) == 1 && parts[0].Type == "text" {
 			content = parts[0].Text
@@ -970,156 +1073,9 @@ func handleCommand(text string, history *[]Message) {
 }
 
 // ---------------------------------------------------------------------------
-// REPL loop
+// openInEditor — unchanged
 // ---------------------------------------------------------------------------
 
-func runREPLWithReader(history *[]Message, rl *readline.Instance, histFile string) {
-	printPrompt := func() { fmt.Print("You: ") }
-
-	doTurn := func(ctx context.Context, text string) {
-		// Resolve inline file:// references
-		cleanText, inlineContent := extractInlineFiles(text)
-
-		// Build final user message (staged files + inline files + text)
-		userMsg := buildUserMessage(cleanText, inlineContent)
-
-		// Ensure context path is set
-		if currentContextPath == "" {
-			newContextName := generateContextName(config.Model, cleanText)
-			currentContextPath = filepath.Join(homeDir, ".aig", newContextName)
-		}
-
-		*history = append(*history, Message{Role: "user", Content: userMsg})
-		ans, thinking, l_history, err := askAI(ctx, *config, *history)
-		if err != nil {
-			fmt.Printf("Error: %v\n", err)
-			*history = (l_history)[:len(l_history)-1]
-			return
-		}
-
-		if ctx.Err() != nil {
-			return
-		}
-
-		*history = append(l_history, Message{
-			Role:     "assistant",
-			Content:  ans,
-			Thinking: thinking,
-		})
-
-		if err := saveHistory(); err != nil {
-			fmt.Fprintf(os.Stderr, "⚠️  Could not save history: %v\n", err)
-		}
-	}
-
-	readLine := func() (string, bool) {
-		if rl != nil {
-			line, err := rl.Readline()
-			if err != nil {
-				return "", false
-			}
-			return strings.TrimSpace(line), true
-		}
-		printPrompt()
-		scanner := bufio.NewScanner(os.Stdin)
-		if !scanner.Scan() {
-			return "", false
-		}
-		return strings.TrimSpace(scanner.Text()), true
-	}
-
-	if rl != nil {
-		defer rl.Close()
-	}
-
-	for {
-		text, ok := readLine()
-		if !ok {
-			fmt.Println()
-			break
-		}
-		if text == "" {
-			continue
-		}
-
-		if strings.HasPrefix(text, "/") {
-			if strings.HasPrefix(text, "/edit") {
-				parts := strings.SplitN(text, " ", -1)
-				initialMsg := ""
-				if len(parts) > 1 {
-					idx, err := strconv.Atoi(parts[1])
-					if err != nil {
-						fmt.Println("⚠️ Second args detected but malformed. It should be the conversation index number. Run /h to show history and see what number is.")
-					} else {
-						msg := (*history)[idx-1]
-						switch v := msg.Content.(type) {
-						case string:
-							initialMsg = v
-						default:
-							fmt.Println("⚠️ skip editing non text content")
-						}
-					}
-				}
-				editorText, err := openInEditor(initialMsg)
-				if err != nil {
-					fmt.Printf("❌ Editor error: %v\n", err)
-					continue
-				}
-				if strings.TrimSpace(editorText) == "" {
-					fmt.Println("⚠️  Empty input. Aborting.")
-					continue
-				}
-				ctx, cancel := context.WithCancel(context.Background())
-				sigChan := make(chan os.Signal, 1)
-				signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-				go func() {
-					<-sigChan
-					cancel()
-				}()
-
-				doTurn(ctx, editorText)
-				signal.Stop(sigChan)
-				cancel()
-				continue
-			}
-
-			if text == "/exit" || text == "/q" {
-				return
-			}
-			if text == "/h" {
-				printHistory(*history)
-				continue
-			}
-			handleCommand(text, history)
-			if config.Debug {
-				fmt.Printf("[DEBUG] config: %v\n", *config)
-			}
-			continue
-		}
-
-		// Save to readline history
-		if err := appendHistoryFile(histFile, text); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Could not save line to history file: %v\n", err)
-		}
-
-		ctx, cancel := context.WithCancel(context.Background())
-		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-
-		go func() {
-			<-sigChan
-			fmt.Print("\n⏹️  Interrupted. Stopping response...\n")
-			cancel()
-		}()
-
-		doTurn(ctx, text)
-		signal.Stop(sigChan)
-		cancel()
-	}
-}
-
-// openInEditor opens the user's default terminal editor with the provided
-// initial text, waits for it to exit, and returns the saved content.
 func openInEditor(initialText string) (string, error) {
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
@@ -1155,4 +1111,55 @@ func openInEditor(initialText string) (string, error) {
 	}
 
 	return string(content), nil
+}
+
+// ---------------------------------------------------------------------------
+// runREPLFallback — plain bufio loop for non-TTY / piped input
+// ---------------------------------------------------------------------------
+
+func runREPLFallback(history *[]Message) {
+	scanner := bufio.NewScanner(os.Stdin)
+	for {
+		fmt.Print("> ")
+		if !scanner.Scan() {
+			break
+		}
+		text := strings.TrimSpace(scanner.Text())
+		if text == "" {
+			continue
+		}
+		if text == "/exit" || text == "/q" {
+			return
+		}
+		if text == "/h" {
+			printHistory(*history)
+			continue
+		}
+		if strings.HasPrefix(text, "/") {
+			handleCommand(text, history)
+			continue
+		}
+
+		cleanText, inlineContent := extractInlineFiles(text)
+		userMsg := buildUserMessage(cleanText, inlineContent)
+
+		if currentContextPath == "" {
+			newContextName := generateContextName(config.Model, cleanText)
+			currentContextPath = filepath.Join(homeDir, ".aig", newContextName)
+		}
+
+		ctx := context.Background()
+		*history = append(*history, Message{Role: "user", Content: userMsg})
+		ans, thinking, l_history, err := askAI(ctx, *config, *history)
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			*history = l_history[:len(l_history)-1]
+			continue
+		}
+		*history = append(l_history, Message{
+			Role:     "assistant",
+			Content:  ans,
+			Thinking: thinking,
+		})
+	}
 }
