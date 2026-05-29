@@ -100,7 +100,7 @@ func main() {
 		}
 	}
 	config = loadConfig()
-	if config.Debug && debugFile == nil {
+	if config.Debug && debugFile == nil && config.DebugLevel >= "2" {
 		debugFile, _ = os.OpenFile("aig_stream_debug.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	}
 	defer func() {
@@ -318,6 +318,7 @@ func runREPLWithShell(history *[]Message, shell *readline.Shell, histFile string
 	}
 
 	for {
+		fmt.Println(">")
 		line, err := shell.Readline()
 		if err != nil {
 			// io.EOF == Ctrl-D, readline.ErrInterrupt == Ctrl-C
