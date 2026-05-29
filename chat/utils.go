@@ -16,8 +16,18 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/joho/godotenv"
 	u "github.com/sunshine69/golang-tools/utils"
 )
+
+func loadDotEnv() {
+	homeEnv, _ := godotenv.Read(homeDir + "/.aigdotenv")
+	for k, v := range homeEnv {
+		if err := os.Setenv(k, v); err != nil {
+			fmt.Println(err.Error())
+		}
+	}
+}
 
 // Input like 3-5 or -1--5 return slice index - if negative return from the right end
 func ParseRangeFromInputString(s string) (int, int, bool) {
@@ -351,7 +361,7 @@ func saveConfig() {
 	if err := os.WriteFile(dotEnvPath, []byte(sb.String()), 0600); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: Could not save config to %s: %v\n", dotEnvPath, err)
 	} else {
-		fmt.Println("✅ Configuration saved to ~/.aigdotenv")
+		fmt.Printf("✅ Configuration saved to %s/.aigdotenv", homeDir)
 	}
 }
 
@@ -433,6 +443,7 @@ func promptForMissingConfig(config *Config) {
 }
 
 func loadConfig() *Config {
+	loadDotEnv()
 	c := Config{
 		BaseURL:             os.Getenv("OPENAI_URL"),
 		Model:               os.Getenv("OPENAI_MODEL"),
@@ -476,6 +487,7 @@ func loadConfig() *Config {
 
 	// Transform config data type example, where in dotenv value is just string but config type is different
 	dotEnvPath := filepath.Join(homeDir, ".aigdotenv")
+	fmt.Printf("Load config from %s\n", dotEnvPath)
 	if data, err := os.ReadFile(dotEnvPath); err == nil {
 		lines := strings.Split(string(data), "\n")
 		for _, line := range lines {

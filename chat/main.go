@@ -93,12 +93,6 @@ var debugFile *os.File
 
 func main() {
 	_ = godotenv.Load()
-	homeEnv, _ := godotenv.Read(homeDir + "/.aigdotenv")
-	for k, v := range homeEnv {
-		if err := os.Setenv(k, v); err != nil {
-			fmt.Println(err.Error())
-		}
-	}
 	config = loadConfig()
 	if config.Debug && debugFile == nil && config.DebugLevel >= "2" {
 		debugFile, _ = os.OpenFile("aig_stream_debug.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
@@ -845,6 +839,7 @@ func handleCommand(text string, history *[]Message) {
 		fmt.Println("  /mcpfunc <func> <perm>        - Set permission for tools func, auto|denied|ask")
 		fmt.Println("  /ctx <N>|off                  - Set context token limit (auto-trim when exceeded)")
 		fmt.Println("  /trimctx <idx|range>          - Remove messages at index or range (e.g. 3-5, -1--3)")
+		fmt.Println("  /configdir <newdir>           - Switch config directory (.aigdotenv and .aig/). If run from from start add prefix dir:// so we dont treat the / as next command. eg. aig /n /configdir dir:///home/user/aig1 /repl - Within a session it is not required")
 		fmt.Println()
 		fmt.Printf("Curl mode: using curl http://localhost:%d as base for these below cmds\n", statServerPort)
 		fmt.Println("  currently only reporting stats")
@@ -1068,6 +1063,32 @@ func handleCommand(text string, history *[]Message) {
 			fmt.Printf("Unknown thing to show: %s. Try '/show context <name>'\n", arg)
 		}
 
+	case "/configdir":
+		arg = strings.TrimPrefix(arg, "dir://")
+		if arg == "" {
+			fmt.Println("Usage: /configdir <newdir>")
+			return
+		}
+		if currentContextPath != "" {
+			saveHistory()
+		}
+		saveConfig()
+
+		absPath, err := filepath.Abs(arg)
+		if err != nil {
+			fmt.Printf("❌ Error resolving path: %v\n", err)
+			return
+		}
+		homeDir = absPath
+		_ = os.MkdirAll(homeDir, 0755)
+		fmt.Println("Re-load config")
+		currentContextPath = getLatestContextPath(config.Model)
+		config = loadConfig()
+		println(u.JsonDump(config, ""))
+		historyLoaded = false
+		*history = []Message{}
+
+		fmt.Printf("✅ Config directory switched to: %s\n", homeDir)
 	default:
 		fmt.Printf("Unknown command: %s\n", cmd)
 	}
