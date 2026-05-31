@@ -1,3 +1,4 @@
+.playwright-mcp/**
 test_*
 .continue/**
 *.pad

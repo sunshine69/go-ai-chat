@@ -423,6 +423,15 @@ func loadHistory(filePath string, historyPtr *[]Message) error {
 	if err := json.Unmarshal(data, &h); err != nil {
 		return err
 	}
+	promptfile := filepath.Join(homeDir, config.Model+".system")
+	if u.FileExistsV2(promptfile) == nil {
+		fmt.Println("Loading system message for " + config.Model)
+		if data, err := os.ReadFile(promptfile); err == nil {
+			sysMsg := Message{Role: "system", Content: string(data)}
+			// appends h.History elements directly onto the new single-element slice
+			h.History = append([]Message{sysMsg}, h.History...)
+		}
+	}
 	*historyPtr = h.History
 	return nil
 }
@@ -932,9 +941,11 @@ func handleCommand(text string, history *[]Message) {
 			}
 			return
 		}
+		systemprompt := strings.Join(parts[1:], " ")
 		*history = []Message{
-			{Role: "system", Content: strings.Join(parts[1:], " ")},
+			{Role: "system", Content: systemprompt},
 		}
+		os.WriteFile(filepath.Join(homeDir, config.Model+".system"), []byte(systemprompt), 0o640)
 		fmt.Println("✅ System prompt added")
 
 	case "/add", "/a":
