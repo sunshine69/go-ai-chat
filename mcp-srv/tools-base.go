@@ -308,6 +308,13 @@ func fetchUrl(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolRe
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
+	docSize := len(markdownText)
+	if docSize > 20000 {
+		tempDir := u.Must(os.MkdirTemp("", "aig*"))
+		tempFile := filepath.Join(tempDir, "fetch-url-doc.md")
+		u.CheckErr(os.WriteFile(tempFile, []byte(markdownText), 0o644), "write doc file")
+		return mcp.NewToolResultText(fmt.Sprintf("Document saved at file path '%s'. Size %d bytes. You can extract information from it using current available tools. Avoid reading the whole file with that size to avoid context overflow. Clean up the file after you no longer need it", tempFile, docSize)), nil
+	}
 	return mcp.NewToolResultText(markdownText), nil
 }
 
@@ -353,7 +360,7 @@ func httpRequest(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToo
 
 func registerBaseTool(s *server.MCPServer) {
 	s.AddTool(mcp.NewTool("fetch_url",
-		mcp.WithDescription("Fetches a URL over HTTP and converts its HTML content into markdown text."),
+		mcp.WithDescription("Fetches a URL over HTTP and converts its HTML content into markdown text. If the content is larger than 25kb the content will be saved to a file and the result will be the file path so you can selectively read using grep via run_terminal_command"),
 		mcp.WithString("url", mcp.Required(), mcp.Description("The URL to fetch and convert into markdown text")),
 	), fetchUrl)
 
