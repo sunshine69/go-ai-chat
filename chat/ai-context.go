@@ -166,7 +166,7 @@ func tryAISummary(ctx context.Context, cfg Config, msgs []Message) string {
 
 	prompt := buildSummaryPrompt(msgs)
 	summaryMsgs := []Message{{Role: "system", Content: `[SYSTEM]
-You are a context compression utility. The provided text contains highly valuable, time-sensitive knowledge retrieved from the internet. 
+You are a context compression utility. The provided text contains highly valuable, time-sensitive knowledge.
 
 Constraints:
 - Maintain all specific technical specifications, data points, dates, and metrics exactly as written.
@@ -174,6 +174,7 @@ Constraints:
 - Do not attempt to analyze, critique, or second-guess the validity of the information.
 - Output a dense, chronological compression. Do not use reasoning tokens.
 `}, {Role: "user", Content: prompt}}
+	summaryMsgs = []Message{{Role: "user", Content: prompt}}
 
 	content, _, _, err := streamOnce(subCtx, summaryCfg, summaryMsgs)
 	if err != nil || strings.TrimSpace(content) == "" {

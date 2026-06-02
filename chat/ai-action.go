@@ -42,7 +42,7 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 		// If it chose to "stop" naturally, but left you with ZERO tools and ZERO text
 		// after doing a bunch of thinking, it's being lazy. Wake it up!
 		currentAccuContent := accumulatedContent.String()
-		if ctx.Err() == nil && !(len(currentAccuContent) > 2000) && !strings.Contains(currentAccuContent, "Task completed") && !strings.Contains(currentAccuContent, "has been successfully") && len(toolCalls) == 0 && ((content == "" && thinking != "") || aiRestResponsePatern.MatchString(currentAccuContent)) {
+		if ctx.Err() == nil && !strings.Contains(currentAccuContent, "Task completed") && !strings.Contains(currentAccuContent, "has been successfully") && len(toolCalls) == 0 && ((content == "" && thinking != "") || aiRestResponsePatern.MatchString(currentAccuContent)) {
 			fmt.Println("\n> ⚡ [System Nudge]: AI went to sleep after planning. Forcing execution in 5 secs...")
 			time.Sleep(5 * time.Second)
 
