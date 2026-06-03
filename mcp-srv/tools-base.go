@@ -360,7 +360,7 @@ func httpRequest(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToo
 
 func registerBaseTool(s *server.MCPServer) {
 	s.AddTool(mcp.NewTool("fetch_url",
-		mcp.WithDescription("Fetches a URL over HTTP and converts its HTML content into markdown text. If the content is larger than 25kb the content will be saved to a file and the result will be the file path so you can selectively read using grep via run_terminal_command"),
+		mcp.WithDescription("Fetches a URL over HTTP and converts its HTML content into markdown text. If the content is larger than 20kb the content will be saved to a file and the result will be the file path so you can selectively read using grep via run_terminal_command or use text_tool"),
 		mcp.WithString("url", mcp.Required(), mcp.Description("The URL to fetch and convert into markdown text")),
 	), fetchUrl)
 

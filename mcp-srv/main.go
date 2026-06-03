@@ -104,6 +104,7 @@ func buildServer(cfg config) *server.MCPServer {
 	}
 
 	registerBaseTool(s)
+	registerTextTools(s, &TextToolManager{})
 	return s
 }
 
