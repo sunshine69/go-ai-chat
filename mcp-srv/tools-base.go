@@ -19,6 +19,22 @@ import (
 type BaseToolManager struct {
 	AllowedTerminalCommandPattern string
 	BlockedTerminalCommandPattern string
+	AllowedPathPattern            string // File path handling
+	BlockedPathPattern            string
+}
+
+func (t *BaseToolManager) checkPath(path string) (*mcp.CallToolResult, error) {
+	if t.AllowedPathPattern != "" {
+		if !regexp.MustCompile(t.AllowedPathPattern).MatchString(path) {
+			return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] denied access for path %s. Allowed path pattern: '%s'", path, t.AllowedPathPattern)
+		}
+	}
+	if t.BlockedPathPattern != "" {
+		if regexp.MustCompile(t.BlockedPathPattern).MatchString(path) {
+			return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] denied access for path %s. Blocked path pattern: '%s'", path, t.BlockedPathPattern)
+		}
+	}
+	return nil, nil
 }
 
 func (t *BaseToolManager) listDirectory(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -28,6 +44,9 @@ func (t *BaseToolManager) listDirectory(ctx context.Context, request mcp.CallToo
 		path = fmt.Sprintf("%v", p)
 	}
 	cleanPath := filepath.Clean(path)
+	if res, err := t.checkPath(cleanPath); err != nil {
+		return res, err
+	}
 	entries, err := os.ReadDir(cleanPath)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
@@ -53,7 +72,9 @@ func (t *BaseToolManager) createDirectory(ctx context.Context, request mcp.CallT
 		path = fmt.Sprintf("%v", p)
 	}
 	cleanPath := filepath.Clean(path)
-
+	if res, err := t.checkPath(cleanPath); err != nil {
+		return res, err
+	}
 	if err := os.MkdirAll(cleanPath, 0o755); err != nil {
 		return mcp.NewToolResultText("[ERROR] " + err.Error()), err
 	}
@@ -67,6 +88,9 @@ func (t *BaseToolManager) removeDirectory(ctx context.Context, request mcp.CallT
 		path = fmt.Sprintf("%v", p)
 	}
 	cleanPath := filepath.Clean(path)
+	if res, err := t.checkPath(cleanPath); err != nil {
+		return res, err
+	}
 	if err := os.RemoveAll(cleanPath); err != nil {
 		return mcp.NewToolResultText("[ERROR] " + err.Error()), err
 	}
@@ -92,6 +116,9 @@ func (t *BaseToolManager) createNewFile(ctx context.Context, request mcp.CallToo
 	}
 
 	cleanPath := filepath.Clean(path)
+	if res, err := t.checkPath(cleanPath); err != nil {
+		return res, err
+	}
 	if err := os.MkdirAll(filepath.Dir(cleanPath), 0755); err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -137,6 +164,9 @@ func (t *BaseToolManager) runTerminalCommand(ctx context.Context, request mcp.Ca
 	workingDir := ""
 	if wd, ok := args["working_dir"]; ok {
 		workingDir = fmt.Sprintf("%v", wd)
+	}
+	if res, err := t.checkPath(workingDir); err != nil {
+		return res, err
 	}
 	confirmed := false
 	if cf, ok := args["confirmed"]; ok {
@@ -206,6 +236,9 @@ func (t *BaseToolManager) fileGlobSearch(ctx context.Context, request mcp.CallTo
 	}
 
 	cleanRoot := filepath.Clean(root)
+	if res, err := t.checkPath(cleanRoot); err != nil {
+		return res, err
+	}
 	namePattern := pattern
 	recursive := false
 	if strings.HasPrefix(pattern, "**/") {
@@ -283,6 +316,9 @@ func (t *BaseToolManager) findReplaceInFile(ctx context.Context, request mcp.Cal
 	}
 
 	cleanPath := filepath.Clean(path)
+	if res, err := t.checkPath(cleanPath); err != nil {
+		return res, err
+	}
 	data, err := os.ReadFile(cleanPath)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
@@ -552,7 +588,9 @@ func (t *BaseToolManager) blockInFile(_ context.Context, request mcp.CallToolReq
 	}
 
 	cleanPath := filepath.Clean(path)
-
+	if res, err := t.checkPath(cleanPath); err != nil {
+		return res, err
+	}
 	output, start, _, _ := u.BlockInFile(cleanPath, upper_bound_ptn, lower_bound_ptn, marker_ptn, replace, false, false, 0)
 
 	if start == -1 {

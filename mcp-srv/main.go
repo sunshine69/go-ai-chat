@@ -106,6 +106,8 @@ func buildServer(cfg config) *server.MCPServer {
 	baseTool := BaseToolManager{
 		AllowedTerminalCommandPattern: u.Getenv("ALLOWED_TERM_CMD_PTN", `^(go|gobind|gofmt|gomobile|gcc|g\+\+|make|cmake|m4|bison|jq|cat|docker|python3|perl|lua|pip3|pip|adb|dotnet|java|javac|npm|node|yarn|ng|npx|gradle|\.\/gradlew|)[\s]+.*$`),
 		BlockedTerminalCommandPattern: u.Getenv("BLOCKED_TERM_CMD_PTN", ""),
+		AllowedPathPattern:            u.Getenv("ALLOWED_PATH_PTN", `(\/tmp|\.\/)[^\s]*$`),
+		BlockedPathPattern:            u.Getenv("BLOCKED_PATH_PTN", ""),
 	}
 	registerBaseTool(s, &baseTool)
 	registerTextTools(s, &TextToolManager{})
