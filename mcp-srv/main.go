@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/mark3labs/mcp-go/server"
+	u "github.com/sunshine69/golang-tools/utils"
 )
 
 // CLI flag parsing
@@ -102,8 +103,11 @@ func buildServer(cfg config) *server.MCPServer {
 			registerGoDocTools(s, pwProxy)
 		}
 	}
-
-	registerBaseTool(s)
+	baseTool := BaseToolManager{
+		AllowedTerminalCommandPattern: u.Getenv("ALLOWED_TERM_CMD_PTN", `^(go|adb|dotnet|java|javac|npm|node|yarn|ng|npx|gradle|\.\/gradlew|)[\s]+.*$`),
+		BlockedTerminalCommandPattern: u.Getenv("BLOCKED_TERM_CMD_PTN", ""),
+	}
+	registerBaseTool(s, &baseTool)
 	registerTextTools(s, &TextToolManager{})
 	return s
 }

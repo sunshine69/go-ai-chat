@@ -16,7 +16,12 @@ import (
 	u "github.com/sunshine69/golang-tools/utils"
 )
 
-func listDirectory(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+type BaseToolManager struct {
+	AllowedTerminalCommandPattern string
+	BlockedTerminalCommandPattern string
+}
+
+func (t *BaseToolManager) listDirectory(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.GetArguments()
 	path := ""
 	if p, ok := args["path"]; ok {
@@ -41,7 +46,7 @@ func listDirectory(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallT
 	return mcp.NewToolResultText(sb.String()), nil
 }
 
-func createDirectory(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (t *BaseToolManager) createDirectory(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.GetArguments()
 	path := ""
 	if p, ok := args["path"]; ok {
@@ -55,7 +60,7 @@ func createDirectory(ctx context.Context, request mcp.CallToolRequest) (*mcp.Cal
 	return mcp.NewToolResultText("[OK]"), nil
 }
 
-func removeDirectory(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (t *BaseToolManager) removeDirectory(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.GetArguments()
 	path := ""
 	if p, ok := args["path"]; ok {
@@ -69,7 +74,7 @@ func removeDirectory(ctx context.Context, request mcp.CallToolRequest) (*mcp.Cal
 	return mcp.NewToolResultText("[OK]"), nil
 }
 
-func createNewFile(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (t *BaseToolManager) createNewFile(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.GetArguments()
 	path := ""
 	if p, ok := args["path"]; ok {
@@ -111,12 +116,24 @@ func createNewFile(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallT
 	return mcp.NewToolResultText(fmt.Sprintf("File created successfully: %s (%d bytes)", cleanPath, len(content))), nil
 }
 
-func runTerminalCommand(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (t *BaseToolManager) runTerminalCommand(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.GetArguments()
 	command := ""
 	if c, ok := args["command"]; ok {
 		command = fmt.Sprintf("%v", c)
 	}
+	if t.AllowedTerminalCommandPattern != "" {
+		if !regexp.MustCompile(t.AllowedTerminalCommandPattern).MatchString(command) {
+			return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] command %s is denied. Only command matches the pattern '%s' will be allowed", command, t.AllowedTerminalCommandPattern)
+		}
+	}
+
+	if t.BlockedTerminalCommandPattern != "" {
+		if regexp.MustCompile(t.BlockedTerminalCommandPattern).MatchString(command) {
+			return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] command %s is denied. Command matches the pattern '%s' will be blocked", command, t.BlockedTerminalCommandPattern)
+		}
+	}
+
 	workingDir := ""
 	if wd, ok := args["working_dir"]; ok {
 		workingDir = fmt.Sprintf("%v", wd)
@@ -166,7 +183,7 @@ func runTerminalCommand(ctx context.Context, request mcp.CallToolRequest) (*mcp.
 	return mcp.NewToolResultText(sb.String()), nil
 }
 
-func fileGlobSearch(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (t *BaseToolManager) fileGlobSearch(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.GetArguments()
 	root := ""
 	if r, ok := args["root"]; ok {
@@ -238,7 +255,7 @@ func fileGlobSearch(ctx context.Context, request mcp.CallToolRequest) (*mcp.Call
 	return mcp.NewToolResultText(sb.String()), nil
 }
 
-func findReplaceInFile(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (t *BaseToolManager) findReplaceInFile(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.GetArguments()
 	path := ""
 	if p, ok := args["path"]; ok {
@@ -322,7 +339,7 @@ func findReplaceInFile(ctx context.Context, request mcp.CallToolRequest) (*mcp.C
 	return mcp.NewToolResultText(fmt.Sprintf("Replaced %d %s of %q in %s.", count, noun, find, cleanPath)), nil
 }
 
-func fetchUrl(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (t *BaseToolManager) fetchUrl(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.GetArguments()
 	url := ""
 	if u, ok := args["url"]; ok {
@@ -346,7 +363,7 @@ func fetchUrl(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolRe
 	return mcp.NewToolResultText(markdownText), nil
 }
 
-func httpRequest(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (t *BaseToolManager) httpRequest(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.GetArguments()
 	method := args["method"].(string)
 	url := args["url"].(string)
@@ -397,26 +414,26 @@ func httpRequest(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToo
 	return mcp.NewToolResultText(fmt.Sprintf("Status: %d\nBody: %s", resp.StatusCode, string(respBody))), nil
 }
 
-func registerBaseTool(s *server.MCPServer) {
+func registerBaseTool(s *server.MCPServer, t *BaseToolManager) {
 	s.AddTool(mcp.NewTool("fetch_url",
 		mcp.WithDescription("Fetches a URL over HTTP and converts its HTML content into markdown text. If the content is larger than 20kb the content will be saved to a file and the result will be the file path so you can selectively read using grep using text tool"),
 		mcp.WithString("url", mcp.Required(), mcp.Description("The URL to fetch and convert into markdown text")),
-	), fetchUrl)
+	), t.fetchUrl)
 
 	s.AddTool(mcp.NewTool("list_directory",
 		mcp.WithDescription("Lists the files and directories in a given path. Useful for understanding project structure."),
 		mcp.WithString("path", mcp.Required(), mcp.Description("The directory path to list. Use '.' for the current directory.")),
-	), listDirectory)
+	), t.listDirectory)
 
 	s.AddTool(mcp.NewTool("create_directory",
 		mcp.WithDescription("Create directory in a given path. same as run unix command mkdir -p <path>."),
 		mcp.WithString("path", mcp.Required(), mcp.Description("The directory path to create.")),
-	), createDirectory)
+	), t.createDirectory)
 
 	s.AddTool(mcp.NewTool("remove_directory",
 		mcp.WithDescription("Remove directory in a given path. same as run unix command rm -rf <path>."),
 		mcp.WithString("path", mcp.Required(), mcp.Description("The directory path to remove.")),
-	), removeDirectory)
+	), t.removeDirectory)
 
 	s.AddTool(mcp.NewTool("read_file",
 		mcp.WithDescription("Reads the content of a file from the local filesystem."),
@@ -439,21 +456,21 @@ func registerBaseTool(s *server.MCPServer) {
 		mcp.WithString("path", mcp.Required(), mcp.Description("The path where the new file should be created.")),
 		mcp.WithString("content", mcp.Required(), mcp.Description("The text content to write into the file.")),
 		mcp.WithBoolean("overwrite", mcp.DefaultBool(false), mcp.Description("If true, overwrite the file if it already exists. Defaults to false.")),
-	), createNewFile)
+	), t.createNewFile)
 
 	s.AddTool(mcp.NewTool("run_terminal_command",
-		mcp.WithDescription("Runs a shell command and returns its stdout and stderr. you should try other tools first and only use this as last resort. If the command does not return it will block you."),
+		mcp.WithDescription("Runs a shell command and returns its stdout and stderr. If the command does not return it will block you."),
 		mcp.WithString("command", mcp.Required(), mcp.Description("The shell command to execute.")),
 		mcp.WithString("working_dir", mcp.Description("Optional working directory for the command. Defaults to the server's current directory.")),
 		mcp.WithBoolean("confirmed", mcp.DefaultBool(false), mcp.Description("Must be explicitly set to true to actually run the command. When false or omitted a confirmation message is returned and nothing is executed.")),
-	), runTerminalCommand)
+	), t.runTerminalCommand)
 
 	s.AddTool(mcp.NewTool("file_glob_search",
 		mcp.WithDescription("Searches for files matching a glob pattern under a root directory and returns their paths."),
 		mcp.WithString("root", mcp.Required(), mcp.Description("The root directory to search within.")),
 		mcp.WithString("pattern", mcp.Required(), mcp.Description("Glob pattern to match filenames (e.g. '*.go', '**/*.json').")),
 		mcp.WithInteger("max_results", mcp.Description("Maximum number of results to return.")),
-	), fileGlobSearch)
+	), t.fileGlobSearch)
 
 	s.AddTool(mcp.NewTool("find_replace_in_file",
 		mcp.WithDescription("Performs a single find-and-replace operation in a file. Replaces the first (or all) occurrence(s) of a literal string or regex pattern with a replacement string."),
@@ -462,7 +479,7 @@ func registerBaseTool(s *server.MCPServer) {
 		mcp.WithString("replace", mcp.Required(), mcp.Description("The replacement string. Supports $1, $2 … back-references when use_regex is true.")),
 		mcp.WithBoolean("use_regex", mcp.DefaultBool(false), mcp.Description("Treat 'find' as a regular expression.")),
 		mcp.WithBoolean("replace_all", mcp.DefaultBool(false), mcp.Description("Replace all occurrences instead of just the first.")),
-	), findReplaceInFile)
+	), t.findReplaceInFile)
 
 	s.AddTool(mcp.NewTool("block_in_file",
 		mcp.WithDescription("Replaces a multi-line block of text within a file using three regex anchor patterns that must appear in sequence. The tool searches the specified `path` for three lines matching the provided regular expressions in this order: first `start_block_ptn`, then `marker_ptn`, and finally `end_block_ptn`. These markers act as anchors; there can be any number of intermediate lines between them. Once found, the entire range starting from the line matching `start_block_ptn` through to the end of the line matching `end_block_ptn` is replaced by the string provided in `replace`. To be sure of accuracy all patterns must uniquely identify the block. Recommend full-line matching (use anchors ^ and $). If `end_block_ptn` contains EOF, reaching end-of-file counts as a match. `marker_ptn` is optional, give empty string if you want to bypass. On any error the function returns the error message"),
@@ -471,7 +488,7 @@ func registerBaseTool(s *server.MCPServer) {
 		mcp.WithString("end_block_ptn", mcp.Required(), mcp.Description("The regex pattern to match the end line of the block.")),
 		mcp.WithString("marker_ptn", mcp.Required(), mcp.Description("The regex pattern to match in between the block.")),
 		mcp.WithString("replace", mcp.Required(), mcp.Description("The replacement string.")),
-	), blockInFile)
+	), t.blockInFile)
 
 	s.AddTool(mcp.NewTool("http_request",
 		mcp.WithDescription("Make HTTP requests to external APIs. If response is greater 20Kb it will be saved into a file and file path will be returned."),
@@ -488,10 +505,10 @@ func registerBaseTool(s *server.MCPServer) {
 		mcp.WithString("body",
 			mcp.Description("Request body (for POST/PUT)"),
 		),
-	), httpRequest)
+	), t.httpRequest)
 }
 
-func blockInFile(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (t *BaseToolManager) blockInFile(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.GetArguments()
 	path := ""
 	if p, ok := args["path"]; ok {
