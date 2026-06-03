@@ -450,12 +450,32 @@ func registerBaseTool(s *server.MCPServer, t *BaseToolManager) {
 		}
 		return mcp.NewToolResultText(content), nil
 	})
-
 	s.AddTool(mcp.NewTool("create_new_file",
-		mcp.WithDescription("Creates a new file at the given path with the provided content. Fails if the file already exists unless overwrite is set to true."),
-		mcp.WithString("path", mcp.Required(), mcp.Description("The path where the new file should be created.")),
-		mcp.WithString("content", mcp.Required(), mcp.Description("The text content to write into the file.")),
-		mcp.WithBoolean("overwrite", mcp.DefaultBool(false), mcp.Description("If true, overwrite the file if it already exists. Defaults to false.")),
+		mcp.WithDescription(`Creates or overwrites a text file.
+
+IMPORTANT:
+- If the target file may already exist, you SHOULD set overwrite=true on the FIRST attempt.
+- Do NOT first try overwrite=false and retry after failure unless preserving the existing file is required.
+- Use overwrite=false only when you specifically want creation to fail if the file already exists.
+`),
+		mcp.WithString(
+			"path",
+			mcp.Required(),
+			mcp.Description("Absolute or relative file path to write."),
+		),
+		mcp.WithString(
+			"content",
+			mcp.Required(),
+			mcp.Description("UTF-8 text content to write into the file."),
+		),
+		mcp.WithBoolean(
+			"overwrite",
+			mcp.DefaultBool(false),
+			mcp.Description(`Whether to replace an existing file.
+
+Set to true when updating, regenerating, or recreating files.
+Set to false only when you explicitly need fail-if-exists behavior.`),
+		),
 	), t.createNewFile)
 
 	s.AddTool(mcp.NewTool("run_terminal_command",
