@@ -41,6 +41,34 @@ func listDirectory(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallT
 	return mcp.NewToolResultText(sb.String()), nil
 }
 
+func createDirectory(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	path := ""
+	if p, ok := args["path"]; ok {
+		path = fmt.Sprintf("%v", p)
+	}
+	cleanPath := filepath.Clean(path)
+
+	if err := os.MkdirAll(cleanPath, 0o755); err != nil {
+		return mcp.NewToolResultText("[ERROR] " + err.Error()), err
+	}
+	return mcp.NewToolResultText("[OK]"), nil
+}
+
+func removeDirectory(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	path := ""
+	if p, ok := args["path"]; ok {
+		path = fmt.Sprintf("%v", p)
+	}
+	cleanPath := filepath.Clean(path)
+	if err := os.RemoveAll(cleanPath); err != nil {
+		return mcp.NewToolResultText("[ERROR] " + err.Error()), err
+	}
+
+	return mcp.NewToolResultText("[OK]"), nil
+}
+
 func createNewFile(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.GetArguments()
 	path := ""
@@ -354,13 +382,24 @@ func httpRequest(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToo
 	if err != nil {
 		return mcp.NewToolResultErrorFromErr("unable to read request response", err), nil
 	}
-
+	dataLen := len(respBody)
+	if dataLen > 20000 {
+		tmpDir, err := os.MkdirTemp("", "mcp-tool")
+		if err != nil {
+			return mcp.NewToolResultText("[ERROR] " + err.Error()), err
+		}
+		filePath := filepath.Join(tmpDir, "http-request-body.txt")
+		if err := os.WriteFile(filePath, respBody, 0o640); err != nil {
+			return mcp.NewToolResultText("[ERROR] " + err.Error()), err
+		}
+		return mcp.NewToolResultText(fmt.Sprintf("Status: %d\nSaved To: %s", resp.StatusCode, filePath)), nil
+	}
 	return mcp.NewToolResultText(fmt.Sprintf("Status: %d\nBody: %s", resp.StatusCode, string(respBody))), nil
 }
 
 func registerBaseTool(s *server.MCPServer) {
 	s.AddTool(mcp.NewTool("fetch_url",
-		mcp.WithDescription("Fetches a URL over HTTP and converts its HTML content into markdown text. If the content is larger than 20kb the content will be saved to a file and the result will be the file path so you can selectively read using grep via run_terminal_command or use text_tool"),
+		mcp.WithDescription("Fetches a URL over HTTP and converts its HTML content into markdown text. If the content is larger than 20kb the content will be saved to a file and the result will be the file path so you can selectively read using grep using text tool"),
 		mcp.WithString("url", mcp.Required(), mcp.Description("The URL to fetch and convert into markdown text")),
 	), fetchUrl)
 
@@ -368,6 +407,16 @@ func registerBaseTool(s *server.MCPServer) {
 		mcp.WithDescription("Lists the files and directories in a given path. Useful for understanding project structure."),
 		mcp.WithString("path", mcp.Required(), mcp.Description("The directory path to list. Use '.' for the current directory.")),
 	), listDirectory)
+
+	s.AddTool(mcp.NewTool("create_directory",
+		mcp.WithDescription("Create directory in a given path. same as run unix command mkdir -p <path>."),
+		mcp.WithString("path", mcp.Required(), mcp.Description("The directory path to create.")),
+	), createDirectory)
+
+	s.AddTool(mcp.NewTool("remove_directory",
+		mcp.WithDescription("Remove directory in a given path. same as run unix command rm -rf <path>."),
+		mcp.WithString("path", mcp.Required(), mcp.Description("The directory path to remove.")),
+	), removeDirectory)
 
 	s.AddTool(mcp.NewTool("read_file",
 		mcp.WithDescription("Reads the content of a file from the local filesystem."),
@@ -425,7 +474,7 @@ func registerBaseTool(s *server.MCPServer) {
 	), blockInFile)
 
 	s.AddTool(mcp.NewTool("http_request",
-		mcp.WithDescription("Make HTTP requests to external APIs"),
+		mcp.WithDescription("Make HTTP requests to external APIs. If response is greater 20Kb it will be saved into a file and file path will be returned."),
 		mcp.WithString("method",
 			mcp.Required(),
 			mcp.Description("HTTP method to use"),
