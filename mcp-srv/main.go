@@ -21,6 +21,11 @@ type config struct {
 	toolSet   string // extra tools to laod, coma sep
 }
 
+var (
+	defaultAllowCmd  = `^(go|gobind|gofmt|gomobile|gcc|g\+\+|make|cmake|m4|bison|jq|cat|docker|python3|perl|lua|pip3|pip|adb|dotnet|java|javac|npm|node|yarn|ng|npx|gradle|\.\/gradlew|)[\s]+.*$`
+	defaultAllowPath = `(\/tmp|\.\/)[^\s]*$`
+)
+
 func parseArgs() config {
 	cfg := config{
 		transport: "stdio",
@@ -63,7 +68,15 @@ Examples:
 
   # Both transports on different ports (serve all clients simultaneously):
   mcp-server -t streamable -p 8081 &
-`)
+
+  Environment vars you can set. They re all golang regex ptn.
+	ALLOWED_TERM_CMD_PTN - the pattern to allow or block certain command used in the tool run_terminal_command. Default '%s'
+	BLOCKED_TERM_CMD_PTN
+
+	ALLOWED_PATH_PTN - the pattern to allow or block certain path used in all file/directory operations. Default '%s'
+	BLOCKED_PATH_PTN
+
+`, defaultAllowCmd, defaultAllowPath)
 }
 
 // Server builder — registers all tools onto an MCPServer instance
@@ -104,9 +117,9 @@ func buildServer(cfg config) *server.MCPServer {
 		}
 	}
 	baseTool := BaseToolManager{
-		AllowedTerminalCommandPattern: u.Getenv("ALLOWED_TERM_CMD_PTN", `^(go|gobind|gofmt|gomobile|gcc|g\+\+|make|cmake|m4|bison|jq|cat|docker|python3|perl|lua|pip3|pip|adb|dotnet|java|javac|npm|node|yarn|ng|npx|gradle|\.\/gradlew|)[\s]+.*$`),
+		AllowedTerminalCommandPattern: u.Getenv("ALLOWED_TERM_CMD_PTN", defaultAllowCmd),
 		BlockedTerminalCommandPattern: u.Getenv("BLOCKED_TERM_CMD_PTN", ""),
-		AllowedPathPattern:            u.Getenv("ALLOWED_PATH_PTN", `(\/tmp|\.\/)[^\s]*$`),
+		AllowedPathPattern:            u.Getenv("ALLOWED_PATH_PTN", defaultAllowPath),
 		BlockedPathPattern:            u.Getenv("BLOCKED_PATH_PTN", ""),
 	}
 	registerBaseTool(s, &baseTool)
