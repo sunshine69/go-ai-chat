@@ -487,13 +487,7 @@ func registerBaseTool(s *server.MCPServer, t *BaseToolManager) {
 		return mcp.NewToolResultText(content), nil
 	})
 	s.AddTool(mcp.NewTool("create_new_file",
-		mcp.WithDescription(`Creates or overwrites a text file.
-
-IMPORTANT:
-- If the target file may already exist, you SHOULD set overwrite=true on the FIRST attempt.
-- Do NOT first try overwrite=false and retry after failure unless preserving the existing file is required.
-- Use overwrite=false only when you specifically want creation to fail if the file already exists.
-`),
+		mcp.WithDescription(`Creates or overwrites a text file. IMPORTANT - the file if exists will be overriden unless you set overwrite to false`),
 		mcp.WithString(
 			"path",
 			mcp.Required(),
@@ -506,7 +500,7 @@ IMPORTANT:
 		),
 		mcp.WithBoolean(
 			"overwrite",
-			mcp.DefaultBool(false),
+			mcp.DefaultBool(true),
 			mcp.Description(`Whether to replace an existing file.
 
 Set to true when updating, regenerating, or recreating files.
