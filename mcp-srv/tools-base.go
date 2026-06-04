@@ -91,11 +91,24 @@ func (t *BaseToolManager) removeDirectory(ctx context.Context, request mcp.CallT
 	if res, err := t.checkPath(cleanPath); err != nil {
 		return res, err
 	}
-	if err := os.RemoveAll(cleanPath); err != nil {
-		return mcp.NewToolResultText("[ERROR] " + err.Error()), err
+	count := 0
+	if strings.ContainsAny(cleanPath, `*?[]`) {
+		matches, err := filepath.Glob(cleanPath)
+		if err != nil {
+			return mcp.NewToolResultText("[ERROR] " + err.Error()), err
+		}
+		for _, file := range matches {
+			count++
+			if err := os.RemoveAll(file); err != nil {
+				return mcp.NewToolResultText("[ERROR] " + err.Error()), err
+			}
+		}
+	} else {
+		if err := os.RemoveAll(cleanPath); err != nil {
+			return mcp.NewToolResultText("[ERROR] " + err.Error()), err
+		}
 	}
-
-	return mcp.NewToolResultText("[OK]"), nil
+	return mcp.NewToolResultText(fmt.Sprintf("[OK] removed %d items", count)), nil
 }
 
 func (t *BaseToolManager) createNewFile(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -466,8 +479,8 @@ func registerBaseTool(s *server.MCPServer, t *BaseToolManager) {
 		mcp.WithString("path", mcp.Required(), mcp.Description("The directory path to create.")),
 	), t.createDirectory)
 
-	s.AddTool(mcp.NewTool("remove_directory",
-		mcp.WithDescription("Remove directory in a given path. same as run unix command rm -rf <path>."),
+	s.AddTool(mcp.NewTool("remove_file_or_directory",
+		mcp.WithDescription("Remove file or directory in a given path. same as run unix command rm -rf <path>."),
 		mcp.WithString("path", mcp.Required(), mcp.Description("The directory path to remove.")),
 	), t.removeDirectory)
 
