@@ -23,7 +23,7 @@ type config struct {
 
 var (
 	defaultAllowCmd  = `^(go|gobind|gofmt|gomobile|gcc|g\+\+|make|cmake|m4|bison|jq|cat|docker|python3|perl|lua|pip3|pip|adb|dotnet|java|javac|npm|node|yarn|ng|npx|gradle|\.\/gradlew|)[\s]+.*$`
-	defaultAllowPath = `(\/tmp|\.\/)[^\s]*$`
+	defaultAllowPath = `(\/tmp|[^\/])[^\s]*$`
 )
 
 func parseArgs() config {
