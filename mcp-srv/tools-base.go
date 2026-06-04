@@ -108,7 +108,7 @@ func (t *BaseToolManager) createNewFile(ctx context.Context, request mcp.CallToo
 	if c, ok := args["content"]; ok {
 		content = fmt.Sprintf("%v", c)
 	}
-	overwrite := false
+	overwrite := true
 	if o, ok := args["overwrite"]; ok {
 		if bv, ok2 := o.(bool); ok2 {
 			overwrite = bv
