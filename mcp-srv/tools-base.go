@@ -483,7 +483,7 @@ func registerBaseTool(s *server.MCPServer, t *BaseToolManager) {
 	), t.createDirectory)
 
 	s.AddTool(mcp.NewTool("remove_file_or_directory",
-		mcp.WithDescription("Remove file or directory in a given path. same as run unix command rm -rf <path>."),
+		mcp.WithDescription("Remove file or directory in a given path. same as run unix command rm -rf <path>. Wildcard in path accepted."),
 		mcp.WithString("path", mcp.Required(), mcp.Description("The directory path to remove.")),
 	), t.removeDirectory)
 
