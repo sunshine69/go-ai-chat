@@ -106,7 +106,7 @@ func init() {
 				// --- WSL ---
 				`wsl|`
 
-		defaultAllowCmd = `^(` + sharedCmds + windowsCmds + `)[\s]+.*$`
+		defaultAllowCmd = `^(` + sharedCmds + windowsCmds + `)[\s]*.*$`
 
 		// Allow: %TEMP%/%TMP%/%USERPROFILE% literals, relative paths (no drive
 		// letter or leading backslash), and absolute paths under Users\, Temp\,
@@ -135,7 +135,7 @@ func init() {
 				// --- gradlew wrapper (unix executable) ---
 				`\.\/gradlew|`
 
-		defaultAllowCmd = `^(` + sharedCmds + unixCmds + `)[\s]+.*$`
+		defaultAllowCmd = `^(` + sharedCmds + unixCmds + `)[\s]*.*$`
 
 		// Allow /tmp/, /var/tmp/, or any relative path (no leading /).
 		// The old pattern `(\/tmp|[^\/])[^\s]*$` had a bug: [^\/] matched any

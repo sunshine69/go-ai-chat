@@ -525,7 +525,7 @@ Set to false only when you explicitly need fail-if-exists behavior.`),
 	), t.createNewFile)
 
 	s.AddTool(mcp.NewTool("run_terminal_command",
-		mcp.WithDescription("Runs a shell command and returns its stdout and stderr. If the command does not return it will block you."),
+		mcp.WithDescription("Runs a shell command in a working_dir and returns its stdout and stderr. If the command does not return it will block."),
 		mcp.WithString("command", mcp.Required(), mcp.Description("The shell command to execute.")),
 		mcp.WithString("working_dir", mcp.Description("Optional working directory for the command. Defaults to the server's current directory.")),
 		mcp.WithBoolean("confirmed", mcp.DefaultBool(false), mcp.Description("Must be explicitly set to true to actually run the command. When false or omitted a confirmation message is returned and nothing is executed.")),
