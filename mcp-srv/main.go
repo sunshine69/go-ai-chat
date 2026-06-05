@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/server"
@@ -18,13 +19,131 @@ type config struct {
 	host      string
 	port      int
 	basePath  string
-	toolSet   string // extra tools to laod, coma sep
+	toolSet   string // extra tools to load, comma sep
 }
 
 var (
-	defaultAllowCmd  = `^(go|gobind|gofmt|gomobile|gcc|g\+\+|make|cmake|m4|bison|jq|cat|docker|python3|perl|lua|pip3|pip|adb|dotnet|java|javac|npm|node|yarn|ng|npx|gradle|\.\/gradlew|)[\s]+.*$`
-	defaultAllowPath = `(\/tmp|[^\/])[^\s]*$`
+	defaultAllowCmd  string
+	defaultAllowPath string
 )
+
+func init() {
+	// The allow patterns act as a whitelist — anything not matching is denied,
+	// so a block pattern on top would be redundant. Block patterns are left empty
+	// by default; users can set BLOCKED_TERM_CMD_PTN / BLOCKED_PATH_PTN themselves
+	// if they want a denylist-only approach (i.e. no allow pattern set).
+	//
+	// NOTE: bare shells (bash/sh/cmd/powershell) are intentionally omitted.
+	// Allowing them lets an agent run anything via `bash -c "..."`, bypassing
+	// this check entirely. The MCP server's own file/search tools cover most
+	// use cases that would otherwise need shell piping. Add them deliberately
+	// if you accept that trade-off.
+
+	// ---------------------------------------------------------------------------
+	// Shared — identical on every platform. Each group is a string fragment that
+	// gets concatenated into the final regex alternation.
+	// ---------------------------------------------------------------------------
+	sharedCmds := `` +
+		// --- Go toolchain ---
+		`go|gobind|gofmt|gomobile|govet|golangci-lint|staticcheck|` +
+		// --- Rust ---
+		`cargo|rustc|rustfmt|clippy|rustup|` +
+		// --- Java / JVM ---
+		`java|javac|javadoc|jar|mvn|mvnw|gradle|gradlew|ant|kotlin|kotlinc|scala|scalac|sbt|` +
+		// --- .NET (cross-platform subset) ---
+		`dotnet|mono|paket|fsi|` +
+		// --- Python ---
+		`python|python3|pip|pip3|uv|pipenv|poetry|pytest|pylint|flake8|mypy|ruff|black|isort|` +
+		// --- Node / JS / TS ---
+		`node|npm|npx|yarn|pnpm|bun|ng|tsc|eslint|prettier|jest|mocha|vitest|webpack|vite|esbuild|` +
+		// --- Ruby ---
+		`ruby|gem|bundle|rake|rspec|rubocop|` +
+		// --- PHP ---
+		`php|composer|phpunit|phpcs|phpstan|` +
+		// --- Mobile ---
+		`adb|fastboot|flutter|dart|` +
+		// --- Version control ---
+		`git|gh|gitlab|hg|svn|git-lfs|pre-commit|` +
+		// --- Containers ---
+		// `docker|podman|` +
+		// --- Kubernetes ---
+		`kubectl|helm|helmfile|kustomize|skaffold|argocd|flux|istioctl|linkerd|` +
+		`kind|minikube|kubectx|kubens|stern|k9s|` +
+		// --- IaC ---
+		`terraform|terragrunt|tofu|pulumi|packer|ansible|ansible-playbook|ansible-vault|ansible-galaxy|vagrant|` +
+		// --- AWS ---
+		`aws|aws-vault|sam|cdk|amplify|copilot|eksctl|` +
+		// --- GCP ---
+		`gcloud|gsutil|bq|firebase|` +
+		// --- Azure ---
+		`az|azd|azcopy|func|bicep|` +
+		// --- HashiCorp (non-terraform) ---
+		`vault|consul|nomad|boundary|` +
+		// --- Serverless / modern platforms ---
+		`serverless|sls|fly|vercel|netlify|wrangler|supabase|` +
+		// --- Database CLIs ---
+		`psql|mysql|sqlite3|mongosh|redis-cli|` +
+		// --- Secrets / security ---
+		`sops|op|chamber|age|` +
+		// --- Archive / transfer ---
+		`tar|zip|unzip|7z|curl|wget|` +
+		// --- Misc dev tools ---
+		`jq|yq|`
+
+	// ---------------------------------------------------------------------------
+	// Platform-specific additions — things that only exist (or only make sense)
+	// on that OS, then combined with sharedCmds into the final pattern.
+	// ---------------------------------------------------------------------------
+	switch runtime.GOOS {
+	case "windows":
+		windowsCmds :=
+			// --- C / C++ (MSVC + MinGW) ---
+			`gcc|g\+\+|clang|clang\+\+|cl|link|make|cmake|ninja|msbuild|nmake|` +
+				// --- .NET (Windows-only tools) ---
+				`nuget|msbuild|vstest\.console|signtool|csc|vbc|` +
+				// --- Windows shell builtins ---
+				`where|type|dir|echo|set|copy|move|del|mkdir|rmdir|xcopy|robocopy|attrib|icacls|` +
+				// --- WSL ---
+				`wsl|`
+
+		defaultAllowCmd = `^(` + sharedCmds + windowsCmds + `)[\s]+.*$`
+
+		// Allow: %TEMP%/%TMP%/%USERPROFILE% literals, relative paths (no drive
+		// letter or leading backslash), and absolute paths under Users\, Temp\,
+		// Windows\Temp\. (?i) because Windows paths are case-insensitive.
+		defaultAllowPath = `(?i)(^(%TEMP%|%TMP%|%USERPROFILE%)[/\\]|^[A-Za-z]:[/\\](Users|Temp|tmp|Windows[/\\]Temp)[/\\]|^[^\\/:*?"<>|][^:*?"<>|]*$)`
+
+	default: // linux, darwin, and everything else
+		unixCmds :=
+			// --- C / C++ ---
+			`gcc|g\+\+|clang|clang\+\+|make|cmake|ninja|m4|bison|flex|` +
+				// --- Scripting ---
+				`perl|lua|` +
+				// --- macOS ---
+				`xcodebuild|xcrun|brew|open|pbcopy|` +
+				// --- File / text utils ---
+				`cat|grep|find|sed|awk|head|tail|wc|diff|patch|sort|uniq|xargs|ls|cp|mv|rm|` +
+				`chmod|chown|touch|tee|cut|tr|file|stat|du|df|ln|realpath|dirname|basename|` +
+				// --- Network ---
+				`ssh|scp|rsync|nc|` +
+				// --- Archive / compression (unix-only formats) ---
+				`gzip|gunzip|bzip2|xz|zstd|lzma|` +
+				// --- Linux package managers ---
+				`apt|apt-get|apt-cache|yum|dnf|apk|pacman|snap|` +
+				// --- Unix misc ---
+				`echo|env|which|date|pwd|uname|tput|xdg-open|xclip|` +
+				// --- gradlew wrapper (unix executable) ---
+				`\.\/gradlew|`
+
+		defaultAllowCmd = `^(` + sharedCmds + unixCmds + `)[\s]+.*$`
+
+		// Allow /tmp/, /var/tmp/, or any relative path (no leading /).
+		// The old pattern `(\/tmp|[^\/])[^\s]*$` had a bug: [^\/] matched any
+		// single non-slash char, so `/etc/shadow` passed because `shadow` starts
+		// with `s`. Anchoring explicitly closes that gap.
+		defaultAllowPath = `(^/tmp/|^/var/tmp/|^[^/])[^\s]*$`
+	}
+}
 
 func parseArgs() config {
 	cfg := config{
@@ -34,12 +153,11 @@ func parseArgs() config {
 		basePath:  "",
 	}
 
-	// Define flags
-	flag.StringVar(&cfg.transport, "t", cfg.transport, "Transport: \"stdio\" (default), \"sse\", or \"streamable\"")
-	flag.StringVar(&cfg.host, "H", cfg.host, "Host to listen on (shorthand)")
-	flag.IntVar(&cfg.port, "p", cfg.port, "Port to listen on (shorthand)")
+	flag.StringVar(&cfg.transport, "t", cfg.transport, `Transport: "stdio" (default), "sse", or "streamable"`)
+	flag.StringVar(&cfg.host, "H", cfg.host, "Host to listen on")
+	flag.IntVar(&cfg.port, "p", cfg.port, "Port to listen on")
 	flag.StringVar(&cfg.basePath, "base-path", cfg.basePath, "URL base path prefix")
-	flag.StringVar(&cfg.toolSet, "tools", "", "Extra tools name to load in addition to base. Coma sep string. Possible values: postgres,octo,browser or all")
+	flag.StringVar(&cfg.toolSet, "tools", "", "Extra tools to load in addition to base tools. Comma-separated. Possible values: postgres, octo, browser, godoc, all")
 
 	flag.Usage = printUsage
 	flag.Parse()
@@ -50,13 +168,13 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, `Usage: mcp-server [options]
 
 Options:
-  -t   		  Transport: "stdio" (default), "streamable"
-  -H   		  Host to listen on (default: 0.0.0.0)
-  -p   		  Port to listen on (default: 8080)
-  -base-path  URL base path prefix (default: "")
-  -tools      [all,postgres,octo,browser] List of tools name to load in addition to basic tools in coma separated list.
-			  Default: empty (no load). all to load all of them.
-  -h    	  Show this help
+  -t            Transport: "stdio" (default), "streamable"
+  -H            Host to listen on (default: 0.0.0.0)
+  -p            Port to listen on (default: 8080)
+  -base-path    URL base path prefix (default: "")
+  -tools        [all,postgres,octo,browser,godoc] Comma-separated list of extra
+                tool sets to load in addition to the base tools. Default: empty.
+  -h            Show this help
 
 Examples:
   # stdio (default — Claude Desktop / local MCP clients)
@@ -64,22 +182,27 @@ Examples:
 
   # Streamable HTTP transport (newer MCP clients, llama-server web UI)
   mcp-server -t streamable -p 8081
-    POST /mcp      — single endpoint for all JSON-RPC
+    POST /mcp   — single endpoint for all JSON-RPC
 
-  # Both transports on different ports (serve all clients simultaneously):
-  mcp-server -t streamable -p 8081 &
+Environment variables (all accept Go regex patterns):
+  ALLOWED_TERM_CMD_PTN   Whitelist for run_terminal_command. Anything not matching
+                         is denied. Default (%s):
+                         %s
 
-  Environment vars you can set. They re all golang regex ptn.
-	ALLOWED_TERM_CMD_PTN - the pattern to allow or block certain command used in the tool run_terminal_command. Default '%s'
-	BLOCKED_TERM_CMD_PTN
+  BLOCKED_TERM_CMD_PTN   Optional denylist (useful when no allow pattern is set).
+                         Default: ""
 
-	ALLOWED_PATH_PTN - the pattern to allow or block certain path used in all file/directory operations. Default '%s'
-	BLOCKED_PATH_PTN
+  ALLOWED_PATH_PTN       Whitelist for all file/directory operations. Anything not
+                         matching is denied. Default (%s):
+                         %s
 
-`, defaultAllowCmd, defaultAllowPath)
+  BLOCKED_PATH_PTN       Optional denylist (useful when no allow pattern is set).
+                         Default: ""
+
+`, runtime.GOOS, defaultAllowCmd, runtime.GOOS, defaultAllowPath)
 }
 
-// Server builder — registers all tools onto an MCPServer instance
+// buildServer registers all tool sets onto an MCPServer instance.
 func buildServer(cfg config) *server.MCPServer {
 	s := server.NewMCPServer(
 		"mcp-fetch-server",
@@ -116,6 +239,7 @@ func buildServer(cfg config) *server.MCPServer {
 			registerGoDocTools(s, pwProxy)
 		}
 	}
+
 	baseTool := BaseToolManager{
 		AllowedTerminalCommandPattern: u.Getenv("ALLOWED_TERM_CMD_PTN", defaultAllowCmd),
 		BlockedTerminalCommandPattern: u.Getenv("BLOCKED_TERM_CMD_PTN", ""),
@@ -137,6 +261,7 @@ func main() {
 		if err := server.ServeStdio(s); err != nil {
 			log.Fatalf("Server error: %v", err)
 		}
+
 	case "streamable", "streamablehttp":
 		addr := fmt.Sprintf("%s:%d", cfg.host, cfg.port)
 		endpoint := cfg.basePath + "/mcp"
@@ -145,33 +270,32 @@ func main() {
 			server.WithEndpointPath(endpoint),
 		)
 
-		// Wrap with CORS middleware so browser-based clients (llama-server web UI) can connect
+		// Wrap with CORS middleware so browser-based clients (e.g. llama-server
+		// web UI) can connect without a proxy.
 		corsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Set CORS headers on EVERY response, not just OPTIONS
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, DELETE")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Mcp-Session-Id, Last-Event-ID")
-			w.Header().Set("Access-Control-Expose-Headers", "Mcp-Session-Id")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Mcp-Session-Id, Last-Event-ID, Mcp-Protocol-Version")
+			w.Header().Set("Access-Control-Expose-Headers", "Mcp-Session-Id")
 
-			// Must return before calling ServeHTTP — otherwise the inner handler
-			// writes its own response and headers are locked
+			// Respond to preflight and stop — if we fall through, the inner handler
+			// writes its own response and the headers are already locked.
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
-				return // <-- never reaches streamServer.ServeHTTP
+				return
 			}
 
 			streamServer.ServeHTTP(w, r)
 		})
 
 		log.Printf("Starting MCP server (Streamable HTTP + CORS) on http://%s%s", addr, endpoint)
-		log.Printf("  Endpoint    : POST http://%s%s", addr, endpoint)
+		log.Printf("  Endpoint: POST http://%s%s", addr, endpoint)
 		if err := http.ListenAndServe(addr, corsHandler); err != nil {
 			log.Fatalf("Streamable HTTP server error: %v", err)
 		}
 
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown transport %q — valid values: \"stdio\", \"sse\", \"streamable\"\n", cfg.transport)
+		fmt.Fprintf(os.Stderr, "Unknown transport %q — valid values: \"stdio\", \"streamable\"\n", cfg.transport)
 		printUsage()
 		os.Exit(1)
 	}

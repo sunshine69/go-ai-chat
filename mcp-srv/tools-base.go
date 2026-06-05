@@ -24,13 +24,16 @@ type BaseToolManager struct {
 }
 
 func (t *BaseToolManager) checkPath(path string) (*mcp.CallToolResult, error) {
+	// Normalize separators so regex patterns written with '/' work on Windows too.
+	normalizedPath := filepath.ToSlash(path)
+
 	if t.AllowedPathPattern != "" {
-		if !regexp.MustCompile(t.AllowedPathPattern).MatchString(path) {
+		if !regexp.MustCompile(t.AllowedPathPattern).MatchString(normalizedPath) {
 			return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] denied access for path %s. Allowed path pattern: '%s'", path, t.AllowedPathPattern)
 		}
 	}
 	if t.BlockedPathPattern != "" {
-		if regexp.MustCompile(t.BlockedPathPattern).MatchString(path) {
+		if regexp.MustCompile(t.BlockedPathPattern).MatchString(normalizedPath) {
 			return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] denied access for path %s. Blocked path pattern: '%s'", path, t.BlockedPathPattern)
 		}
 	}
