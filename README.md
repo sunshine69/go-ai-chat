@@ -159,7 +159,7 @@ Have fun!
 - CLI chat/*.go
 Stable, most features completed.
 
-- MCP server is tested and best with mcp-stdio-q36/main.go . Users can make more and more to suit their case.
+- MCP server is tested and best with mcp-srv/main.go . Users can make more and more to suit their case.
 
 ## Issues
 
