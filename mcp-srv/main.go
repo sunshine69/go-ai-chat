@@ -111,7 +111,7 @@ func init() {
 		// Allow: %TEMP%/%TMP%/%USERPROFILE% literals, relative paths (no drive
 		// letter or leading backslash), and absolute paths under Users\, Temp\,
 		// Windows\Temp\. (?i) because Windows paths are case-insensitive.
-		defaultAllowPath = `(?i)(^(%TEMP%|%TMP%|%USERPROFILE%)[/\\]|^[A-Za-z]:[/\\](Users|Temp|tmp|Windows[/\\]Temp)[/\\]|^[^\\/:*?"<>|][^:*?"<>|]*$)`
+		defaultAllowPath = `(?i)^(?!.*\.\.)[^\\/:*?"<>|][^:*?"<>|]*$`
 
 	default: // linux, darwin, and everything else
 		unixCmds :=
@@ -141,7 +141,7 @@ func init() {
 		// The old pattern `(\/tmp|[^\/])[^\s]*$` had a bug: [^\/] matched any
 		// single non-slash char, so `/etc/shadow` passed because `shadow` starts
 		// with `s`. Anchoring explicitly closes that gap.
-		defaultAllowPath = `(^/tmp/|^/var/tmp/|^[^/])[^\s]*$`
+		defaultAllowPath = `(^[^/])[^\s]*$`
 	}
 }
 

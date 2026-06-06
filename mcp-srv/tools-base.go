@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 
 	mcp "github.com/mark3labs/mcp-go/mcp"
@@ -197,8 +198,12 @@ func (t *BaseToolManager) runTerminalCommand(ctx context.Context, request mcp.Ca
 			command,
 		)), nil
 	}
-
-	cmd := exec.Command("sh", "-c", command)
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.Command("cmd", "/C", command)
+	} else {
+		cmd = exec.Command("sh", "-c", command)
+	}
 	if workingDir != "" {
 		cmd.Dir = filepath.Clean(workingDir)
 	}
@@ -525,9 +530,17 @@ Set to false only when you explicitly need fail-if-exists behavior.`),
 	), t.createNewFile)
 
 	s.AddTool(mcp.NewTool("run_terminal_command",
-		mcp.WithDescription("Runs a shell command in a working_dir and returns its stdout and stderr. If the command does not return it will block."),
-		mcp.WithString("command", mcp.Required(), mcp.Description("The shell command to execute.")),
-		mcp.WithString("working_dir", mcp.Description("Optional working directory for the command. Defaults to the server's current directory.")),
+		mcp.WithDescription(`Runs a shell command and returns its stdout and stderr.
+
+IMPORTANT: 'cd' is not an allowed command. To run a command in a specific directory,
+use the working_dir argument — do NOT prepend 'cd /some/path &&' to the command.
+
+  WRONG : command="cd /app && go build ./..."
+  CORRECT: command="go build ./..."  working_dir="/app"
+
+If the command does not return it will block you.`),
+		mcp.WithString("command", mcp.Required(), mcp.Description("The shell command to execute. Must not use 'cd' — use working_dir instead.")),
+		mcp.WithString("working_dir", mcp.Description("Directory to run the command in. Use this instead of 'cd'. Must be a relative path from the current directory.")),
 		mcp.WithBoolean("confirmed", mcp.DefaultBool(false), mcp.Description("Must be explicitly set to true to actually run the command. When false or omitted a confirmation message is returned and nothing is executed.")),
 	), t.runTerminalCommand)
 
