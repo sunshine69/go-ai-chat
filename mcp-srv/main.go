@@ -141,7 +141,7 @@ func init() {
 		// The old pattern `(\/tmp|[^\/])[^\s]*$` had a bug: [^\/] matched any
 		// single non-slash char, so `/etc/shadow` passed because `shadow` starts
 		// with `s`. Anchoring explicitly closes that gap.
-		defaultAllowPath = `(^[^/])[^\s]*$`
+		defaultAllowPath = `(^[^/]|\.\/)[^\s]*$`
 	}
 }
 
