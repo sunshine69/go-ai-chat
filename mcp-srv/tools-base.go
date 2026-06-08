@@ -30,12 +30,12 @@ func (t *BaseToolManager) checkPath(path string) (*mcp.CallToolResult, error) {
 
 	if t.AllowedPathPattern != "" {
 		if !regexp.MustCompile(t.AllowedPathPattern).MatchString(normalizedPath) {
-			return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] denied access for path %s. Allowed path pattern: '%s'", path, t.AllowedPathPattern)
+			return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] denied access for path: '%s'. Allowed path pattern: '%s'", path, t.AllowedPathPattern)
 		}
 	}
 	if t.BlockedPathPattern != "" {
 		if regexp.MustCompile(t.BlockedPathPattern).MatchString(normalizedPath) {
-			return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] denied access for path %s. Blocked path pattern: '%s'", path, t.BlockedPathPattern)
+			return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] denied access for path: '%s'. Blocked path pattern: '%s'", path, t.BlockedPathPattern)
 		}
 	}
 	return nil, nil
@@ -189,28 +189,14 @@ func (t *BaseToolManager) runTerminalCommand(ctx context.Context, request mcp.Ca
 		}
 	}
 
-	workingDir := ""
+	workingDir := "./"
 	if wd, ok := args["working_dir"]; ok {
 		workingDir = fmt.Sprintf("%v", wd)
-	} else {
-		workingDir = "./"
 	}
 	if res, err := t.checkPath(workingDir); err != nil {
 		return res, err
 	}
-	// confirmed := false
-	// if cf, ok := args["confirmed"]; ok {
-	// 	if bv, ok2 := cf.(bool); ok2 {
-	// 		confirmed = bv
-	// 	}
-	// }
 
-	// if !confirmed {
-	// 	return mcp.NewToolResultText(fmt.Sprintf(
-	// 		"⚠️  Confirmation required\n\nThe following command has NOT been executed yet:\n\n  %s\n\nTo run it, call run_terminal_command again with confirmed=true.",
-	// 		command,
-	// 	)), nil
-	// }
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
 		cmd = exec.Command("cmd", "/C", command)
