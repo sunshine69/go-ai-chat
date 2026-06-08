@@ -193,19 +193,19 @@ func (t *BaseToolManager) runTerminalCommand(ctx context.Context, request mcp.Ca
 	if res, err := t.checkPath(workingDir); err != nil {
 		return res, err
 	}
-	confirmed := false
-	if cf, ok := args["confirmed"]; ok {
-		if bv, ok2 := cf.(bool); ok2 {
-			confirmed = bv
-		}
-	}
+	// confirmed := false
+	// if cf, ok := args["confirmed"]; ok {
+	// 	if bv, ok2 := cf.(bool); ok2 {
+	// 		confirmed = bv
+	// 	}
+	// }
 
-	if !confirmed {
-		return mcp.NewToolResultText(fmt.Sprintf(
-			"⚠️  Confirmation required\n\nThe following command has NOT been executed yet:\n\n  %s\n\nTo run it, call run_terminal_command again with confirmed=true.",
-			command,
-		)), nil
-	}
+	// if !confirmed {
+	// 	return mcp.NewToolResultText(fmt.Sprintf(
+	// 		"⚠️  Confirmation required\n\nThe following command has NOT been executed yet:\n\n  %s\n\nTo run it, call run_terminal_command again with confirmed=true.",
+	// 		command,
+	// 	)), nil
+	// }
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
 		cmd = exec.Command("cmd", "/C", command)
@@ -549,7 +549,7 @@ use the working_dir argument — do NOT prepend 'cd /some/path &&' to the comman
 If the command does not return it will block you.`),
 		mcp.WithString("command", mcp.Required(), mcp.Description("The shell command to execute. Must not use 'cd' — use working_dir instead.")),
 		mcp.WithString("working_dir", mcp.Description("Directory to run the command in. Use this instead of 'cd'. Must be a relative path from the current directory.")),
-		mcp.WithBoolean("confirmed", mcp.DefaultBool(false), mcp.Description("Must be explicitly set to true to actually run the command. When false or omitted a confirmation message is returned and nothing is executed.")),
+		// mcp.WithBoolean("confirmed", mcp.DefaultBool(false), mcp.Description("Must be explicitly set to true to actually run the command. When false or omitted a confirmation message is returned and nothing is executed.")),
 	), t.runTerminalCommand)
 
 	s.AddTool(mcp.NewTool("file_glob_search",
