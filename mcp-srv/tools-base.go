@@ -192,6 +192,8 @@ func (t *BaseToolManager) runTerminalCommand(ctx context.Context, request mcp.Ca
 	workingDir := ""
 	if wd, ok := args["working_dir"]; ok {
 		workingDir = fmt.Sprintf("%v", wd)
+	} else {
+		workingDir = "./"
 	}
 	if res, err := t.checkPath(workingDir); err != nil {
 		return res, err
