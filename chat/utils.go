@@ -459,7 +459,7 @@ func loadConfig() *Config {
 		ShowThinking:        os.Getenv("SHOW_THINKING") == "on",
 		BlockedTools:        os.Getenv("BLOCKED_TOOLS"),
 		DebugLevel:          os.Getenv("DEBUG_LEVEL"),
-		MaxTokens:           4444,
+		MaxTokens:           999999,
 	}
 
 	if timeoutStr := os.Getenv("TIMEOUT"); timeoutStr != "" {
