@@ -459,6 +459,7 @@ func loadConfig() *Config {
 		ShowThinking:        os.Getenv("SHOW_THINKING") == "on",
 		BlockedTools:        os.Getenv("BLOCKED_TOOLS"),
 		DebugLevel:          os.Getenv("DEBUG_LEVEL"),
+		MaxTokens:           4444,
 	}
 
 	if timeoutStr := os.Getenv("TIMEOUT"); timeoutStr != "" {
@@ -506,6 +507,11 @@ func loadConfig() *Config {
 				if key == "CONTEXT_LIMIT" {
 					if n, err := strconv.Atoi(val); err == nil {
 						c.ContextLimit = n
+					}
+				}
+				if key == "MAX_TOKENS" {
+					if n, err := strconv.Atoi(val); err == nil {
+						c.MaxTokens = n
 					}
 				}
 			}
