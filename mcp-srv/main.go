@@ -25,6 +25,7 @@ type config struct {
 var (
 	defaultAllowCmd  string
 	defaultAllowPath string
+	unixFileTools    map[string]any = u.SliceToMap([]string{"cat", "head", "ls", "cp", "mv", "rm", "chmod", "chown", "touch", "file", "stat", "ln", "realpath", "dirname", "basename"})
 )
 
 func init() {
@@ -122,8 +123,7 @@ func init() {
 				// --- macOS ---
 				`xcodebuild|xcrun|brew|open|pbcopy|` +
 				// --- File / text utils ---
-				`cat|grep|find|sed|awk|head|tail|wc|diff|patch|sort|uniq|xargs|ls|cp|mv|rm|` +
-				`chmod|chown|touch|tee|cut|tr|file|stat|du|df|ln|realpath|dirname|basename|` +
+				strings.Join(u.MapKeysToSlice(unixFileTools), "|") + "|sed|awk|cut|tr|du|df|grep|find|tail|wc|diff|patch|sort|uniq|xargs|" +
 				// --- Network ---
 				`ssh|scp|rsync|nc|` +
 				// --- Archive / compression (unix-only formats) ---
