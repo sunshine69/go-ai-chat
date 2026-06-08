@@ -28,10 +28,11 @@ type jsonRPCRequest struct {
 }
 
 type jsonRPCResponse struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      interface{}     `json:"id"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *jsonRPCError   `json:"error,omitempty"`
+	JSONRPC      string          `json:"jsonrpc"`
+	ID           interface{}     `json:"id"`
+	Result       json.RawMessage `json:"result,omitempty"`
+	Error        *jsonRPCError   `json:"error,omitempty"`
+	ExtraContent *ExtraContent   `json:"extra_content,omitempty"`
 }
 
 type jsonRPCError struct {
@@ -65,6 +66,15 @@ type mcpCallToolResult struct {
 // OpenAI tool-call types (what the LLM returns)
 // ---------------------------------------------------------------------------
 
+// ExtraContent holds provider-specific metadata attached to a tool call.
+type ExtraContent struct {
+	Google *GoogleExtraContent `json:"google,omitempty"`
+}
+
+type GoogleExtraContent struct {
+	ThoughtSignature string `json:"thought_signature,omitempty"`
+}
+
 // ToolCall mirrors the OpenAI delta.tool_calls structure
 type ToolCall struct {
 	Index    int    `json:"index"`
@@ -74,6 +84,7 @@ type ToolCall struct {
 		Name      string `json:"name"`
 		Arguments string `json:"arguments"`
 	} `json:"function"`
+	ExtraContent *ExtraContent `json:"extra_content,omitempty"`
 }
 
 // ---------------------------------------------------------------------------

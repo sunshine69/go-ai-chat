@@ -369,6 +369,16 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 				tc.Function.Name += tcDelta.Function.Name
 			}
 			tc.Function.Arguments += tcDelta.Function.Arguments
+			// Capture Gemini thought_signature — treat as opaque blob, don't concatenate
+			if tcDelta.ExtraContent != nil && tcDelta.ExtraContent.Google != nil {
+				sig := tcDelta.ExtraContent.Google.ThoughtSignature
+				if sig != "" {
+					if tc.ExtraContent == nil {
+						tc.ExtraContent = &ExtraContent{Google: &GoogleExtraContent{}}
+					}
+					tc.ExtraContent.Google.ThoughtSignature = sig // overwrite, not append
+				}
+			}
 		}
 	} // scanner end
 
