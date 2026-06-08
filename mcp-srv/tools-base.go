@@ -177,9 +177,12 @@ func (t *BaseToolManager) runTerminalCommand(ctx context.Context, request mcp.Ca
 			return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] command %s is denied. Command matches the pattern '%s' will be blocked", command, t.BlockedTerminalCommandPattern)
 		}
 	}
-	// Parse the second part - it is the path and check it
+	// Parse the second part - it is the path and check it.
 	cmdSlice := strings.Fields(command)
 	if _, ok := unixFileTools[cmdSlice[0]]; ok {
+		if len(cmdSlice) == 1 { // no good- these cmd requries to have the path
+			return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] command %s is denied. It needs to have the PATH as first argument.", command)
+		}
 		path := cmdSlice[1]
 		if res, err := t.checkPath(path); err != nil {
 			return res, err

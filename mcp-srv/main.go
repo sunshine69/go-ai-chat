@@ -25,7 +25,7 @@ type config struct {
 var (
 	defaultAllowCmd  string
 	defaultAllowPath string
-	unixFileTools    map[string]any = u.SliceToMap([]string{"cat", "head", "ls", "cp", "mv", "rm", "chmod", "chown", "touch", "file", "stat", "ln", "realpath", "dirname", "basename"})
+	unixFileTools    map[string]any = u.SliceToMap([]string{"cat", "head", "ls", "cp", "mv", "rm", "chmod", "chown", "touch", "file", "stat", "ln", "realpath", "dirname", "basename", "cd"})
 )
 
 func init() {
@@ -106,7 +106,7 @@ func init() {
 				`where|type|dir|echo|set|copy|move|del|mkdir|rmdir|xcopy|robocopy|attrib|icacls|` +
 				// --- WSL ---
 				`wsl|`
-
+			// We allow the space after, could be none which has a limitation, eg. if command 'cd' is not in the list but there is command cdk, then 'cd path' will be accepted. To solve it we might be throughly review each cmd and which one allow space which one not.
 		defaultAllowCmd = `^(` + sharedCmds + windowsCmds + `)[\s]*.*$`
 
 		// Allow: %TEMP%/%TMP%/%USERPROFILE% literals, relative paths (no drive
