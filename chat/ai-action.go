@@ -21,8 +21,10 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 	copy(workingMsgs, msgs)
 	var accumulatedContent strings.Builder
 	var accumulatedThinking strings.Builder
+	foundAndExecToolCall := false
 	for {
-		if config.ContextLimit > 0 && estimateTokens(workingMsgs) > config.ContextLimit {
+		// If we found tools call we dont check the context to avoid losing information
+		if !foundAndExecToolCall && config.ContextLimit > 0 && estimateTokens(workingMsgs) > config.ContextLimit {
 			fmt.Printf("📊 Context size: ~%d tokens (limit: %d)\n", estimateTokens(workingMsgs), config.ContextLimit)
 			workingMsgs = trimContext(ctx, config, workingMsgs)
 		}
@@ -64,6 +66,8 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 		// No tool calls — we're done
 		if len(toolCalls) == 0 {
 			return accumulatedContent.String(), accumulatedThinking.String(), workingMsgs, nil
+		} else {
+			foundAndExecToolCall = false // reset it here
 		}
 		// Append the assistant's tool-call turn
 		workingMsgs = append(workingMsgs, Message{
@@ -132,6 +136,7 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 						if config.Debug {
 							fmt.Printf("   ✅ result: %s\n", toolResult)
 						}
+						foundAndExecToolCall = true
 					}
 				} else {
 					toolResult = "error: no MCP client connected"
