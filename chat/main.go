@@ -847,6 +847,7 @@ func handleCommand(text string, history *[]Message) {
 		fmt.Println("  /mcp refresh                  - Refresh MCP tool list")
 		fmt.Println("  /mcpfunc <func> <perm>        - Set permission for tools func, auto|denied|ask")
 		fmt.Println("  /ctx <N>|off                  - Set context token limit (auto-trim when exceeded)")
+		fmt.Println("  /maxtoken <N>                 - Set max tokens in payload.")
 		fmt.Println("  /trimctx <idx|range>          - Remove messages at index or range (e.g. 3-5, -1--3)")
 		fmt.Println("  /configdir <newdir>           - Switch config directory (.aigdotenv and .aig/). If run from from start add prefix dir:// so we dont treat the / as next command. eg. aig /n /configdir dir:///home/user/aig1 /repl - Within a session it is not required")
 		fmt.Println()
@@ -1099,6 +1100,20 @@ func handleCommand(text string, history *[]Message) {
 		*history = []Message{}
 
 		fmt.Printf("✅ Config directory switched to: %s\n", homeDir)
+	case "/maxtoken":
+		if arg == "" {
+			panic("Usage: /maxtoken <int>")
+		}
+		if maxtok, err := strconv.Atoi(arg); err != nil {
+			fmt.Fprintf(os.Stderr, "Can not parse int: %s\n", err.Error())
+			return
+		} else {
+			config.MaxTokens = maxtok
+			os.Setenv("MAX_TOKENS", arg)
+			fmt.Fprintf(os.Stderr, "Maxtokens set to: %d\n", config.MaxTokens)
+			saveConfig()
+		}
+
 	default:
 		fmt.Printf("Unknown command: %s\n", cmd)
 	}

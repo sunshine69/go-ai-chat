@@ -346,6 +346,10 @@ func saveConfig() {
 		envVars["SUMMARY_MODEL"] = config.SummaryModel
 		changed = true
 	}
+	if config.MaxTokens != 999999 {
+		envVars["MAX_TOKENS"] = fmt.Sprintf("%v", config.MaxTokens)
+		changed = true
+	}
 	if !changed {
 		return
 	}
