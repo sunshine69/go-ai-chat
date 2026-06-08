@@ -21,6 +21,7 @@ import (
 )
 
 func loadDotEnv() {
+	fmt.Fprintf(os.Stderr, "Loading config from homeDir: %s\n", homeDir)
 	homeEnv, _ := godotenv.Read(homeDir + "/.aigdotenv")
 	for k, v := range homeEnv {
 		if err := os.Setenv(k, v); err != nil {

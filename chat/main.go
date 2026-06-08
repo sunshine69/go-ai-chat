@@ -1077,8 +1077,7 @@ func handleCommand(text string, history *[]Message) {
 	case "/configdir":
 		arg = strings.TrimPrefix(arg, "dir://")
 		if arg == "" {
-			fmt.Println("Usage: /configdir <newdir>")
-			return
+			panic("Usage: /configdir <newdir>")
 		}
 		if currentContextPath != "" {
 			saveHistory()
