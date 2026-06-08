@@ -167,9 +167,10 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 	defer globalStats.StreamFinished()
 
 	reqBody := map[string]interface{}{
-		"model":    config.Model,
-		"messages": msgs,
-		"stream":   true,
+		"model":      config.Model,
+		"max_tokens": config.MaxTokens,
+		"messages":   msgs,
+		"stream":     true,
 	}
 
 	// Inject MCP tools if connected
