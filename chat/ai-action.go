@@ -23,6 +23,7 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 	var accumulatedThinking strings.Builder
 	foundAndExecToolCall := false
 	ctxOverSizeAllowed := config.ContextLimit * 2
+	repeatedPatternCount := 0
 
 	for {
 		currentEstToken := estimateTokens(workingMsgs)
@@ -48,7 +49,27 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 		// If it chose to "stop" naturally, but left you with ZERO tools and ZERO text
 		// after doing a bunch of thinking, it's being lazy. Wake it up!
 		currentAccuContent := accumulatedContent.String()
-		if ctx.Err() == nil && !strings.Contains(currentAccuContent, "Task completed") && !strings.Contains(currentAccuContent, "has been successfully") && len(toolCalls) == 0 && ((content == "" && thinking != "") || aiRestResponsePatern.MatchString(currentAccuContent)) {
+		if aiRestResponsePatern.MatchString(currentAccuContent) || aiRestResponsePatern.MatchString(accumulatedThinking.String()) {
+			repeatedPatternCount++
+		}
+		if repeatedPatternCount > 100 {
+			fmt.Println("\n> ⚡ [System Nudge]: AI went to loop. Forcing execution in 5 secs...")
+			time.Sleep(5 * time.Second)
+			// Save its thoughts into the history so it doesn't forget the plan
+			workingMsgs = append(workingMsgs, Message{
+				Role:    "assistant",
+				Content: thinking,
+			})
+
+			// Add a firm nudge telling it to execute step 1 immediately
+			workingMsgs = append(workingMsgs, Message{
+				Role:    "user",
+				Content: "You need to STOP and CHANGE thought to get out of loop. START action.",
+			})
+			// Loop right back up to force it to talk again!
+			continue
+		}
+		if ctx.Err() == nil && !strings.Contains(currentAccuContent, "Task completed") && !strings.Contains(currentAccuContent, "has been successfully") && len(toolCalls) == 0 && (content == "" && thinking != "") {
 			fmt.Println("\n> ⚡ [System Nudge]: AI went to sleep after planning. Forcing execution in 5 secs...")
 			time.Sleep(5 * time.Second)
 
