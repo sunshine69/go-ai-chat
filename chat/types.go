@@ -27,6 +27,7 @@ type Config struct {
 	ContextLimit        int    // max estimated tokens before trimming; 0 = disabled
 	BlockedTools        string // coma sep of tools name we dont want AI to see and use
 	MaxTokens           int
+	MaxRepeatPattern    int
 }
 
 type Message struct {

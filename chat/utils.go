@@ -110,12 +110,12 @@ func getFileProcessor(path string) FileProcessor {
 }
 
 var (
-	history            []Message
-	historyLoaded      bool = false
-	homeDir, _              = os.UserHomeDir()
-	config             *Config
-	currentContextPath string
-
+	history              []Message
+	historyLoaded        bool = false
+	homeDir, _                = os.UserHomeDir()
+	config               *Config
+	currentContextPath   string
+	repeatedPatternCount int
 	// Global MCP client (single active connection)
 	activeMCP *ResilientMCPClient
 )
@@ -469,6 +469,7 @@ func loadConfig() *Config {
 		BlockedTools:        os.Getenv("BLOCKED_TOOLS"),
 		DebugLevel:          os.Getenv("DEBUG_LEVEL"),
 		MaxTokens:           999999,
+		MaxRepeatPattern:    10,
 	}
 
 	if timeoutStr := os.Getenv("TIMEOUT"); timeoutStr != "" {

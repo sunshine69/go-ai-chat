@@ -23,7 +23,7 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 	var accumulatedThinking strings.Builder
 	foundAndExecToolCall := false
 	ctxOverSizeAllowed := config.ContextLimit * 2
-	repeatedPatternCount := 0
+	repeatedPatternCount = 0
 
 	for {
 		currentEstToken := estimateTokens(workingMsgs)
@@ -51,10 +51,8 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 		// If it chose to "stop" naturally, but left you with ZERO tools and ZERO text
 		// after doing a bunch of thinking, it's being lazy. Wake it up!
 		currentAccuContent := accumulatedContent.String()
-		if aiRestResponsePatern.MatchString(currentAccuContent) || aiRestResponsePatern.MatchString(accumulatedThinking.String()) {
-			repeatedPatternCount++
-		}
-		if repeatedPatternCount > 20 {
+		if repeatedPatternCount > config.MaxRepeatPattern {
+			repeatedPatternCount = 0
 			fmt.Println("\n> ⚡ [System Nudge]: AI went to loop. Forcing execution in 5 secs...")
 			time.Sleep(5 * time.Second)
 			// Save its thoughts into the history so it doesn't forget the plan
@@ -308,6 +306,12 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 			thinkingContent.WriteString(rc)
 			rawTextBuffer.WriteString(rc)
 
+			if aiRestResponsePatern.MatchString(rc) {
+				repeatedPatternCount++
+			}
+			if repeatedPatternCount > config.MaxRepeatPattern {
+				break
+			}
 			// Check if a raw text XML tool block has completed its declaration
 			if strings.Contains(rawTextBuffer.String(), "</tool_call>") {
 				parsedCalls := parseRawXmlTools(rawTextBuffer.String())
