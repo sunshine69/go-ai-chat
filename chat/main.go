@@ -829,10 +829,11 @@ func handleCommand(text string, history *[]Message) {
 		fmt.Println("  /addsystem <file>,/as         - Stage file for system message (system role)")
 		fmt.Println("  /r <cmd>                      - Run shell command and show output")
 		fmt.Println("  /m <model>                    - Switch model (e.g., /m gpt-4)")
-		fmt.Println("  /ms <model-summary            - Switch model used for context summary to comress context")
+		fmt.Println("  /ms <model-summary>           - Switch model used for context summary to comress context")
+		fmt.Println("  /msurl <model-summary-URL>    - Switch the api endpoint for summary model. If empty the global one will be used")
+		fmt.Println("  /msto <number-in-secs>        - Set model summary timeout (e.g., 300 - which 300 secs)")
 		fmt.Println("  /url <url>                    - Switch API URL")
 		fmt.Println("  /timeout or /t <dur>          - Set request timeout (e.g., 30s, 5m, 1h)")
-		fmt.Println("  /msto <number-in-secs>        - Set model summary timeout (e.g., 300 - which 300 secs)")
 		fmt.Println("  /exit or /q                   - Exit REPL")
 		fmt.Println("  /use <name>                   - Switch to an existing context")
 		fmt.Println("  /del <name>                   - Delete specific context")
@@ -1013,6 +1014,13 @@ func handleCommand(text string, history *[]Message) {
 		}
 		config.SummaryModelTimeout = arg
 		fmt.Printf("Summary Model Timeout switched to: %s\n", arg)
+	case "/msurl":
+		if arg == "" {
+			fmt.Println("Usage: /msurl <summary-model-url>. By default if empty it uses the same endpoint as global url")
+			return
+		}
+		config.SummaryModelUrl = arg
+		fmt.Printf("Summary Model URL switched to: %s\n", arg)
 
 	case "/url":
 		if arg == "" {

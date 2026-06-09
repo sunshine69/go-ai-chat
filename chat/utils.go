@@ -346,6 +346,10 @@ func saveConfig() {
 		envVars["SUMMARY_MODEL"] = config.SummaryModel
 		changed = true
 	}
+	if config.SummaryModelUrl != "" {
+		envVars["SUMMARY_MODEL_URL"] = config.SummaryModelUrl
+		changed = true
+	}
 	if config.MaxTokens != 999999 {
 		envVars["MAX_TOKENS"] = fmt.Sprintf("%v", config.MaxTokens)
 		changed = true
@@ -453,6 +457,7 @@ func loadConfig() *Config {
 		BaseURL:             os.Getenv("OPENAI_URL"),
 		Model:               os.Getenv("OPENAI_MODEL"),
 		SummaryModel:        os.Getenv("SUMMARY_MODEL"),
+		SummaryModelUrl:     os.Getenv("SUMMARY_MODEL_URL"),
 		SummaryModelTimeout: u.Getenv("SUMMARY_MODEL_TIMEOUT", "60s"),
 		APIKey:              os.Getenv("OPENAI_API_KEY"),
 		Timeout:             45 * time.Minute,

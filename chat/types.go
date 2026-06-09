@@ -14,6 +14,7 @@ type Config struct {
 	Model               string
 	SummaryModel        string // model used for context summarisation; falls back to Model if empty
 	SummaryModelTimeout string
+	SummaryModelUrl     string
 	APIKey              string
 	Timeout             time.Duration
 	PromptedURL         bool

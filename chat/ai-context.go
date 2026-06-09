@@ -160,6 +160,9 @@ func tryAISummary(ctx context.Context, cfg Config, msgs []Message) string {
 	} else {
 		return manualPrefix + buildStructuredSummary(msgs)
 	}
+	if cfg.SummaryModelUrl != "" {
+		summaryCfg.BaseURL = cfg.SummaryModelUrl
+	}
 
 	summaryCfg.ContextLimit = 0 // prevent recursion
 	summaryCfg.ShowThinking = false
