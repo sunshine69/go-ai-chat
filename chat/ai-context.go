@@ -180,6 +180,10 @@ Constraints:
 	summaryMsgs = []Message{{Role: "user", Content: prompt}}
 
 	content, _, _, err := streamOnce(subCtx, summaryCfg, summaryMsgs)
+	if err != nil {
+		summaryCfg.BaseURL = cfg.BaseURL // fall back
+		content, _, _, err = streamOnce(subCtx, summaryCfg, summaryMsgs)
+	}
 	if err != nil || strings.TrimSpace(content) == "" {
 		if subCtx.Err() == context.DeadlineExceeded {
 			fmt.Println("⏱️  AI summary timed out — using structured fallback")
