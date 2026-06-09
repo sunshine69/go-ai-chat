@@ -29,9 +29,11 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 		currentEstToken := estimateTokens(workingMsgs)
 		// If we found tools call we dont check the context to avoid losing information
 		// but it still needs to be smaller than ctxOverSizeAllowed.
-		if config.ContextLimit > 0 && (!foundAndExecToolCall || currentEstToken >= ctxOverSizeAllowed) && currentEstToken > config.ContextLimit {
-			fmt.Printf("📊 Context size: ~%d tokens (limit: %d)\n", estimateTokens(workingMsgs), config.ContextLimit)
-			workingMsgs = trimContext(ctx, config, workingMsgs)
+		if config.ContextLimit > 0 && (!foundAndExecToolCall || currentEstToken >= ctxOverSizeAllowed) {
+			if currentEstToken >= config.ContextLimit {
+				fmt.Printf("📊 Context size: ~%d tokens (limit: %d)\n", estimateTokens(workingMsgs), config.ContextLimit)
+				workingMsgs = trimContext(ctx, config, workingMsgs)
+			}
 		}
 		content, thinking, toolCalls, err := streamOnce(ctx, config, workingMsgs)
 		if err != nil {
@@ -52,7 +54,7 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 		if aiRestResponsePatern.MatchString(currentAccuContent) || aiRestResponsePatern.MatchString(accumulatedThinking.String()) {
 			repeatedPatternCount++
 		}
-		if repeatedPatternCount > 100 {
+		if repeatedPatternCount > 20 {
 			fmt.Println("\n> ⚡ [System Nudge]: AI went to loop. Forcing execution in 5 secs...")
 			time.Sleep(5 * time.Second)
 			// Save its thoughts into the history so it doesn't forget the plan
