@@ -54,11 +54,11 @@ func init() {
 		// --- .NET (cross-platform subset) ---
 		`dotnet|mono|paket|fsi|` +
 		// --- Python ---
-		`python|python3|pip|pip3|uv|pipenv|poetry|pytest|pylint|flake8|mypy|ruff|black|isort|` +
+		`python3|pip3|uv|pipenv|poetry|pytest|pylint|flake8|` +
 		// --- Node / JS / TS ---
 		`node|npm|npx|yarn|pnpm|bun|ng|tsc|eslint|prettier|jest|mocha|vitest|webpack|vite|esbuild|` +
 		// --- Ruby ---
-		`ruby|gem|bundle|rake|rspec|rubocop|` +
+		// `ruby|gem|bundle|rake|rspec|rubocop|` +
 		// --- PHP ---
 		`php|composer|phpunit|phpcs|phpstan|` +
 		// --- Mobile ---
@@ -75,19 +75,17 @@ func init() {
 		// --- AWS ---
 		`aws|aws-vault|sam|cdk|amplify|copilot|eksctl|` +
 		// --- GCP ---
-		`gcloud|gsutil|bq|firebase|` +
+		// `gcloud|gsutil|bq|firebase|` +
 		// --- Azure ---
 		`az|azd|azcopy|func|bicep|` +
 		// --- HashiCorp (non-terraform) ---
 		`vault|consul|nomad|boundary|` +
 		// --- Serverless / modern platforms ---
-		`serverless|sls|fly|vercel|netlify|wrangler|supabase|` +
+		// `serverless|sls|fly|vercel|netlify|wrangler|supabase|` +
 		// --- Database CLIs ---
 		`psql|mysql|sqlite3|mongosh|redis-cli|` +
 		// --- Secrets / security ---
-		`sops|op|chamber|age|` +
-		// --- Archive / transfer ---
-		`tar|zip|unzip|7z|curl|wget|` +
+		// `sops|op|chamber|age|` +
 		// --- Misc dev tools ---
 		`jq|yq|`
 
@@ -118,6 +116,8 @@ func init() {
 		unixCmds :=
 			// --- C / C++ ---
 			`gcc|g\+\+|clang|clang\+\+|make|cmake|ninja|m4|bison|flex|` +
+				// --- Archive / transfer ---
+				`tar|zip|unzip|7z|curl|wget|zstd` +
 				// --- Scripting ---
 				`perl|lua|` +
 				// --- macOS ---
