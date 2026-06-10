@@ -140,7 +140,7 @@ func ConnectStreamableHTTP(url string) (*MCPClient, error) {
 		isStreamableHTTP: true,
 		postURL:          url,
 		spec:             url,
-		httpClient:       &http.Client{Timeout: 60 * time.Second},
+		httpClient:       &http.Client{Timeout: 600 * time.Second},
 		// conn is unused for streamable HTTP but must be non-nil for Close()
 		conn: &sseReadWriteCloser{ReadCloser: io.NopCloser(strings.NewReader(""))},
 	}
