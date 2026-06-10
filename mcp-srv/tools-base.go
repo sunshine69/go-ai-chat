@@ -471,6 +471,18 @@ func (t *BaseToolManager) httpRequest(ctx context.Context, request mcp.CallToolR
 }
 
 func registerBaseTool(s *server.MCPServer, t *BaseToolManager) {
+	s.AddTool(mcp.NewTool("replace_lines_in_file",
+		mcp.WithDescription(`Replaces a range of lines in a file by 1-based line number.
+Use when you know the exact line numbers from a previous text_head / text_section /
+read_file output. start_line and end_line are both inclusive. Set end_line to -1 to
+replace from start_line to the end of the file. The replacement text is written
+verbatim; include a trailing newline if you want one.`),
+		mcp.WithString("path", mcp.Required(), mcp.Description("Path to the file to modify.")),
+		mcp.WithInteger("start_line", mcp.Required(), mcp.Description("First line to replace (1-based, inclusive).")),
+		mcp.WithInteger("end_line", mcp.Required(), mcp.Description("Last line to replace (1-based, inclusive). Pass -1 to replace through end of file.")),
+		mcp.WithString("replace", mcp.Required(), mcp.Description("Replacement text. Written verbatim in place of the removed lines.")),
+	), t.replaceLinesInFile)
+
 	s.AddTool(mcp.NewTool("fetch_url",
 		mcp.WithDescription("Fetches a URL over HTTP and converts its HTML content into markdown text. If the content is larger than 20kb the content will be saved to a file and the result will be the file path so you can selectively read using grep using text tool"),
 		mcp.WithString("url", mcp.Required(), mcp.Description("The URL to fetch and convert into markdown text")),
@@ -620,4 +632,102 @@ func (t *BaseToolManager) blockInFile(_ context.Context, request mcp.CallToolReq
 	} else {
 		return mcp.NewToolResultText("Success."), nil
 	}
+}
+
+func (t *BaseToolManager) replaceLinesInFile(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	path := ""
+	if p, ok := args["path"]; ok {
+		path = fmt.Sprintf("%v", p)
+	}
+	startLine := 0
+	if v, ok := args["start_line"]; ok {
+		switch n := v.(type) {
+		case float64:
+			startLine = int(n)
+		case int:
+			startLine = n
+		}
+	}
+	endLine := -1
+	if v, ok := args["end_line"]; ok {
+		switch n := v.(type) {
+		case float64:
+			endLine = int(n)
+		case int:
+			endLine = n
+		}
+	}
+	replace := ""
+	if r, ok := args["replace"]; ok {
+		replace = fmt.Sprintf("%v", r)
+	}
+
+	cleanPath := filepath.Clean(path)
+	if res, err := t.checkPath(cleanPath); err != nil {
+		return res, err
+	}
+
+	data, err := os.ReadFile(cleanPath)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	lines := strings.Split(string(data), "\n")
+	total := len(lines)
+
+	// Convert 1-based inclusive line numbers to 0-based slice indices.
+	start := startLine - 1
+	end := endLine // endLine == -1 means EOF; otherwise it's 1-based inclusive → slice end = endLine
+	if endLine == -1 {
+		end = total
+	}
+
+	if start < 0 || start >= total {
+		return mcp.NewToolResultError(fmt.Sprintf("start_line %d out of range (file has %d lines)", startLine, total)), nil
+	}
+	if end < start || end > total {
+		return mcp.NewToolResultError(fmt.Sprintf("end_line %d out of range (file has %d lines)", endLine, total)), nil
+	}
+
+	var sb strings.Builder
+	for _, l := range lines[:start] {
+		sb.WriteString(l)
+		sb.WriteByte('\n')
+	}
+	sb.WriteString(replace)
+	// Ensure replacement ends with newline before appending tail (skip if at EOF).
+	if end < total {
+		if len(replace) > 0 && replace[len(replace)-1] != '\n' {
+			sb.WriteByte('\n')
+		}
+		for _, l := range lines[end:] {
+			sb.WriteString(l)
+			sb.WriteByte('\n')
+		}
+	}
+
+	updated := sb.String()
+	// Preserve original absence of trailing newline.
+	if len(data) > 0 && data[len(data)-1] != '\n' && len(updated) > 0 && updated[len(updated)-1] == '\n' {
+		updated = updated[:len(updated)-1]
+	}
+
+	if err := os.WriteFile(cleanPath, []byte(updated), 0644); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	noun := "line"
+	replaced := end - start
+	if endLine == -1 {
+		replaced = total - start
+	}
+	if replaced != 1 {
+		noun = "lines"
+	}
+	return mcp.NewToolResultText(fmt.Sprintf("Replaced %d %s (%d–%s) in %s.", replaced, noun, startLine, func() string {
+		if endLine == -1 {
+			return "EOF"
+		}
+		return fmt.Sprintf("%d", endLine)
+	}(), cleanPath)), nil
 }
