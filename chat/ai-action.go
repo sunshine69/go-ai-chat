@@ -50,7 +50,6 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 		// --- 🛌 THE LAZY MODEL AUTO-NUDGE TRAP HAHA ---
 		// If it chose to "stop" naturally, but left you with ZERO tools and ZERO text
 		// after doing a bunch of thinking, it's being lazy. Wake it up!
-		currentAccuContent := accumulatedContent.String()
 		if repeatedPatternCount > config.MaxRepeatPattern {
 			repeatedPatternCount = 0
 			fmt.Println("\n> ⚡ [System Nudge]: AI went to loop. Forcing execution in 5 secs...")
@@ -69,7 +68,8 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 			// Loop right back up to force it to talk again!
 			continue
 		}
-		if ctx.Err() == nil && !strings.Contains(currentAccuContent, "Task completed") && !strings.Contains(currentAccuContent, "has been successfully") && len(toolCalls) == 0 && (content == "" && thinking != "") {
+		// content too short (less than 3 lines ~ 300) is also a sign of drop
+		if ctx.Err() == nil && !strings.Contains(content, "Task completed") && !strings.Contains(content, "has been successfully") && len(toolCalls) == 0 && (len(content) < 300 && thinking != "") {
 			fmt.Println("\n> ⚡ [System Nudge]: AI went to sleep after planning. Forcing execution in 5 secs...")
 			time.Sleep(5 * time.Second)
 
