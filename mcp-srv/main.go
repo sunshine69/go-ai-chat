@@ -129,7 +129,7 @@ func init() {
 				// --- Archive / compression (unix-only formats) ---
 				`gzip|gunzip|bzip2|xz|zstd|lzma|` +
 				// --- Linux package managers ---
-				`apt|apt-get|apt-cache|yum|dnf|apk|pacman|snap|` +
+				// `apt|apt-get|apt-cache|yum|dnf|apk|pacman|snap|` +
 				// --- Unix misc ---
 				`echo|env|which|date|pwd|uname|tput|xdg-open|xclip|` +
 				// --- gradlew wrapper (unix executable) ---
