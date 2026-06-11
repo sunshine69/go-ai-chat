@@ -689,28 +689,23 @@ func (t *BaseToolManager) replaceLinesInFile(_ context.Context, request mcp.Call
 		return mcp.NewToolResultError(fmt.Sprintf("end_line %d out of range (file has %d lines)", endLine, total)), nil
 	}
 
+	var head, tail []string
+	head = lines[:start]
+	tail = lines[end:]
+
 	var sb strings.Builder
-	for _, l := range lines[:start] {
-		sb.WriteString(l)
+	if len(head) > 0 {
+		sb.WriteString(strings.Join(head, "\n"))
 		sb.WriteByte('\n')
 	}
 	sb.WriteString(replace)
-	// Ensure replacement ends with newline before appending tail (skip if at EOF).
-	if end < total {
+	if len(tail) > 0 {
 		if len(replace) > 0 && replace[len(replace)-1] != '\n' {
 			sb.WriteByte('\n')
 		}
-		for _, l := range lines[end:] {
-			sb.WriteString(l)
-			sb.WriteByte('\n')
-		}
+		sb.WriteString(strings.Join(tail, "\n"))
 	}
-
 	updated := sb.String()
-	// Preserve original absence of trailing newline.
-	if len(data) > 0 && data[len(data)-1] != '\n' && len(updated) > 0 && updated[len(updated)-1] == '\n' {
-		updated = updated[:len(updated)-1]
-	}
 
 	if err := os.WriteFile(cleanPath, []byte(updated), 0644); err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
