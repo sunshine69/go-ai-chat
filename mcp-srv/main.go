@@ -25,7 +25,7 @@ type config struct {
 var (
 	defaultAllowCmd  string
 	defaultAllowPath string
-	unixFileTools    map[string]any = u.SliceToMap([]string{"cat", "head", "ls", "cp", "mv", "rm", "chmod", "chown", "touch", "file", "stat", "ln", "realpath", "dirname", "basename", "cd"})
+	unixFileTools    map[string]any = u.SliceToMap([]string{"cat", "find", "head", "ls", "cp", "mv", "rm", "chmod", "chown", "touch", "file", "stat", "ln", "realpath", "dirname", "basename", "cd"})
 )
 
 func init() {
@@ -46,17 +46,17 @@ func init() {
 	// ---------------------------------------------------------------------------
 	sharedCmds := `` +
 		// --- Go toolchain ---
-		`go|gobind|gofmt|gomobile|govet|golangci-lint|staticcheck|` +
+		`go|gobind|gofmt|gomobile|govet|staticcheck|` +
 		// --- Rust ---
-		`cargo|rustc|rustfmt|clippy|rustup|` +
+		`cargo|rustc|rustfmt|rustup|` +
 		// --- Java / JVM ---
-		`java|javac|javadoc|jar|mvn|mvnw|gradle|gradlew|ant|kotlin|kotlinc|scala|scalac|sbt|` +
+		`java|javac|javadoc|jar|mvn|mvnw|gradle|gradlew|ant|kotlin|kotlinc|scala|scalac|sbt|keytool|openssl|` +
 		// --- .NET (cross-platform subset) ---
 		`dotnet|mono|paket|fsi|` +
 		// --- Python ---
 		`python3|pip3|uv|pipenv|poetry|pytest|pylint|flake8|` +
 		// --- Node / JS / TS ---
-		`node|npm|npx|yarn|pnpm|bun|ng|tsc|eslint|prettier|jest|mocha|vitest|webpack|vite|esbuild|` +
+		`node|npm|npx|yarn|pnpm|bun|ng|tsc|eslint|webpack|vite|esbuild|` +
 		// --- Ruby ---
 		// `ruby|gem|bundle|rake|rspec|rubocop|` +
 		// --- PHP ---
@@ -79,7 +79,7 @@ func init() {
 		// --- Azure ---
 		`az|azd|azcopy|func|bicep|` +
 		// --- HashiCorp (non-terraform) ---
-		`vault|consul|nomad|boundary|` +
+		`vault|consul|` +
 		// --- Serverless / modern platforms ---
 		// `serverless|sls|fly|vercel|netlify|wrangler|supabase|` +
 		// --- Database CLIs ---
@@ -123,7 +123,7 @@ func init() {
 				// --- macOS ---
 				`xcodebuild|xcrun|brew|open|pbcopy|` +
 				// --- File / text utils ---
-				strings.Join(u.MapKeysToSlice(unixFileTools), "|") + "|sed|awk|cut|tr|du|df|grep|find|tail|wc|diff|patch|sort|uniq|xargs|" +
+				strings.Join(u.MapKeysToSlice(unixFileTools), "|") + "|sed|awk|cut|tr|du|df|grep|tail|wc|diff|patch|sort|uniq|xargs|" +
 				// --- Network ---
 				`ssh|scp|rsync|nc|` +
 				// --- Archive / compression (unix-only formats) ---
