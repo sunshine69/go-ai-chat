@@ -69,7 +69,7 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 			continue
 		}
 		// content too short (less than 3 lines ~ 300) is also a sign of drop
-		if ctx.Err() == nil && !strings.Contains(content, "Task completed") && !strings.Contains(content, "has been successfully") && len(toolCalls) == 0 && (len(content) < 300 && thinking != "") {
+		if ctx.Err() == nil && !strings.Contains(content, "Task completed") && !strings.Contains(content, "has been successfully") && len(toolCalls) == 0 && (len(content) < 600 && thinking != "") {
 			fmt.Println("\n> ⚡ [System Nudge]: AI went to sleep after planning. Forcing execution in 5 secs...")
 			time.Sleep(5 * time.Second)
 
