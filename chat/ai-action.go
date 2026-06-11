@@ -371,6 +371,14 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 			fullContent.WriteString(delta.Content)
 			fmt.Print(delta.Content)
 			os.Stdout.Sync()
+
+			if aiRestResponsePatern.MatchString(delta.Content) {
+				repeatedPatternCount++
+			}
+			if repeatedPatternCount > config.MaxRepeatPattern {
+				break
+			}
+
 			continue
 		}
 
