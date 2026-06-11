@@ -50,7 +50,7 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 		// --- 🛌 THE LAZY MODEL AUTO-NUDGE TRAP HAHA ---
 		// If it chose to "stop" naturally, but left you with ZERO tools and ZERO text
 		// after doing a bunch of thinking, it's being lazy. Wake it up!
-		if repeatedPatternCount > config.MaxRepeatPattern {
+		if repeatedPatternCount > config.MaxRepeatPattern || strings.Contains(content, "</think>") {
 			repeatedPatternCount = 0
 			fmt.Println("\n> ⚡ [System Nudge]: AI went to loop. Forcing execution in 5 secs...")
 			time.Sleep(5 * time.Second)
