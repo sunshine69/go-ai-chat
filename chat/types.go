@@ -79,7 +79,38 @@ type Response struct {
 // ---------------------------------------------------------------------------
 // History / context persistence
 // ---------------------------------------------------------------------------
-
 type History struct {
 	History []Message `json:"history"`
+}
+
+// OpenAIModelsResponse represents the top-level list container returned by the API.
+type OpenAIModelsResponse struct {
+	// Object string         `json:"object"`
+	Data []ModelDetails `json:"data"`
+}
+
+// ModelDetails represents the extended configuration of an individual model.
+type ModelDetails struct {
+	ID string `json:"id"`
+	// Aliases []string `json:"aliases"`
+	// Tags    []string `json:"tags"`
+	// Object  string   `json:"object"`
+	// OwnedBy string   `json:"owned_by"`
+	// Created        UnixTime     `json:"created"`
+	Status       StatusInfo   `json:"status"`
+	Architecture Architecture `json:"architecture"`
+	// NeedDownload bool         `json:"need_download"`
+}
+
+// StatusInfo captures the current state, command-line arguments, and preset name.
+type StatusInfo struct {
+	// Value string `json:"value"`
+	// Args   []string `json:"args"`
+	Preset string `json:"preset"`
+}
+
+// Architecture specifies the media modalities supported by the system.
+type Architecture struct {
+	InputModalities  []string `json:"input_modalities"`
+	OutputModalities []string `json:"output_modalities"`
 }

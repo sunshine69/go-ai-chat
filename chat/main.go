@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -828,7 +829,7 @@ func handleCommand(text string, history *[]Message) {
 		fmt.Println("  /add <file>,/a                - Stage file for next message (user role)")
 		fmt.Println("  /addsystem <file>,/as         - Stage file for system message (system role)")
 		fmt.Println("  /r <cmd>                      - Run shell command and show output")
-		fmt.Println("  /m <model>                    - Switch model (e.g., /m gpt-4)")
+		fmt.Println("  /m <model>                    - Switch model (e.g., /m gpt-4). To list models run /m list or /m ls")
 		fmt.Println("  /ms <model-summary>           - Switch model used for context summary to comress context")
 		fmt.Println("  /msurl <model-summary-URL>    - Switch the api endpoint for summary model. If empty the global one will be used")
 		fmt.Println("  /msto <number-in-secs>        - Set model summary timeout (e.g., 300 - which 300 secs)")
@@ -996,8 +997,24 @@ func handleCommand(text string, history *[]Message) {
 			fmt.Println("Usage: /m <model>")
 			return
 		}
-		config.Model = arg
-		fmt.Printf("Model switched to: %s\n", arg)
+		switch arg {
+		case "list", "ls":
+			url, _ := url.Parse(config.BaseURL)
+			if o, err := u.Curl("GET", fmt.Sprintf("%s://%s/v1/models", url.Scheme, url.Host), "", "", []string{"Authorization: Bearer " + config.APIKey}, nil); err == nil {
+				v := OpenAIModelsResponse{}
+				if err1 := json.Unmarshal([]byte(o), &v); err1 == nil {
+					fmt.Fprintf(os.Stderr, "%s\n", u.JsonDump(v, ""))
+				} else {
+					fmt.Fprintf(os.Stderr, "%s\n", err1.Error())
+				}
+			} else {
+				fmt.Fprintf(os.Stderr, "Failed to query models list %s\n", err.Error())
+			}
+			return
+		default:
+			config.Model = arg
+			fmt.Printf("Model switched to: %s\n", arg)
+		}
 
 	case "/ms":
 		if arg == "" {
