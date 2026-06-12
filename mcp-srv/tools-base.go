@@ -546,11 +546,11 @@ Set to false only when you explicitly need fail-if-exists behavior.`),
 	s.AddTool(mcp.NewTool("run_terminal_command",
 		mcp.WithDescription(`Runs a shell command and returns its stdout and stderr.
 
-IMPORTANT: 'cd' is not an allowed command. To run a command in a specific directory,
-use the working_dir argument — do NOT prepend 'cd /some/path &&' to the command.
+ABSOLUTE PATH IN COMMAND WILL BE DENIED. USE RELATIVE PATH TO CURRENT DIRECTORY. 
+To run a command in a specific directory, use the working_dir argument otherwise it is defaulted to current working dir. If set, WORKING_DIR need to be relative path or match the path PATTERN return back to you.
 
   WRONG : command="cd /app && go build ./..."
-  CORRECT: command="go build ./..."  working_dir="/app"
+  CORRECT: command="go build ./..."  working_dir="./app"
 
 If the command does not return it will block you.`),
 		mcp.WithString("command", mcp.Required(), mcp.Description("The shell command to execute. Must not use 'cd' — use working_dir instead.")),
