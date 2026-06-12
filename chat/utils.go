@@ -582,3 +582,28 @@ func parseRawXmlTools(rawText string) []ToolCall {
 
 	return toolCalls
 }
+
+func expandHomeDir(path string) (string, error) {
+	// Return as-is if it doesn't start with a tilde
+	if !strings.HasPrefix(path, "~") {
+		return path, nil
+	}
+
+	// Only expand if it is exactly "~" or starts with "~/" (or "~\")
+	if path != "~" && !strings.HasPrefix(path, "~"+string(filepath.Separator)) {
+		return path, nil
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+
+	// Handle the edge case where path is just "~"
+	if path == "~" {
+		return home, nil
+	}
+
+	// Join the home directory with everything after the "~/"
+	return filepath.Join(home, path[2:]), nil
+}

@@ -850,7 +850,7 @@ func handleCommand(text string, history *[]Message) {
 		fmt.Println("  /ctx <N>|off                  - Set context token limit (auto-trim when exceeded)")
 		fmt.Println("  /maxtoken <N>                 - Set max tokens in payload.")
 		fmt.Println("  /trimctx <idx|range>          - Remove messages at index or range (e.g. 3-5, -1--3)")
-		fmt.Println("  /configdir <newdir>           - Switch config directory (.aigdotenv and .aig/). If run from from start add prefix dir:// so we dont treat the / as next command. eg. aig /n /configdir dir:///home/user/aig1 /repl - Within a session it is not required")
+		fmt.Println("  /configdir <newdir>           - Switch config directory (.aigdotenv and .aig/). If run from from start add prefix dir:// so we dont treat the / as next command. eg. aig /n /configdir dir:///home/user/aig1 /repl - Within a session it is not required. ~ will be expanded into home dir")
 		fmt.Println()
 		fmt.Printf("Curl mode: using curl http://localhost:%d as base for these below cmds\n", statServerPort)
 		fmt.Println("  currently only reporting stats")
@@ -1092,7 +1092,7 @@ func handleCommand(text string, history *[]Message) {
 			saveHistory()
 		}
 		saveConfig()
-
+		arg, _ = expandHomeDir(arg)
 		absPath, err := filepath.Abs(arg)
 		if err != nil {
 			fmt.Printf("❌ Error resolving path: %v\n", err)
