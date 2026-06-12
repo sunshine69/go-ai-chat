@@ -937,6 +937,10 @@ func (t *BaseToolManager) replaceLinesInFile(_ context.Context, request mcp.Call
 		return mcp.NewToolResultError(fmt.Sprintf("end_line %d out of range (file has %d lines)", endLine, total)), nil
 	}
 
+	if end > total {
+		end = total
+	}
+
 	var head, tail []string
 	head = lines[:start]
 	tail = lines[end:]
