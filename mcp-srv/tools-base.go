@@ -474,9 +474,12 @@ func registerBaseTool(s *server.MCPServer, t *BaseToolManager) {
 	s.AddTool(mcp.NewTool("replace_lines_in_file",
 		mcp.WithDescription(`Replaces a range of lines in a file by 1-based line number.
 Use when you know the exact line numbers from a previous text_head / text_section /
-read_file output. start_line and end_line are both inclusive. Set end_line to -1 to
-replace from start_line to the end of the file. The replacement text is written
-verbatim; include a trailing newline if you want one.`),
+read_file output. start_line and end_line are both inclusive means IT WILL BE REPLACED. Set end_line to -1 to
+replace from start_line to the end of the file.
+
+The replacement text is written *VERBATIM* include a leading, trailing newline or spaces if you add them.
+*IMPORTANT* to pay attention to the leading space at first line to maintain correct indentation with existing code
+*ALWAYS* re read back after change to see changes and validate`),
 		mcp.WithString("path", mcp.Required(), mcp.Description("Path to the file to modify.")),
 		mcp.WithInteger("start_line", mcp.Required(), mcp.Description("First line to replace (1-based, inclusive).")),
 		mcp.WithInteger("end_line", mcp.Required(), mcp.Description("Last line to replace (1-based, inclusive). Pass -1 to replace through end of file.")),
@@ -699,10 +702,8 @@ func (t *BaseToolManager) replaceLinesInFile(_ context.Context, request mcp.Call
 		sb.WriteByte('\n')
 	}
 
-	// replace = strings.TrimSpace(replace)
 	sb.WriteString(replace)
 	if len(tail) > 0 {
-		// sb.WriteByte('\n')
 		sb.WriteString(strings.Join(tail, "\n"))
 	}
 	updated := sb.String()
