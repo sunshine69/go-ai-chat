@@ -660,7 +660,7 @@ func (t *BaseToolManager) replaceLinesInFile(_ context.Context, request mcp.Call
 	}
 	replace := ""
 	if r, ok := args["replace"]; ok {
-		replace = fmt.Sprintf("%v", r)
+		replace = r.(string)
 	}
 
 	cleanPath := filepath.Clean(path)
