@@ -58,6 +58,7 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 					Role:    "user",
 					Content: "continue.",
 				})
+				continue
 			default:
 				return accumulatedContent.String() + content, accumulatedThinking.String() + thinking, workingMsgs, err
 			}
