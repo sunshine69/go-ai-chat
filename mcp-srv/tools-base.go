@@ -566,16 +566,16 @@ If the command does not return it will block you.`),
 	), t.fileGlobSearch)
 
 	s.AddTool(mcp.NewTool("find_replace_in_file",
-		mcp.WithDescription("Performs a single find-and-replace operation in a file. Replaces the first (or all) occurrence(s) of a literal string or regex pattern with a replacement string."),
+		mcp.WithDescription("Performs a single find-and-replace operation in a file. Replaces the first (or all) occurrence(s) of a literal string or golang regex pattern with a replacement string."),
 		mcp.WithString("path", mcp.Required(), mcp.Description("Path to the file to modify.")),
-		mcp.WithString("find", mcp.Required(), mcp.Description("The string or regex pattern to search for.")),
+		mcp.WithString("find", mcp.Required(), mcp.Description("The string or golang regex pattern to search for.")),
 		mcp.WithString("replace", mcp.Required(), mcp.Description("The replacement string. Supports $1, $2 … back-references when use_regex is true.")),
 		mcp.WithBoolean("use_regex", mcp.DefaultBool(false), mcp.Description("Treat 'find' as a regular expression.")),
 		mcp.WithBoolean("replace_all", mcp.DefaultBool(false), mcp.Description("Replace all occurrences instead of just the first.")),
 	), t.findReplaceInFile)
 
 	s.AddTool(mcp.NewTool("block_in_file",
-		mcp.WithDescription("Replaces a multi-line block of text within a file using three regex anchor patterns that must appear in sequence. The tool searches the specified `path` for three lines matching the provided regular expressions in this order: first `start_block_ptn`, then `marker_ptn`, and finally `end_block_ptn`. These markers act as anchors; there can be any number of intermediate lines between them. Once found, the entire range starting from the line matching `start_block_ptn` through to the end of the line matching `end_block_ptn` is replaced by the string provided in `replace`. To be sure of accuracy all patterns must uniquely identify the block. Recommend full-line matching (use anchors ^ and $). If `end_block_ptn` contains EOF, reaching end-of-file counts as a match. `marker_ptn` is optional, give empty string if you want to bypass. On any error the function returns the error message"),
+		mcp.WithDescription("Replaces a multi-line block of text within a file using three golang regex anchor patterns that must appear in sequence. The tool searches the specified `path` for three lines matching the provided regular expressions in this order: first `start_block_ptn`, then `marker_ptn`, and finally `end_block_ptn`. These markers act as anchors; there can be any number of intermediate lines between them. Once found, the entire range starting from the line matching `start_block_ptn` through to the end of the line matching `end_block_ptn` is replaced by the string provided in `replace`. To be sure of accuracy all patterns must uniquely identify the block. Use full-line matching (use anchors ^ and $). If `end_block_ptn` contains EOF, reaching end-of-file counts as a match. `marker_ptn` is optional, give empty string if you want to bypass. On any error the function returns the error message"),
 		mcp.WithString("path", mcp.Required(), mcp.Description("Path to the file to modify.")),
 		mcp.WithString("start_block_ptn", mcp.Required(), mcp.Description("The regex pattern to match the start line of the block.")),
 		mcp.WithString("end_block_ptn", mcp.Required(), mcp.Description("The regex pattern to match the end line of the block.")),
