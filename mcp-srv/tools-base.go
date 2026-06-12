@@ -698,11 +698,11 @@ func (t *BaseToolManager) replaceLinesInFile(_ context.Context, request mcp.Call
 		sb.WriteString(strings.Join(head, "\n"))
 		sb.WriteByte('\n')
 	}
+
+	replace = strings.TrimSpace(replace)
 	sb.WriteString(replace)
 	if len(tail) > 0 {
-		if len(replace) > 0 && replace[len(replace)-1] != '\n' {
-			sb.WriteByte('\n')
-		}
+		sb.WriteByte('\n')
 		sb.WriteString(strings.Join(tail, "\n"))
 	}
 	updated := sb.String()
