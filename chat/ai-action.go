@@ -46,8 +46,8 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 			}
 		}
 		if err != nil {
-			switch err.Error() {
-			case "STREAM CUTOFF DETECTED":
+			switch {
+			case err.Error() == "STREAM CUTOFF DETECTED" && ctx.Err() == nil:
 				collectContentAndThink()
 				workingMsgs = append(workingMsgs, Message{
 					Role:    "assistant",
