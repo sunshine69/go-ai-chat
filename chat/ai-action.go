@@ -36,17 +36,33 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 			}
 		}
 		content, thinking, toolCalls, err := streamOnce(ctx, config, workingMsgs)
+		var collectContentAndThink = func() {
+			// Always gather whatever text it managed to output
+			if content != "" {
+				accumulatedContent.WriteString(content)
+			}
+			if thinking != "" {
+				accumulatedThinking.WriteString(thinking)
+			}
+		}
 		if err != nil {
-			return accumulatedContent.String() + content, accumulatedThinking.String() + thinking, workingMsgs, err
+			switch err.Error() {
+			case "STREAM CUTOFF DETECTED":
+				collectContentAndThink()
+				workingMsgs = append(workingMsgs, Message{
+					Role:    "assistant",
+					Content: thinking,
+				})
+				// Add a firm nudge telling it to execute step 1 immediately
+				workingMsgs = append(workingMsgs, Message{
+					Role:    "user",
+					Content: "continue.",
+				})
+			default:
+				return accumulatedContent.String() + content, accumulatedThinking.String() + thinking, workingMsgs, err
+			}
 		}
-		// Always gather whatever text it managed to output
-		if content != "" {
-			accumulatedContent.WriteString(content)
-		}
-		if thinking != "" {
-			accumulatedThinking.WriteString(thinking)
-		}
-
+		collectContentAndThink()
 		// --- 🛌 THE LAZY MODEL AUTO-NUDGE TRAP HAHA ---
 		// If it chose to "stop" naturally, but left you with ZERO tools and ZERO text
 		// after doing a bunch of thinking, it's being lazy. Wake it up!
@@ -462,6 +478,7 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 				}
 			}
 		}
+		return fullContent.String(), thinkingContent.String(), toolCalls, fmt.Errorf("STREAM CUTOFF DETECTED")
 	}
 	return fullContent.String(), thinkingContent.String(), toolCalls, nil
 }
