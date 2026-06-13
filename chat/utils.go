@@ -211,9 +211,10 @@ func printHistory(history []Message) {
 
 	for i, msg := range history {
 		role := "User"
-		if msg.Role == "assistant" {
+		switch msg.Role {
+		case "assistant":
 			role = "AI"
-		} else if msg.Role == "tool" {
+		case "tool":
 			role = "Tool"
 		}
 

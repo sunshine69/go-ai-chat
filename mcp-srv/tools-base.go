@@ -606,59 +606,44 @@ Use this tool when:
 - You know unique text on both the start and end lines of the block to target
 - You want to avoid the "line number drift" problem that occurs with line-number-based tools
 
-Do NOT use this for simple single-line replacements. start_block_ptn and end_block_ptn are the same — use find_replace_in_file instead.
+Do NOT use this for simple single-line replacements. 
+DO NOT give start_block_string and end_block_string are the same — use find_replace_in_file instead.
 
 How it works:
 
-If marker_ptn is NOT provided
-1. Find the START line matching start_block_ptn (the opening anchor)
-2. Find the END line matching end_block_ptn (the closing anchor)
+If marker_string is NOT provided
+1. Find the START line matching start_block_string (the opening anchor)
+2. Find the END line matching end_block_string (the closing anchor)
 
-If marker_ptn IS PROVIDED (THE ABSOLUTE ACCURACY CASE)
-1. Match marker_ptn (an intermediate pattern, between start and end to confirm accuracy)
-2. Search START line by matching for start_block_ptn upward from the marker position. If found then
-3. Search END line by matching for end_block_ptn downward from marker position. If found then
+If marker_string IS PROVIDED (THE ABSOLUTE ACCURACY CASE)
+1. Match marker_string (an intermediate pattern, between start and end to confirm accuracy)
+2. Search START line by matching for start_block_string upward from the marker position. If found then
+3. Search END line by matching for end_block_string downward from marker position. If found then
 
 Replace everything from the START line through to (and including) the END line with 'replace'
 
-IMPORTANT: All regex patterns must use Go's regexp/syntax package syntax — NOT Perl/PCRE. Key differences:
-- NO lookahead (?=...) or lookbehind (?<=...) assertions
-- Use ^ and $ anchors for full-line matching unless you intentionally want partial-line matches
-- Patterns must uniquely identify their target lines — if multiple lines match, the tool will fail
-- IF PATTERN start_block_ptn length shorter than 5 chars will be rejected
+IMPORTANT: All patterns are RAW string.
+- IF PATTERN start_block_string length shorter than 5 chars will be rejected
 
 **WARNING**: If your start or end pattern could match multiple lines in the file, you MUST use
- 'marker_ptn' to disambiguate. For example, if replacing an HTML '<section>' when there are two 
+ 'marker_string' to disambiguate. For example, if replacing an HTML '<section>' when there are two 
 sections, include a unique line from inside that section as the marker to ensure only the correct block is replaced.
 
-If end_block_ptn ends with EOF, reaching the end of file counts as a match (useful for appending to files).
+If end_block_string ends with EOF, reaching the end of file counts as a match (useful for appending to files).
 
-marker_ptn is optional: pass an empty string "" to skip it and only use start+end anchors.
+marker_string is optional: pass an empty string "" to skip it and only use start+end anchors.
 
 **TIP**
 - To be 100% sure, you can generate your own pattern markers
   - Use insert_text_to_file at a line with your own text string for start
   - repeat it for the end 
   - Call block_in_file with your own pattern marker
-
-EXAMPLES:
-- Delete a block: find "^func oldFunction() {", end_block_ptn="^}", replace=""
-- Insert a new function after line 10: start_block_ptn="^package main$", replace="package main\n\n// New function below\nfunc newFunc() {\n\tfmt.Println(\"hi\")\n}"
-- Replace all content between two comments: start_block_ptn="// START BLOCK", marker_ptn="", end_block_ptn="// END BLOCK", replace="<new content here>"
-- Replace a function body: find "func oldFunction() {", end_block_ptn="^}$", replace=""
-   → Deletes entire function                                                                    
-- Insert a new function after package declaration: 
-   start_block_ptn="^package main$", replace="package main\n\n// New function below\nfunc newFun
-c() {\n\tfmt.Println(\"hi\")\n}"                                                                
-                                                                                                
-- Replace all content between two comments:                                                    
-   start_block_ptn="// START BLOCK", end_block_ptn="// END BLOCK", replace="<new content here>"
 `),
 		mcp.WithString("path", mcp.Required(), mcp.Description("Absolute or relative path to the file. Use '.'-based paths like './src/main.py' — never absolute system paths.")),
-		mcp.WithString("start_block_ptn", mcp.Required(), mcp.Description(`Go regex pattern for the first line of the block to replace. Must match the ENTIRE line. Use anchors: ^ and $ for full-line matching. Example: "^func main() {" or "^[ \\t]*// TODO:". NO lookahead/lookbehind — Go does not support (?=...) or (?<=...).`)),
-		mcp.WithString("end_block_ptn", mcp.Required(), mcp.Description(`Go regex pattern for the last line of the block to replace. Must match the ENTIRE line. Use anchors: ^ and $ for full-line matching. Example: "^}$" or "^[ \\t]*// END TODO$". To append content (match end-of-file), use "EOF"`)),
-		mcp.WithString("marker_ptn", mcp.Description(`Optional Go regex pattern for an intermediate line within the block. Pass "" (empty string) to skip this step and only match start+end lines. If provided, must match the ENTIRE line with ^/$ anchors. Example: "^[ \\t]*// middle marker$". NO lookahead/lookbehind — Go does not support (?=...) or (?<=...).`)),
-		mcp.WithString("replace", mcp.Required(), mcp.Description(`The replacement text. Replace will completely overwrite everything from start_block_ptn through end_block_ptn (inclusive). Use \n for newlines within the replacement string.`)),
+		mcp.WithString("start_block_string", mcp.Required(), mcp.Description(`Go regex pattern for the first line of the block to replace. Must match the ENTIRE line. Use anchors: ^ and $ for full-line matching. Example: "^func main() {" or "^[ \\t]*// TODO:". NO lookahead/lookbehind — Go does not support (?=...) or (?<=...).`)),
+		mcp.WithString("end_block_string", mcp.Required(), mcp.Description(`Go regex pattern for the last line of the block to replace. Must match the ENTIRE line. Use anchors: ^ and $ for full-line matching. Example: "^}$" or "^[ \\t]*// END TODO$". To append content (match end-of-file), use "EOF"`)),
+		mcp.WithString("marker_string", mcp.Description(`Optional Go regex pattern for an intermediate line within the block. Pass "" (empty string) to skip this step and only match start+end lines. If provided, must match the ENTIRE line with ^/$ anchors. Example: "^[ \\t]*// middle marker$". NO lookahead/lookbehind — Go does not support (?=...) or (?<=...).`)),
+		mcp.WithString("replace", mcp.Required(), mcp.Description(`The replacement text. Replace will completely overwrite everything from start_block_string through end_block_string (inclusive). Use \n for newlines within the replacement string.`)),
 	), t.blockInFile)
 
 	s.AddTool(mcp.NewTool("http_request",
@@ -795,21 +780,24 @@ func (t *BaseToolManager) blockInFile(_ context.Context, request mcp.CallToolReq
 		path = fmt.Sprintf("%v", p)
 	}
 	upper_bound_ptn := []string{}
-	if f, ok := args["start_block_ptn"]; ok {
-		upper_bound_ptn = []string{f.(string)}
+	if f, ok := args["start_block_string"]; ok {
+		upper_bound_ptn = []string{regexp.QuoteMeta(f.(string))}
 	}
 	lower_bound_ptn := []string{}
-	if f, ok := args["end_block_ptn"]; ok {
-		lower_bound_ptn = []string{f.(string)}
+	if f, ok := args["end_block_string"]; ok {
+		lower_bound_ptn = []string{regexp.QuoteMeta(f.(string))}
 	}
 	if len(upper_bound_ptn[0]) < 5 {
 		return mcp.NewToolResultError("[ERROR] the upper_bound_ptn regex pattern is shorter than 5"), nil
 	}
-	marker_ptn := []string{}
-	if f, ok := args["marker_ptn"]; ok {
+	marker_string := []string{}
+	if f, ok := args["marker_string"]; ok {
 		if v, ok1 := f.(string); ok1 && v != "" {
-			marker_ptn = []string{v}
+			marker_string = []string{regexp.QuoteMeta(v)}
 		}
+	}
+	if len(marker_string) < 5 && len(lower_bound_ptn) < 5 {
+		return mcp.NewToolResultError("[ERROR] BOTH lower_bound_ptn and marker_string shorter than 5"), nil
 	}
 	replace := ""
 	if r, ok := args["replace"]; ok {
@@ -824,7 +812,7 @@ func (t *BaseToolManager) blockInFile(_ context.Context, request mcp.CallToolReq
 	backupfile := filepath.Join(filepath.Dir(cleanPath), filename+".bak")
 	defer os.RemoveAll(backupfile)
 
-	output, start, _, _ := u.BlockInFile(cleanPath, upper_bound_ptn, lower_bound_ptn, marker_ptn, replace, false, true, 0)
+	output, start, _, _ := u.BlockInFile(cleanPath, upper_bound_ptn, lower_bound_ptn, marker_string, replace, false, true, 0)
 
 	if start == -1 {
 		if u.FileExistsV2(backupfile) == nil {

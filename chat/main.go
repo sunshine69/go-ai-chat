@@ -415,6 +415,19 @@ func getHistoryFilePath() string {
 	return filepath.Join(home, ".aihistory.json")
 }
 
+func loadSystemMsg(modelname string) *Message {
+	promptfile := filepath.Join(homeDir, modelname+".system")
+	if u.FileExistsV2(promptfile) == nil {
+		fmt.Println("Loading system message for " + modelname)
+		if data, err := os.ReadFile(promptfile); err == nil {
+			return &Message{Role: "system", Content: string(data)}
+		}
+	} else {
+		fmt.Fprintln(os.Stderr, "[INFO] system file for this model "+promptfile+" not available")
+	}
+	return &Message{Role: "system", Content: ""}
+}
+
 func loadHistory(filePath string, historyPtr *[]Message) error {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
@@ -424,17 +437,7 @@ func loadHistory(filePath string, historyPtr *[]Message) error {
 	if err := json.Unmarshal(data, &h); err != nil {
 		return err
 	}
-	promptfile := filepath.Join(homeDir, config.Model+".system")
-	if u.FileExistsV2(promptfile) == nil {
-		fmt.Println("Loading system message for " + config.Model)
-		if data, err := os.ReadFile(promptfile); err == nil {
-			sysMsg := Message{Role: "system", Content: string(data)}
-			// appends h.History elements directly onto the new single-element slice
-			h.History = append([]Message{sysMsg}, h.History...)
-		}
-	} else {
-		fmt.Fprintln(os.Stderr, "[INFO] system file for this model "+promptfile+" not available")
-	}
+	h.History = append([]Message{*loadSystemMsg(config.Model)}, h.History...)
 	*historyPtr = h.History
 	return nil
 }
@@ -940,18 +943,22 @@ func handleCommand(text string, history *[]Message) {
 
 	case "/system", "/sys":
 		if arg == "" {
-			fmt.Println("Usage: /system <text> It will create a new session")
+			fmt.Println("Usage: /system <text> It will create a new session. If text has file://<model-name> it will load the file <model-name>.system from the the current config directory. Normally at start the program already loaded for the corresponding model or when you switch model if these files are exist. This option allow you to load other model system to use for the current one")
 			if len(*history) > 0 {
 				fmt.Printf("Current %s prompt: '%s'\n", (*history)[0].Role, (*history)[0].Content)
 			}
 			return
 		}
-		systemprompt := strings.Join(parts[1:], " ")
-		*history = []Message{
-			{Role: "system", Content: systemprompt},
+		var systemMsg *Message
+		if strings.HasPrefix(arg, "file://") {
+			systemMsg = loadSystemMsg(strings.TrimPrefix(arg, "file://"))
+		} else {
+			systemprompt := strings.Join(parts[1:], " ")
+			systemMsg = &Message{Role: "system", Content: systemprompt}
 		}
-		os.WriteFile(filepath.Join(homeDir, config.Model+".system"), []byte(systemprompt), 0o640)
+		os.WriteFile(filepath.Join(homeDir, config.Model+".system"), []byte(systemMsg.Content.(string)), 0o640)
 		fmt.Println("✅ System prompt added")
+		*history = []Message{*systemMsg}
 
 	case "/add", "/a":
 		if arg == "" {
