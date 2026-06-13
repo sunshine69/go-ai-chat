@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -471,20 +472,29 @@ func (t *BaseToolManager) httpRequest(ctx context.Context, request mcp.CallToolR
 }
 
 func registerBaseTool(s *server.MCPServer, t *BaseToolManager) {
-	s.AddTool(mcp.NewTool("replace_lines_in_file",
-		mcp.WithDescription(`Replaces a range of lines in a file by 1-based line number.
-Use when you know the exact line numbers from a previous text_head / text_section /
-read_file output. start_line and end_line are both inclusive means IT WILL BE REPLACED. Set end_line to -1 to
-replace from start_line to the end of the file.
+	// 	s.AddTool(mcp.NewTool("replace_lines_in_file",
+	// 		mcp.WithDescription(`Replaces a range of lines in a file by 1-based line number.
+	// Use when you know the exact line numbers from a previous text_head / text_section /
+	// read_file output. start_line and end_line are both inclusive means IT WILL BE REPLACED. Set end_line to -1 to
+	// replace from start_line to the end of the file.
 
-The replacement text is written *VERBATIM* include a leading, trailing newline or spaces if you add them.
-*IMPORTANT* to pay attention to the leading space at first line to maintain correct indentation with existing code
-*ALWAYS* re read back after change to see changes and validate`),
+	// The replacement text is written *VERBATIM* include a leading, trailing newline or spaces if you add them.
+	// *IMPORTANT* to pay attention to the leading space at first line to maintain correct indentation with existing code
+	// *ALWAYS* re read back after change to see changes and validate`),
+	// 		mcp.WithString("path", mcp.Required(), mcp.Description("Path to the file to modify.")),
+	// 		mcp.WithInteger("start_line", mcp.Required(), mcp.Description("First line to replace (1-based, inclusive).")),
+	// 		mcp.WithInteger("end_line", mcp.Required(), mcp.Description("Last line to replace (1-based, inclusive). Pass -1 to replace through end of file.")),
+	// 		mcp.WithString("replace", mcp.Required(), mcp.Description("Replacement text. Written verbatim in place of the removed lines.")),
+	// 	), t.replaceLinesInFile)
+
+	s.AddTool(mcp.NewTool("insert_text_to_file",
+		mcp.WithDescription(`Insert a chunk of text  to a file BEFORE a 1-based line number.
+	Use when you know the exact line numbers from a previous text_head / text_section /	read_file output. 
+	Use 0 to insert at the beggining, and -1 or EOF to insert at the end of file.`),
 		mcp.WithString("path", mcp.Required(), mcp.Description("Path to the file to modify.")),
 		mcp.WithInteger("start_line", mcp.Required(), mcp.Description("First line to replace (1-based, inclusive).")),
-		mcp.WithInteger("end_line", mcp.Required(), mcp.Description("Last line to replace (1-based, inclusive). Pass -1 to replace through end of file.")),
-		mcp.WithString("replace", mcp.Required(), mcp.Description("Replacement text. Written verbatim in place of the removed lines.")),
-	), t.replaceLinesInFile)
+		mcp.WithString("chunk", mcp.Required(), mcp.Description("Chunk of text to insert.")),
+	), t.insertTextBlockToFile)
 
 	s.AddTool(mcp.NewTool("fetch_url",
 		mcp.WithDescription("Fetches a URL over HTTP and converts its HTML content into markdown text. If the content is larger than 20kb the content will be saved to a file and the result will be the file path so you can selectively read using grep using text tool"),
@@ -566,21 +576,89 @@ If the command does not return it will block you.`),
 	), t.fileGlobSearch)
 
 	s.AddTool(mcp.NewTool("find_replace_in_file",
-		mcp.WithDescription("Performs a single find-and-replace operation in a file. Replaces the first (or all) occurrence(s) of a literal string or golang regex pattern with a replacement string."),
-		mcp.WithString("path", mcp.Required(), mcp.Description("Path to the file to modify.")),
-		mcp.WithString("find", mcp.Required(), mcp.Description("The string or golang regex pattern to search for.")),
-		mcp.WithString("replace", mcp.Required(), mcp.Description("The replacement string. Supports $1, $2 … back-references when use_regex is true.")),
-		mcp.WithBoolean("use_regex", mcp.DefaultBool(false), mcp.Description("Treat 'find' as a regular expression.")),
-		mcp.WithBoolean("replace_all", mcp.DefaultBool(false), mcp.Description("Replace all occurrences instead of just the first.")),
+		mcp.WithDescription(`Finds and replaces text within a file using either literal string matching or Go regex pattern matching. This is the go-to tool for most in-place edits — use it before reaching for block_in_file unless you specifically need multi-line anchor precision.
+
+Use this tool when:
+- You need to replace specific content (single-line or multi-line) without defining start/end anchors
+- The replacement can be expressed as a single find/replace pair (even if using regex groups)
+- You want simple, predictable behavior for common edits
+
+Do NOT use block_in_file for this — prefer find_replace_in_file unless you need surgical anchor-based precision.
+
+IMPORTANT: When use_regex=true, all patterns must use Go's regexp/syntax package syntax — NOT Perl/PCRE. Key differences:
+- NO lookahead (?=...) or lookbehind (?<=...) assertions
+- Recommend Using ^ and $ for full-line anchoring if needed
+- Patterns do not need to match entire lines unless you add anchors
+
+For simple literal text replacement, set use_regex=false (default) — the 'find' string will be matched exactly as written.`),
+		mcp.WithString("path", mcp.Required(), mcp.Description("Absolute or relative path to the file. Use '.'-based paths like './src/main.py' — never absolute system paths.")),
+		mcp.WithString("find", mcp.Required(), mcp.Description(`The text pattern to search for. When use_regex=false, this is a literal string (case-sensitive). When use_regex=true, this is a Go regex pattern. Examples: "func main()" (literal) or "^func [a-z]+\\(\\)" (regex)`)),
+		mcp.WithString("replace", mcp.Required(), mcp.Description(`The replacement text. Supports $1, $2, etc. back-references when use_regex=true to refer to captured groups from the 'find' pattern. Example: "func ${1}() {" where $1 is a captured group. For multi-line replacements, include \\n in the string.`)),
+		mcp.WithBoolean("use_regex", mcp.DefaultBool(false), mcp.Description(`Treat 'find' as a Go regex pattern instead of literal text. Set to true for flexible matching (e.g., replacing multiple similar patterns at once). When false, 'find' is matched exactly as written — no special regex characters are interpreted.`)),
+		mcp.WithBoolean("replace_all", mcp.DefaultBool(false), mcp.Description(`When false, replaces only the first occurrence of 'find'. When true, replaces ALL occurrences in the file simultaneously. Use with caution to avoid unintended changes across unrelated parts of the file.`)),
 	), t.findReplaceInFile)
 
 	s.AddTool(mcp.NewTool("block_in_file",
-		mcp.WithDescription("Replaces a multi-line block of text within a file using three golang regex anchor patterns that must appear in sequence. The tool searches the specified `path` for three lines matching the provided regular expressions in this order: first `start_block_ptn`, then `marker_ptn`, and finally `end_block_ptn`. These markers act as anchors; there can be any number of intermediate lines between them. Once found, the entire range starting from the line matching `start_block_ptn` through to the end of the line matching `end_block_ptn` is replaced by the string provided in `replace`. To be sure of accuracy all patterns must uniquely identify the block. Use full-line matching (use anchors ^ and $). If `end_block_ptn` contains EOF, reaching end-of-file counts as a match. `marker_ptn` is optional, give empty string if you want to bypass. On any error the function returns the error message"),
-		mcp.WithString("path", mcp.Required(), mcp.Description("Path to the file to modify.")),
-		mcp.WithString("start_block_ptn", mcp.Required(), mcp.Description("The regex pattern to match the start line of the block.")),
-		mcp.WithString("end_block_ptn", mcp.Required(), mcp.Description("The regex pattern to match the end line of the block.")),
-		mcp.WithString("marker_ptn", mcp.Required(), mcp.Description("The regex pattern to match in between the block.")),
-		mcp.WithString("replace", mcp.Required(), mcp.Description("The replacement string.")),
+		mcp.WithDescription(`Replaces a multi-line block of text within a file. This tool uses content anchors instead of line numbers, making it safe for iterative editing even after previous edits have shifted the file's structure.
+
+Use this tool when:
+- You need to replace, delete, or insert a specific section of code/text
+- You know unique text on both the start and end lines of the block to target
+- You want to avoid the "line number drift" problem that occurs with line-number-based tools
+
+Do NOT use this for simple single-line replacements. start_block_ptn and end_block_ptn are the same — use find_replace_in_file instead.
+
+How it works:
+
+If marker_ptn is NOT provided
+1. Find the START line matching start_block_ptn (the opening anchor)
+2. Find the END line matching end_block_ptn (the closing anchor)
+
+If marker_ptn IS PROVIDED (THE ABSOLUTE ACCURACY CASE)
+1. Match marker_ptn (an intermediate pattern, between start and end to confirm accuracy)
+2. Search START line by matching for start_block_ptn upward from the marker position. If found then
+3. Search END line by matching for end_block_ptn downward from marker position. If found then
+
+Replace everything from the START line through to (and including) the END line with 'replace'
+
+IMPORTANT: All regex patterns must use Go's regexp/syntax package syntax — NOT Perl/PCRE. Key differences:
+- NO lookahead (?=...) or lookbehind (?<=...) assertions
+- Use ^ and $ anchors for full-line matching unless you intentionally want partial-line matches
+- Patterns must uniquely identify their target lines — if multiple lines match, the tool will fail
+- IF PATTERN start_block_ptn length shorter than 5 chars will be rejected
+
+**WARNING**: If your start or end pattern could match multiple lines in the file, you MUST use
+ 'marker_ptn' to disambiguate. For example, if replacing an HTML '<section>' when there are two 
+sections, include a unique line from inside that section as the marker to ensure only the correct block is replaced.
+
+If end_block_ptn ends with EOF, reaching the end of file counts as a match (useful for appending to files).
+
+marker_ptn is optional: pass an empty string "" to skip it and only use start+end anchors.
+
+**TIP**
+- To be 100% sure, you can generate your own pattern markers
+  - Use insert_text_to_file at a line with your own text string for start
+  - repeat it for the end 
+  - Call block_in_file with your own pattern marker
+
+EXAMPLES:
+- Delete a block: find "^func oldFunction() {", end_block_ptn="^}", replace=""
+- Insert a new function after line 10: start_block_ptn="^package main$", replace="package main\n\n// New function below\nfunc newFunc() {\n\tfmt.Println(\"hi\")\n}"
+- Replace all content between two comments: start_block_ptn="// START BLOCK", marker_ptn="", end_block_ptn="// END BLOCK", replace="<new content here>"
+- Replace a function body: find "func oldFunction() {", end_block_ptn="^}$", replace=""
+   → Deletes entire function                                                                    
+- Insert a new function after package declaration: 
+   start_block_ptn="^package main$", replace="package main\n\n// New function below\nfunc newFun
+c() {\n\tfmt.Println(\"hi\")\n}"                                                                
+                                                                                                
+- Replace all content between two comments:                                                    
+   start_block_ptn="// START BLOCK", end_block_ptn="// END BLOCK", replace="<new content here>"
+`),
+		mcp.WithString("path", mcp.Required(), mcp.Description("Absolute or relative path to the file. Use '.'-based paths like './src/main.py' — never absolute system paths.")),
+		mcp.WithString("start_block_ptn", mcp.Required(), mcp.Description(`Go regex pattern for the first line of the block to replace. Must match the ENTIRE line. Use anchors: ^ and $ for full-line matching. Example: "^func main() {" or "^[ \\t]*// TODO:". NO lookahead/lookbehind — Go does not support (?=...) or (?<=...).`)),
+		mcp.WithString("end_block_ptn", mcp.Required(), mcp.Description(`Go regex pattern for the last line of the block to replace. Must match the ENTIRE line. Use anchors: ^ and $ for full-line matching. Example: "^}$" or "^[ \\t]*// END TODO$". To append content (match end-of-file), use "EOF"`)),
+		mcp.WithString("marker_ptn", mcp.Description(`Optional Go regex pattern for an intermediate line within the block. Pass "" (empty string) to skip this step and only match start+end lines. If provided, must match the ENTIRE line with ^/$ anchors. Example: "^[ \\t]*// middle marker$". NO lookahead/lookbehind — Go does not support (?=...) or (?<=...).`)),
+		mcp.WithString("replace", mcp.Required(), mcp.Description(`The replacement text. Replace will completely overwrite everything from start_block_ptn through end_block_ptn (inclusive). Use \n for newlines within the replacement string.`)),
 	), t.blockInFile)
 
 	s.AddTool(mcp.NewTool("http_request",
@@ -601,6 +679,115 @@ If the command does not return it will block you.`),
 	), t.httpRequest)
 }
 
+// InsertTextBlock inserts a chunk of text into a file at a 1-based line number.
+// Position must be "before" or "after". Pass -1 to automatically insert at the end of the file.
+func InsertTextBlock(filePath string, lineNumber int, textBlock string, position string) error {
+	// 1. Validate position input
+	position = strings.ToLower(position)
+	if position != "before" && position != "after" {
+		return fmt.Errorf("invalid position %q: must be 'before' or 'after'", position)
+	}
+
+	// 2. Open the file for reading
+	file, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to open file: %w", err)
+	}
+
+	// Read file line by line into a slice
+	var lines []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+	file.Close() // Close early before rewriting
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("failed to read file contents: %w", err)
+	}
+
+	// 3. Normalize the text block
+	textBlock = strings.TrimSuffix(textBlock, "\n")
+
+	// 4. Calculate the 0-based insertion index
+	var insertIndex int
+	if lineNumber == -1 {
+		// Explicit AI instruction to target the end of the file
+		insertIndex = len(lines)
+	} else if position == "before" {
+		insertIndex = lineNumber - 1
+	} else {
+		insertIndex = lineNumber
+	}
+
+	// 5. Bound the index safely to prevent runtime panics
+	if insertIndex < 0 {
+		insertIndex = 0
+	}
+	if insertIndex > len(lines) {
+		insertIndex = len(lines)
+	}
+
+	// 6. Perform the slice insertion
+	updatedLines := make([]string, 0, len(lines)+1)
+	updatedLines = append(updatedLines, lines[:insertIndex]...)
+	updatedLines = append(updatedLines, textBlock)
+	updatedLines = append(updatedLines, lines[insertIndex:]...)
+
+	// 7. Write the updated content back to the file
+	output, err := os.OpenFile(filePath, os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open file for writing: %w", err)
+	}
+	defer output.Close()
+
+	writer := bufio.NewWriter(output)
+	for _, line := range updatedLines {
+		if _, err := writer.WriteString(line + "\n"); err != nil {
+			return fmt.Errorf("failed to write line: %w", err)
+		}
+	}
+
+	return writer.Flush()
+}
+func (t BaseToolManager) insertTextBlockToFile(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	path := ""
+	if p, ok := args["path"]; ok {
+		path = fmt.Sprintf("%v", p)
+	}
+	startLine := 0
+	if v, ok := args["start_line"]; ok {
+		switch n := v.(type) {
+		case float64:
+			startLine = int(n)
+		case int:
+			startLine = n
+		case string:
+			switch n {
+			case "BOF":
+				startLine = 0
+			case "EOF":
+				startLine = -1
+			}
+		}
+	}
+	replace := ""
+	if r, ok := args["chunk"]; ok {
+		replace = r.(string)
+	}
+
+	cleanPath := filepath.Clean(path)
+	if res, err := t.checkPath(cleanPath); err != nil {
+		return res, err
+	}
+
+	if err := InsertTextBlock(cleanPath, startLine, replace, "before"); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return mcp.NewToolResultText("[OK]"), nil
+}
+
 func (t *BaseToolManager) blockInFile(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.GetArguments()
 	path := ""
@@ -615,9 +802,14 @@ func (t *BaseToolManager) blockInFile(_ context.Context, request mcp.CallToolReq
 	if f, ok := args["end_block_ptn"]; ok {
 		lower_bound_ptn = []string{f.(string)}
 	}
+	if len(upper_bound_ptn[0]) < 5 {
+		return mcp.NewToolResultError("[ERROR] the upper_bound_ptn regex pattern is shorter than 5"), nil
+	}
 	marker_ptn := []string{}
 	if f, ok := args["marker_ptn"]; ok {
-		marker_ptn = []string{f.(string)}
+		if v, ok1 := f.(string); ok1 && v != "" {
+			marker_ptn = []string{v}
+		}
 	}
 	replace := ""
 	if r, ok := args["replace"]; ok {
@@ -628,12 +820,21 @@ func (t *BaseToolManager) blockInFile(_ context.Context, request mcp.CallToolReq
 	if res, err := t.checkPath(cleanPath); err != nil {
 		return res, err
 	}
-	output, start, _, _ := u.BlockInFile(cleanPath, upper_bound_ptn, lower_bound_ptn, marker_ptn, replace, false, false, 0)
+	filename := filepath.Base(cleanPath)
+	backupfile := filepath.Join(filepath.Dir(cleanPath), filename+".bak")
+	defer os.RemoveAll(backupfile)
+
+	output, start, _, _ := u.BlockInFile(cleanPath, upper_bound_ptn, lower_bound_ptn, marker_ptn, replace, false, true, 0)
 
 	if start == -1 {
-		return mcp.NewToolResultText("[ERROR] " + output), nil
+		if u.FileExistsV2(backupfile) == nil {
+			if err := u.Copy(backupfile, cleanPath); err != nil {
+				return mcp.NewToolResultError("[ERROR] Hit error but we can not restore backup file. Error: " + err.Error() + "\nOriginal error: " + output), nil
+			}
+		}
+		return mcp.NewToolResultText(output), nil
 	} else {
-		return mcp.NewToolResultText("Success."), nil
+		return mcp.NewToolResultText("OK REPLACED OLD BLOCK:\n" + output), nil
 	}
 }
 

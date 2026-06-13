@@ -432,6 +432,8 @@ func loadHistory(filePath string, historyPtr *[]Message) error {
 			// appends h.History elements directly onto the new single-element slice
 			h.History = append([]Message{sysMsg}, h.History...)
 		}
+	} else {
+		fmt.Fprintln(os.Stderr, "[INFO] system file for this model "+promptfile+" not available")
 	}
 	*historyPtr = h.History
 	return nil
