@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math/rand/v2"
 	"mime"
 	"os"
 	"os/exec"
@@ -612,4 +613,56 @@ func expandHomeDir(path string) (string, error) {
 
 	// Join the home directory with everything after the "~/"
 	return filepath.Join(home, path[2:]), nil
+}
+
+// SentencePosition defines where to pull the sentence from.
+type SentencePosition string
+
+const (
+	Beginning SentencePosition = "beginning"
+	Middle    SentencePosition = "middle"
+	Last      SentencePosition = "last"
+	Random    SentencePosition = "random"
+)
+
+// GetSentence extracts a sentence from a paragraph based on the requested position.
+func GetSentence(paragraph string, pos SentencePosition) string {
+	// Split paragraph by common sentence terminators.
+	rawSentences := strings.FieldsFunc(paragraph, func(r rune) bool {
+		return r == '.' || r == '!' || r == '?'
+	})
+
+	// Clean up whitespace and filter out empty strings.
+	var sentences []string
+	for _, s := range rawSentences {
+		trimmed := strings.TrimSpace(s)
+		if trimmed != "" {
+			// Find original punctuation in the paragraph to append it back.
+			idx := strings.Index(paragraph, trimmed) + len(trimmed)
+			if idx < len(paragraph) {
+				trimmed += string(paragraph[idx])
+			}
+			sentences = append(sentences, trimmed)
+		}
+	}
+
+	// Return empty if no valid sentences are found.
+	numSentences := len(sentences)
+	if numSentences == 0 {
+		return ""
+	}
+
+	// Handle the position logic.
+	switch pos {
+	case Beginning:
+		return sentences[0]
+	case Middle:
+		return sentences[numSentences/2]
+	case Last:
+		return sentences[numSentences-1]
+	case Random:
+		return sentences[rand.IntN(numSentences)]
+	default:
+		return sentences[numSentences-1] // Default fallback to last sentence.
+	}
 }

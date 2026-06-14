@@ -55,7 +55,7 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 				// Add a firm nudge telling it to execute step 1 immediately
 				workingMsgs = append(workingMsgs, Message{
 					Role:    "user",
-					Content: "continue.",
+					Content: "continue. If completed replied with string 'Task completed'",
 				})
 				continue
 			default:
@@ -66,7 +66,8 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 		// --- 🛌 THE LAZY MODEL AUTO-NUDGE TRAP HAHA ---
 		// If it chose to "stop" naturally, but left you with ZERO tools and ZERO text
 		// after doing a bunch of thinking, it's being lazy. Wake it up!
-		if !strings.Contains(content, "Task completed") && (repeatedPatternCount > config.MaxRepeatPattern || strings.Contains(content, "</think>") || strings.Contains(content, "Let me start by")) {
+		lastSentence := GetSentence(content, Last)
+		if !strings.Contains(content, "Task completed") && (repeatedPatternCount > config.MaxRepeatPattern || strings.Contains(content, "</think>") || strings.Contains(lastSentence, "Let me start by") || strings.Contains(lastSentence, "Let me fix this")) {
 			repeatedPatternCount = 0
 			fmt.Println("\n> ⚡ [System Nudge]: AI went to loop. Forcing execution in 5 secs...")
 			time.Sleep(5 * time.Second)
