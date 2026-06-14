@@ -483,8 +483,9 @@ func loadConfig() *Config {
 	}
 
 	ctxOversizeStr := u.Getenv("CTX_OVERSIZE", "2")
-	if _ov, err := strconv.Atoi(ctxOversizeStr); err == nil {
-		c.CtxOverSizeAllowed = _ov * c.ContextLimit
+	if _ov, err := strconv.ParseFloat(ctxOversizeStr, 32); err == nil {
+		fmt.Fprintf(os.Stderr, "[INFO] cxt oversize multiply factor: %d\n", _ov)
+		c.CtxOverSizeAllowed = int(_ov * float64(c.ContextLimit))
 	}
 
 	if c.BaseURL == "" {
