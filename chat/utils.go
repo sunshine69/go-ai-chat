@@ -481,6 +481,11 @@ func loadConfig() *Config {
 		}
 	}
 
+	ctxOversizeStr := u.Getenv("CTX_OVERSIZE", "2")
+	if _ov, err := strconv.Atoi(ctxOversizeStr); err == nil {
+		c.CtxOverSizeAllowed = _ov * c.ContextLimit
+	}
+
 	if c.BaseURL == "" {
 		c.BaseURL = "https://api.openai.com/v1/chat/completions"
 	}

@@ -25,6 +25,7 @@ type Config struct {
 	MCPPermissions      map[string]string
 	ShowThinking        bool
 	ContextLimit        int    // max estimated tokens before trimming; 0 = disabled
+	CtxOverSizeAllowed  int    // Within one turn, ctx may reach that number. If not set (0) then it is 2 * ContextLimit. Should be greater - this to serve as a burst in one session to allow ai has complete info during one turn.
 	BlockedTools        string // coma sep of tools name we dont want AI to see and use
 	MaxTokens           int
 	MaxRepeatPattern    int

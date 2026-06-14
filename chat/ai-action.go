@@ -22,14 +22,13 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 	var accumulatedContent strings.Builder
 	var accumulatedThinking strings.Builder
 	foundAndExecToolCall := false
-	ctxOverSizeAllowed := config.ContextLimit * 2
 	repeatedPatternCount = 0
 
 	for {
 		currentEstToken := estimateTokens(workingMsgs)
 		// If we found tools call we dont check the context to avoid losing information
 		// but it still needs to be smaller than ctxOverSizeAllowed.
-		if config.ContextLimit > 0 && (!foundAndExecToolCall || currentEstToken >= ctxOverSizeAllowed) {
+		if config.ContextLimit > 0 && (!foundAndExecToolCall || currentEstToken >= config.CtxOverSizeAllowed) {
 			if currentEstToken >= config.ContextLimit {
 				fmt.Printf("📊 Context size: ~%d tokens (limit: %d)\n", estimateTokens(workingMsgs), config.ContextLimit)
 				workingMsgs = trimContext(ctx, config, workingMsgs)
