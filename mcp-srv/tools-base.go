@@ -492,7 +492,7 @@ func registerBaseTool(s *server.MCPServer, t *BaseToolManager) {
 	Use when you know the exact line numbers from a previous text_head / text_section /	read_file output.
 	Use 0 to insert at the beggining, and -1 or EOF to insert at the end of file.`),
 		mcp.WithString("path", mcp.Required(), mcp.Description("Path to the file to modify.")),
-		mcp.WithInteger("start_line", mcp.Required(), mcp.Description("First line to replace (1-based, inclusive).")),
+		mcp.WithInteger("before_line", mcp.Required(), mcp.Description("First line to insert the code bfore it (1-based).")),
 		mcp.WithString("chunk", mcp.Required(), mcp.Description("Chunk of text to insert.")),
 	), t.insertTextBlockToFile)
 
@@ -576,14 +576,12 @@ If the command does not return it will block you.`),
 	), t.fileGlobSearch)
 
 	s.AddTool(mcp.NewTool("find_replace_in_file",
-		mcp.WithDescription(`Finds and replaces text within a file using either literal string matching or Go regex pattern matching. This is the go-to tool for most in-place edits — use it before reaching for block_in_file unless you specifically need multi-line anchor precision.
+		mcp.WithDescription(`Finds and replaces text within a file using either literal string matching or Go regex pattern matching. This is the go-to tool for most in-place edits — use it before reaching for create_new_file to save time.
 
 Use this tool when:
 - You need to replace specific content (single-line or multi-line) without defining start/end anchors
 - The replacement can be expressed as a single find/replace pair (even if using regex groups)
 - You want simple, predictable behavior for common edits
-
-Do NOT use block_in_file for this — prefer find_replace_in_file unless you need surgical anchor-based precision.
 
 IMPORTANT: When use_regex=true, all patterns must use Go's regexp/syntax package syntax — NOT Perl/PCRE. Key differences:
 - NO lookahead (?=...) or lookbehind (?<=...) assertions
@@ -729,7 +727,7 @@ func (t BaseToolManager) insertTextBlockToFile(_ context.Context, request mcp.Ca
 		path = fmt.Sprintf("%v", p)
 	}
 	startLine := 0
-	if v, ok := args["start_line"]; ok {
+	if v, ok := args["before_line"]; ok {
 		switch n := v.(type) {
 		case float64:
 			startLine = int(n)
