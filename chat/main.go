@@ -437,7 +437,9 @@ func loadHistory(filePath string, historyPtr *[]Message) error {
 	if err := json.Unmarshal(data, &h); err != nil {
 		return err
 	}
-	h.History = append([]Message{*loadSystemMsg(config.Model)}, h.History...)
+	_h := []Message{*loadSystemMsg(config.Model)}
+	_h = append(_h, h.History[1:]...)
+	h.History = append(_h, h.History[1:]...)
 	*historyPtr = h.History
 	return nil
 }
