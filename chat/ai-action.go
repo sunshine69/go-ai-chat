@@ -67,7 +67,7 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 		// If it chose to "stop" naturally, but left you with ZERO tools and ZERO text
 		// after doing a bunch of thinking, it's being lazy. Wake it up!
 		lastSentence := GetSentence(content, Last)
-		if !strings.Contains(content, "Task completed") && (repeatedPatternCount > config.MaxRepeatPattern || strings.Contains(content, "</think>") || strings.Contains(lastSentence, "Let me start by") || strings.Contains(lastSentence, "Let me fix this")) {
+		if !strings.Contains(content, "Task completed") && (repeatedPatternCount > config.MaxRepeatPattern || strings.Contains(content, "</think>") || strings.Contains(lastSentence, "Let me")) {
 			repeatedPatternCount = 0
 			fmt.Println("\n> ⚡ [System Nudge]: AI went to loop. Forcing execution in 5 secs...")
 			time.Sleep(5 * time.Second)
