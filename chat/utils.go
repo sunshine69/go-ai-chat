@@ -627,12 +627,16 @@ const (
 )
 
 // GetSentence extracts a sentence from a paragraph based on the requested position.
-func GetSentence(paragraph string, pos SentencePosition) string {
+func GetSentence[P SentencePosition | int](paragraph string, pos P, oldSentences ...[]string) (string, int) {
 	// Split paragraph by common sentence terminators.
-	rawSentences := strings.FieldsFunc(paragraph, func(r rune) bool {
-		return r == '.' || r == '!' || r == '?'
-	})
-
+	var rawSentences []string
+	if len(oldSentences) > 1 {
+		rawSentences = oldSentences[0]
+	} else {
+		rawSentences = strings.FieldsFunc(paragraph, func(r rune) bool {
+			return r == '.' || r == '!' || r == '?'
+		})
+	}
 	// Clean up whitespace and filter out empty strings.
 	var sentences []string
 	for _, s := range rawSentences {
@@ -650,20 +654,34 @@ func GetSentence(paragraph string, pos SentencePosition) string {
 	// Return empty if no valid sentences are found.
 	numSentences := len(sentences)
 	if numSentences == 0 {
-		return ""
+		return "", numSentences
 	}
 
-	// Handle the position logic.
-	switch pos {
-	case Beginning:
-		return sentences[0]
-	case Middle:
-		return sentences[numSentences/2]
-	case Last:
-		return sentences[numSentences-1]
-	case Random:
-		return sentences[rand.IntN(numSentences)]
+	var index int
+	switch v := any(pos).(type) {
+	case SentencePosition:
+		switch v {
+		case Beginning:
+			index = 0
+		case Middle:
+			index = numSentences / 2
+		case Last:
+			index = numSentences - 1
+		case Random:
+			index = rand.IntN(numSentences)
+		default:
+			index = numSentences - 1 // Default fallback to last sentence.
+		}
+	case int:
+		if v < numSentences && v >= 0 {
+			index = v
+		} else {
+			fmt.Fprintf(os.Stderr, "[WARN] index value out of range. Set to the last sentence %v\n", v)
+			index = numSentences - 1
+		}
 	default:
-		return sentences[numSentences-1] // Default fallback to last sentence.
+		fmt.Fprintf(os.Stderr, "[ERROR] wrong type for %v\n", pos)
+		return "", numSentences
 	}
+	return sentences[index], numSentences
 }
