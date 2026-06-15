@@ -21,6 +21,12 @@ import (
 	u "github.com/sunshine69/golang-tools/utils"
 )
 
+// Qwen response this and stop!
+var aiRestResponsePtn = regexp.MustCompile(`Now I need to|I can|Let me|\<\/think\>`)
+
+// gemma4 when stuck READY!!!!! CALLING!!!!!!!!!!!!!!!!!!!!!!!!!!!!! DONE!!!!!!!!!
+var aiThoughtBecomeMentalPtn = regexp.MustCompile(`([\!]{4,})`)
+
 func loadDotEnv() {
 	fmt.Fprintf(os.Stderr, "Loading config from homeDir: %s\n", homeDir)
 	homeEnv, _ := godotenv.Read(homeDir + "/.aigdotenv")
@@ -625,6 +631,67 @@ const (
 	Last      SentencePosition = "last"
 	Random    SentencePosition = "random"
 )
+
+// getSentencesAtPosition splits the input text into sentences and returns the ones at the given positions.
+// Position can be:
+//   - A single 0-based index (e.g., "0", "5") → returns that one sentence
+//   - Comma-separated indices (e.g., "1,3" or "-1,-2") → returns those specific sentences
+//   - "-1" → returns the last sentence; "-2" → second-to-last, etc.
+//   - "rand" → returns a random sentence from the text
+func getSentencesAtPosition(text string, position string) ([]string, error) {
+	// Split into sentences: split on ". ", "! ", "? " or end-of-string followed by punctuation.
+	re := regexp.MustCompile(`(?s)([^.!?]+[.!?])\s*`)
+	matches := re.FindAllStringSubmatch(text, -1)
+
+	var sentences []string
+	for _, m := range matches {
+		s := strings.TrimSpace(m[1])
+		if len(s) > 0 {
+			sentences = append(sentences, s)
+		}
+	}
+
+	if len(sentences) == 0 {
+		return []string{}, fmt.Errorf("no sentences found in text")
+	}
+
+	pos := strings.TrimSpace(position)
+
+	// "rand" → random sentence
+	if pos == "rand" {
+		idx := rand.IntN(len(sentences))
+		return []string{sentences[idx]}, nil
+	}
+
+	// Parse positions (supports comma-separated list like "1,3" or "-1,-2")
+	var indices []int
+	for _, part := range strings.Split(pos, ",") {
+		p := strings.TrimSpace(part)
+		idx, err := strconv.Atoi(p)
+		if err != nil {
+			return []string{}, fmt.Errorf("invalid position %q: %w", p, err)
+		}
+
+		var actualIdx int
+		if idx < 0 {
+			actualIdx = len(sentences) + idx
+			if actualIdx < 0 || actualIdx >= len(sentences) {
+				return []string{}, fmt.Errorf("position %d out of range (text has %d sentences)", idx, len(sentences))
+			}
+		} else if idx >= len(sentences) {
+			return []string{}, fmt.Errorf("position %d out of range (text has %d sentences)", idx, len(sentences))
+		} else {
+			actualIdx = idx
+		}
+		indices = append(indices, actualIdx)
+	}
+
+	var result []string
+	for _, i := range indices {
+		result = append(result, sentences[i])
+	}
+	return result, nil
+}
 
 // GetSentence extracts a sentence from a paragraph based on the requested position.
 func GetSentence[P SentencePosition | int](paragraph string, pos P, oldSentences ...[]string) (string, int) {

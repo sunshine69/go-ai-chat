@@ -1,12 +1,8 @@
 package main
 
 import (
-	"regexp"
 	"time"
 )
-
-// Qwen response this and stop!
-var aiRestResponsePatern = regexp.MustCompile(`Now I need to|I can|Let me|\<\/think\>`)
 
 // https://github.com/hymkor/go-multiline-ny for multiline support TODO
 type Config struct {

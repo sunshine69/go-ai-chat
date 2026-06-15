@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -75,7 +77,6 @@ const mcpVersion = "2024-11-05"
 // =============================================================================
 // Resource helpers (walks ./aidocs/ and registers .md files)
 // =============================================================================
-
 func registerDirectoryResources(dirPath, description string) ([]Resource, error) {
 	cleanDir := filepath.Clean(dirPath)
 	if _, err := os.Stat(cleanDir); os.IsNotExist(err) {

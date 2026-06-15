@@ -44,67 +44,54 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 				accumulatedThinking.WriteString(thinking)
 			}
 		}
+		var remindAiFunc = func(msg string) {
+			collectContentAndThink()
+			workingMsgs = append(workingMsgs, Message{
+				Role:    "assistant",
+				Content: thinking,
+			})
+			// Add a firm nudge telling it to execute step 1 immediately
+			workingMsgs = append(workingMsgs, Message{
+				Role:    "user",
+				Content: msg,
+			})
+		}
 		if err != nil {
-			switch {
-			case err.Error() == "STREAM CUTOFF DETECTED" && ctx.Err() == nil:
-				collectContentAndThink()
-				workingMsgs = append(workingMsgs, Message{
-					Role:    "assistant",
-					Content: thinking,
-				})
-				// Add a firm nudge telling it to execute step 1 immediately
-				workingMsgs = append(workingMsgs, Message{
-					Role:    "user",
-					Content: "continue. If completed replied with string 'Task completed'",
-				})
-				continue
-			default:
-				return accumulatedContent.String() + content, accumulatedThinking.String() + thinking, workingMsgs, err
+			errMsg := err.Error()
+			if ctx.Err() == nil {
+				switch errMsg {
+				case "STREAM CUTOFF DETECTED", "AI HAS BECOME MENTAL":
+					remindAiFunc("continue. If completed replied with string 'Task completed'")
+					continue
+				case "AI HAS STUCK LOOP":
+					if repeatedPatternCount > config.MaxRepeatPattern {
+						repeatedPatternCount = 0
+						remindAiFunc("continue. You got into thinking LOOP. Get it out and TRY something else!")
+					}
+					continue
+				default:
+					return accumulatedContent.String() + content, accumulatedThinking.String() + thinking, workingMsgs, err
+				}
 			}
+			return accumulatedContent.String() + content, accumulatedThinking.String() + thinking, workingMsgs, err
 		}
 		collectContentAndThink()
 		// --- 🛌 THE LAZY MODEL AUTO-NUDGE TRAP HAHA ---
 		// If it chose to "stop" naturally, but left you with ZERO tools and ZERO text
 		// after doing a bunch of thinking, it's being lazy. Wake it up!
-		sentences := []string{}
-		lastSentence, sen_len := GetSentence(content, Last, sentences)
-		nextLast, _ := GetSentence(content, sen_len-2, sentences)
-		if len(toolCalls) == 0 && !strings.Contains(content, "Task completed") && (repeatedPatternCount > config.MaxRepeatPattern || strings.Contains(content, "</think>") || strings.Contains(nextLast+". "+lastSentence, "Let me")) {
-			repeatedPatternCount = 0
+
+		sentences, _ := getSentencesAtPosition(content, "-2,-1")
+		if len(toolCalls) == 0 && !strings.Contains(content, "Task completed") && strings.Contains(content, "</think>") || strings.Contains(strings.Join(sentences, " "), "Let me") {
 			fmt.Println("\n> ⚡ [System Nudge]: LOOP - Forcing execution in 5 secs...")
 			time.Sleep(5 * time.Second)
-			// Save its thoughts into the history so it doesn't forget the plan
-			workingMsgs = append(workingMsgs, Message{
-				Role:    "assistant",
-				Content: thinking,
-			})
-
-			// Add a firm nudge telling it to execute step 1 immediately
-			workingMsgs = append(workingMsgs, Message{
-				Role:    "user",
-				Content: "You need to STOP and CHANGE thought to get out of loop. START action.",
-			})
-			// Loop right back up to force it to talk again!
+			remindAiFunc("You need to STOP and CHANGE thought to get out of loop. START action.")
 			continue
 		}
 		// content too short (less than 3 lines ~ 300) is also a sign of drop
 		if ctx.Err() == nil && !strings.Contains(content, "Task completed") && !strings.Contains(content, "has been successfully") && len(toolCalls) == 0 && (len(content) < 600 && thinking != "") {
 			fmt.Println("\n> ⚡ [System Nudge]: SLEEP after planning. Forcing execution in 5 secs...")
 			time.Sleep(5 * time.Second)
-
-			// Save its thoughts into the history so it doesn't forget the plan
-			workingMsgs = append(workingMsgs, Message{
-				Role:    "assistant",
-				Content: thinking,
-			})
-
-			// Add a firm nudge telling it to execute step 1 immediately
-			workingMsgs = append(workingMsgs, Message{
-				Role:    "user",
-				Content: "Continue. If completed replied with string 'Task completed'",
-			})
-
-			// Loop right back up to force it to talk again!
+			remindAiFunc("Continue. If completed replied with string 'Task completed'")
 			continue
 		}
 		// No tool calls — we're done
@@ -325,11 +312,11 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 			thinkingContent.WriteString(rc)
 			rawTextBuffer.WriteString(rc)
 
-			if aiRestResponsePatern.MatchString(rc) {
+			if aiRestResponsePtn.MatchString(rc) {
 				repeatedPatternCount++
 			}
 			if repeatedPatternCount > config.MaxRepeatPattern {
-				break
+				return fullContent.String(), thinkingContent.String(), []ToolCall{}, fmt.Errorf("AI HAS STUCK LOOP")
 			}
 			// Check if a raw text XML tool block has completed its declaration
 			if strings.Contains(rawTextBuffer.String(), "</tool_call>") {
@@ -356,6 +343,9 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 			tokenCount := len(strings.Fields(rc))
 			globalStats.TokenArrived(tokenCount)
 
+			if aiThoughtBecomeMentalPtn.MatchString(rc) {
+				return fullContent.String(), thinkingContent.String(), []ToolCall{}, fmt.Errorf("AI HAS BECOME MENTAL")
+			}
 			if config.ShowThinking {
 				if !thinkingStarted {
 					fmt.Print("\n> 🤔 Thinking...\n")
@@ -391,7 +381,7 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 			fmt.Print(delta.Content)
 			os.Stdout.Sync()
 
-			if aiRestResponsePatern.MatchString(delta.Content) {
+			if aiRestResponsePtn.MatchString(delta.Content) {
 				repeatedPatternCount++
 			}
 			if repeatedPatternCount > config.MaxRepeatPattern {
