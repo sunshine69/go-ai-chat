@@ -69,9 +69,9 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 		sentences := []string{}
 		lastSentence, sen_len := GetSentence(content, Last, sentences)
 		nextLast, _ := GetSentence(content, sen_len-2, sentences)
-		if !strings.Contains(content, "Task completed") && (repeatedPatternCount > config.MaxRepeatPattern || strings.Contains(content, "</think>") || strings.Contains(nextLast+". "+lastSentence, "Let me")) {
+		if len(toolCalls) == 0 && !strings.Contains(content, "Task completed") && (repeatedPatternCount > config.MaxRepeatPattern || strings.Contains(content, "</think>") || strings.Contains(nextLast+". "+lastSentence, "Let me")) {
 			repeatedPatternCount = 0
-			fmt.Println("\n> ⚡ [System Nudge]: AI went to loop. Forcing execution in 5 secs...")
+			fmt.Println("\n> ⚡ [System Nudge]: LOOP - Forcing execution in 5 secs...")
 			time.Sleep(5 * time.Second)
 			// Save its thoughts into the history so it doesn't forget the plan
 			workingMsgs = append(workingMsgs, Message{
@@ -89,7 +89,7 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 		}
 		// content too short (less than 3 lines ~ 300) is also a sign of drop
 		if ctx.Err() == nil && !strings.Contains(content, "Task completed") && !strings.Contains(content, "has been successfully") && len(toolCalls) == 0 && (len(content) < 600 && thinking != "") {
-			fmt.Println("\n> ⚡ [System Nudge]: AI went to sleep after planning. Forcing execution in 5 secs...")
+			fmt.Println("\n> ⚡ [System Nudge]: SLEEP after planning. Forcing execution in 5 secs...")
 			time.Sleep(5 * time.Second)
 
 			// Save its thoughts into the history so it doesn't forget the plan
