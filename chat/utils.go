@@ -27,6 +27,9 @@ var aiRestResponsePtn = regexp.MustCompile(`Now I need to|I can|Let me|\<\/think
 // gemma4 when stuck READY!!!!! CALLING!!!!!!!!!!!!!!!!!!!!!!!!!!!!! DONE!!!!!!!!!
 var aiThoughtBecomeMentalPtn = regexp.MustCompile(`([\!]{4,})`)
 
+var randomSentenceCount = 0
+var randomSentence = ""
+
 func loadDotEnv() {
 	fmt.Fprintf(os.Stderr, "Loading config from homeDir: %s\n", homeDir)
 	homeEnv, _ := godotenv.Read(homeDir + "/.aigdotenv")

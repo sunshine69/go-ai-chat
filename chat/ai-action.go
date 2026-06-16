@@ -87,6 +87,16 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 			remindAiFunc("You need to STOP and CHANGE thought to get out of loop. START action.")
 			continue
 		}
+		// Thinking loop
+		if randomSentenceCount > config.MaxRepeatPattern {
+			randomSentence = ""
+			randomSentenceCount = 0
+			fmt.Fprintf(os.Stderr, "\n> ⚡ [System Nudge]: Repeated one sentence %s. Forcing execution in 5 secs...\n", randomSentence)
+			time.Sleep(5 * time.Second)
+			remindAiFunc("You repeat loop. GET OUT OF LOOP, TRYING SOMETHING ELSE.")
+			continue
+		}
+
 		// content too short (less than 3 lines ~ 300) is also a sign of drop
 		if ctx.Err() == nil && !strings.Contains(content, "Task completed") && !strings.Contains(content, "has been successfully") && len(toolCalls) == 0 && (len(content) < 600 && thinking != "") {
 			fmt.Println("\n> ⚡ [System Nudge]: SLEEP after planning. Forcing execution in 5 secs...")
@@ -312,10 +322,28 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 			thinkingContent.WriteString(rc)
 			rawTextBuffer.WriteString(rc)
 
-			if aiRestResponsePtn.MatchString(rc) {
+			for _, s := range []string{"Let me do this now", "I've been going in circles", "You're right - I need to stop analyzing and start making changes"} {
+				if strings.Contains(fullContent.String(), s) {
+					return fullContent.String(), thinkingContent.String(), []ToolCall{}, fmt.Errorf("AI HAS STUCK LOOP")
+				}
+			}
+			if aiRestResponsePtn.MatchString(fullContent.String()) {
 				repeatedPatternCount++
 			}
+			if randomSentence == "" {
+				randomSentences, _ := getSentencesAtPosition(fullContent.String(), "rand")
+				if len(randomSentences) > 0 {
+					randomSentence = randomSentences[0]
+				}
+			} else {
+				if strings.Contains(fullContent.String(), randomSentence) {
+					randomSentenceCount++
+				}
+			}
 			if repeatedPatternCount > config.MaxRepeatPattern {
+				return fullContent.String(), thinkingContent.String(), []ToolCall{}, fmt.Errorf("AI HAS STUCK LOOP")
+			}
+			if randomSentenceCount > config.MaxRepeatPattern {
 				return fullContent.String(), thinkingContent.String(), []ToolCall{}, fmt.Errorf("AI HAS STUCK LOOP")
 			}
 			// Check if a raw text XML tool block has completed its declaration
