@@ -327,24 +327,26 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 					return fullContent.String(), thinkingContent.String(), []ToolCall{}, fmt.Errorf("AI HAS STUCK LOOP")
 				}
 			}
-			if aiRestResponsePtn.MatchString(fullContent.String()) {
-				repeatedPatternCount++
-			}
-			if randomSentence == "" {
-				randomSentences, _ := getSentencesAtPosition(fullContent.String(), "rand")
-				if len(randomSentences) > 0 {
-					randomSentence = randomSentences[0]
+			if len(fullContent.String()) > 600 { // Only collect if this is is large enough to form a paragraph
+				if aiRestResponsePtn.MatchString(fullContent.String()) {
+					repeatedPatternCount++
 				}
-			} else {
-				if strings.Contains(fullContent.String(), randomSentence) {
-					randomSentenceCount++
+				if randomSentence == "" { // looks like first sentence in a para. is most repeated
+					randomSentences, _ := getSentencesAtPosition(fullContent.String(), "0")
+					if len(randomSentences) > 0 {
+						randomSentence = randomSentences[0]
+					}
+				} else {
+					if strings.Contains(fullContent.String(), randomSentence) {
+						randomSentenceCount++
+					}
 				}
-			}
-			if repeatedPatternCount > config.MaxRepeatPattern {
-				return fullContent.String(), thinkingContent.String(), []ToolCall{}, fmt.Errorf("AI HAS STUCK LOOP")
-			}
-			if randomSentenceCount > config.MaxRepeatPattern {
-				return fullContent.String(), thinkingContent.String(), []ToolCall{}, fmt.Errorf("AI HAS STUCK LOOP")
+				if repeatedPatternCount > config.MaxRepeatPattern {
+					return fullContent.String(), thinkingContent.String(), []ToolCall{}, fmt.Errorf("AI HAS STUCK LOOP")
+				}
+				if randomSentenceCount > config.MaxRepeatPattern {
+					return fullContent.String(), thinkingContent.String(), []ToolCall{}, fmt.Errorf("AI HAS STUCK LOOP")
+				}
 			}
 			// Check if a raw text XML tool block has completed its declaration
 			if strings.Contains(rawTextBuffer.String(), "</tool_call>") {
