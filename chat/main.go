@@ -858,6 +858,7 @@ func handleCommand(text string, history *[]Message) {
 		fmt.Println("  /ctx <N>|off                  - Set context token limit (auto-trim when exceeded)")
 		fmt.Println("  /maxtoken <N>                 - Set max tokens in payload.")
 		fmt.Println("  /trimctx <idx|range>          - Remove messages at index or range (e.g. 3-5, -1--3)")
+		fmt.Println("  /autonudgedisabled <on|off>    - Disable the auto nudge feature")
 		fmt.Println("  /configdir <newdir>           - Switch config directory (.aigdotenv and .aig/). If run from from start add prefix dir:// so we dont treat the / as next command. eg. aig /n /configdir dir:///home/user/aig1 /repl - Within a session it is not required. ~ will be expanded into home dir")
 		fmt.Println()
 		fmt.Printf("Curl mode: using curl http://localhost:%d as base for these below cmds\n", statServerPort)
@@ -1138,7 +1139,8 @@ func handleCommand(text string, history *[]Message) {
 		fmt.Printf("✅ Config directory switched to: %s\n", homeDir)
 	case "/maxtoken":
 		if arg == "" {
-			panic("Usage: /maxtoken <int>")
+			fmt.Fprintln(os.Stderr, "Usage: /maxtoken <int>")
+			return
 		}
 		if maxtok, err := strconv.Atoi(arg); err != nil {
 			fmt.Fprintf(os.Stderr, "Can not parse int: %s\n", err.Error())
@@ -1149,7 +1151,18 @@ func handleCommand(text string, history *[]Message) {
 			fmt.Fprintf(os.Stderr, "Maxtokens set to: %d\n", config.MaxTokens)
 			saveConfig()
 		}
-
+	case "/autonudgedisabled":
+		if arg == "" {
+			fmt.Fprintln(os.Stderr, "Usage: /maxtoken <int>")
+		}
+		switch arg {
+		case "on":
+			fmt.Fprintln(os.Stderr, "Disable autonudge")
+			config.AutoNudgeDisabled = true
+		default:
+			fmt.Fprintln(os.Stderr, "Enable autonudge")
+			config.AutoNudgeDisabled = false
+		}
 	default:
 		fmt.Printf("Unknown command: %s\n", cmd)
 	}

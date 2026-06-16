@@ -324,7 +324,9 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 
 			for _, s := range []string{"Let me do this now", "I've been going in circles", "You're right - I need to stop analyzing and start making changes"} {
 				if strings.Contains(fullContent.String(), s) {
-					return fullContent.String(), thinkingContent.String(), []ToolCall{}, fmt.Errorf("AI HAS STUCK LOOP")
+					if !config.AutoNudgeDisabled {
+						return fullContent.String(), thinkingContent.String(), []ToolCall{}, fmt.Errorf("AI HAS STUCK LOOP")
+					}
 				}
 			}
 			if len(fullContent.String()) > 600 { // Only collect if this is is large enough to form a paragraph
@@ -342,10 +344,14 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 					}
 				}
 				if repeatedPatternCount > config.MaxRepeatPattern {
-					return fullContent.String(), thinkingContent.String(), []ToolCall{}, fmt.Errorf("AI HAS STUCK LOOP")
+					if !config.AutoNudgeDisabled {
+						return fullContent.String(), thinkingContent.String(), []ToolCall{}, fmt.Errorf("AI HAS STUCK LOOP")
+					}
 				}
 				if randomSentenceCount > config.MaxRepeatPattern {
-					return fullContent.String(), thinkingContent.String(), []ToolCall{}, fmt.Errorf("AI HAS STUCK LOOP")
+					if !config.AutoNudgeDisabled {
+						return fullContent.String(), thinkingContent.String(), []ToolCall{}, fmt.Errorf("AI HAS STUCK LOOP")
+					}
 				}
 			}
 			// Check if a raw text XML tool block has completed its declaration
@@ -374,7 +380,9 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 			globalStats.TokenArrived(tokenCount)
 
 			if aiThoughtBecomeMentalPtn.MatchString(rc) {
-				return fullContent.String(), thinkingContent.String(), []ToolCall{}, fmt.Errorf("AI HAS BECOME MENTAL")
+				if !config.AutoNudgeDisabled {
+					return fullContent.String(), thinkingContent.String(), []ToolCall{}, fmt.Errorf("AI HAS BECOME MENTAL")
+				}
 			}
 			if config.ShowThinking {
 				if !thinkingStarted {
@@ -417,7 +425,6 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 			if repeatedPatternCount > config.MaxRepeatPattern {
 				break
 			}
-
 			continue
 		}
 

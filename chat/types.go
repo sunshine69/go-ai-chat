@@ -25,6 +25,7 @@ type Config struct {
 	BlockedTools        string // coma sep of tools name we dont want AI to see and use
 	MaxTokens           int
 	MaxRepeatPattern    int
+	AutoNudgeDisabled   bool
 }
 
 type Message struct {
