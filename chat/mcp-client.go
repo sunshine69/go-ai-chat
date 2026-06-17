@@ -135,7 +135,7 @@ func (s *sseReadWriteCloser) Write(p []byte) (int, error) {
 // no persistent SSE stream is needed. This is what llama-server and newer MCP
 // clients expect at a single endpoint like /mcp.
 func ConnectStreamableHTTP(url string) (*MCPClient, error) {
-	fmt.Printf("[DEBUG] ConnectStreamableHTTP called: %s\n", url)
+	fmt.Fprintf(os.Stderr, "[DEBUG] ConnectStreamableHTTP called: %s\n", url)
 	c := &MCPClient{
 		isStreamableHTTP: true,
 		postURL:          url,
@@ -569,17 +569,17 @@ func (r *ResilientMCPClient) reconnect() error {
 	if r.inner != nil {
 		r.inner.Close()
 	}
-	fmt.Println("🔄 MCP server died — reconnecting…")
+	fmt.Fprintln(os.Stderr, "🔄 MCP server died — reconnecting…")
 	var lastErr error
 	for attempt := 1; attempt <= r.maxRetry; attempt++ {
 		c, err := ConnectStdio(r.parts)
 		if err == nil {
 			r.inner = c
-			fmt.Printf("✅ MCP reconnected (attempt %d)\n", attempt)
+			fmt.Fprintf(os.Stderr, "✅ MCP reconnected (attempt %d)\n", attempt)
 			return nil
 		}
 		lastErr = err
-		fmt.Printf("   ⚠️  attempt %d/%d failed: %v\n", attempt, r.maxRetry, err)
+		fmt.Fprintf(os.Stderr, "   ⚠️  attempt %d/%d failed: %v\n", attempt, r.maxRetry, err)
 		time.Sleep(r.backoff * time.Duration(attempt))
 	}
 	return fmt.Errorf("could not reconnect after %d attempts: %w", r.maxRetry, lastErr)

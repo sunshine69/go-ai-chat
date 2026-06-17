@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"sync/atomic"
 	"time"
 )
@@ -109,11 +110,11 @@ func StartStatsServer(port int) {
 	})
 
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	fmt.Printf("📡 Stats server listening on http://%s/stats\n", addr)
+	fmt.Fprintf(os.Stderr, "📡 Stats server listening on http://%s/stats\n", addr)
 
 	go func() {
 		if err := http.ListenAndServe(addr, mux); err != nil {
-			fmt.Printf("⚠️  Stats server error: %v. Change the port if it is not available using env var STAT_SERVER_PORT\n", err)
+			fmt.Fprintf(os.Stderr, "⚠️  Stats server error: %v. Change the port if it is not available using env var STAT_SERVER_PORT\n", err)
 		}
 	}()
 }

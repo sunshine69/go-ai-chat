@@ -252,5 +252,5 @@ func sendError(id interface{}, code int, msg string) {
 
 func write(v interface{}) {
 	b, _ := json.Marshal(v)
-	fmt.Println(string(b))
+	fmt.Fprintln(os.Stderr, string(b))
 }

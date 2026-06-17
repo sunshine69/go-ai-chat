@@ -35,10 +35,10 @@ func extractInlineFiles(text string) (cleanText string, fileParts []ContentPart)
 			path := strings.TrimPrefix(w, "file://")
 			parts, err := processFile(path)
 			if err != nil {
-				fmt.Printf("⚠️  Could not load file %s: %v\n", path, err)
+				fmt.Fprintf(os.Stderr, "⚠️  Could not load file %s: %v\n", path, err)
 				kept = append(kept, w)
 			} else {
-				fmt.Printf("📎 Loaded inline file: %s\n", path)
+				fmt.Fprintf(os.Stderr, "📎 Loaded inline file: %s\n", path)
 				fileParts = append(fileParts, parts...)
 			}
 		} else {
@@ -120,7 +120,7 @@ func main() {
 		if err := loadHistory(latestPath, &history); err == nil {
 			currentContextPath = latestPath
 			historyLoaded = true
-			fmt.Printf("🔄 Resumed context: %s\n", filepath.Base(latestPath))
+			fmt.Fprintf(os.Stderr, "🔄 Resumed context: %s\n", filepath.Base(latestPath))
 		} else {
 			fmt.Fprintf(os.Stderr, "Warning: Could not load context: %v\n", err)
 		}
@@ -129,21 +129,22 @@ func main() {
 	runMode := ""
 	if len(os.Args) == 1 {
 		// Standard REPL Mode
-		fmt.Println("AI Chat CLI - REPL Mode")
-		fmt.Println("Commands: /new, /add <file>, /r <cmd>, /exit, /history, /m <model>, /url <url> /list, /del <context>, /use <context>, /timeout <dur>, /mcp <spec>, /mcpfunc <func-name> <perm>")
-		fmt.Println("Use ↑/↓ to navigate history; Ctrl-R to search; type /h to see all.")
-		fmt.Println("Inline file attachment: include file://<path> anywhere in your message.")
-		fmt.Println("----------------------------------------")
+		fmt.Fprintln(os.Stderr, "AI Chat CLI - REPL Mode")
+		fmt.Fprintln(os.Stderr, "Commands: /new, /add <file>, /r <cmd>, /exit, /history, /m <model>, /url <url> /list, /del <context>, /use <context>, /timeout <dur>, /mcp <spec>, /mcpfunc <func-name> <perm>")
+		fmt.Fprintln(os.Stderr, "Use ↑/↓ to navigate history; Ctrl-R to search; type /h to see all.")
+		fmt.Fprintln(os.Stderr, "Inline file attachment: include file://<path> anywhere in your message.")
+		fmt.Fprintln(os.Stderr, "----------------------------------------")
 		if historyLoaded {
-			fmt.Printf("Loaded %d messages from previous session.\n", len(history)/2)
-			fmt.Println("Type /new to start fresh if desired.")
-			fmt.Println()
+			fmt.Fprintf(os.Stderr, "Loaded %d messages from previous session.\n", len(history)/2)
+			fmt.Fprintln(os.Stderr, "Type /new to start fresh if desired.")
+			fmt.Fprintln(os.Stderr)
 		}
 
 		runREPL()
 	} else {
 		// Non-Interactive Mode
 		config.ShowThinking = false
+		// config.AutoNudgeDisabled = true // Dont nudge
 		runMode = handleNonInteractive(config)
 	}
 
@@ -292,7 +293,7 @@ func runREPLWithShell(history *[]Message, shell *readline.Shell, histFile string
 		*history = append(*history, Message{Role: "user", Content: userMsg})
 		ans, thinking, l_history, err := askAI(ctx, *config, *history)
 		if err != nil {
-			fmt.Printf("Error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			*history = l_history[:len(l_history)-1]
 			return
 		}
@@ -313,11 +314,11 @@ func runREPLWithShell(history *[]Message, shell *readline.Shell, histFile string
 	}
 
 	for {
-		fmt.Println(">")
+		fmt.Fprintln(os.Stderr, ">")
 		line, err := shell.Readline()
 		if err != nil {
 			// io.EOF == Ctrl-D, readline.ErrInterrupt == Ctrl-C
-			fmt.Println()
+			fmt.Fprintln(os.Stderr)
 			break
 		}
 
@@ -336,24 +337,24 @@ func runREPLWithShell(history *[]Message, shell *readline.Shell, histFile string
 				if len(parts) > 1 {
 					idx, err := strconv.Atoi(parts[1])
 					if err != nil {
-						fmt.Println("⚠️ Second arg should be a conversation index number. Run /h to see history.")
+						fmt.Fprintln(os.Stderr, "⚠️ Second arg should be a conversation index number. Run /h to see history.")
 					} else {
 						msg := (*history)[idx-1]
 						switch v := msg.Content.(type) {
 						case string:
 							initialMsg = v
 						default:
-							fmt.Println("⚠️ skip editing non text content")
+							fmt.Fprintln(os.Stderr, "⚠️ skip editing non text content")
 						}
 					}
 				}
 				editorText, err := openInEditor(initialMsg)
 				if err != nil {
-					fmt.Printf("❌ Editor error: %v\n", err)
+					fmt.Fprintf(os.Stderr, "❌ Editor error: %v\n", err)
 					continue
 				}
 				if strings.TrimSpace(editorText) == "" {
-					fmt.Println("⚠️  Empty input. Aborting.")
+					fmt.Fprintln(os.Stderr, "⚠️  Empty input. Aborting.")
 					continue
 				}
 				ctx, cancel := context.WithCancel(context.Background())
@@ -377,7 +378,7 @@ func runREPLWithShell(history *[]Message, shell *readline.Shell, histFile string
 
 			handleCommand(text, history)
 			if config.Debug {
-				fmt.Printf("[DEBUG] config: %v\n", *config)
+				fmt.Fprintf(os.Stderr, "[DEBUG] config: %v\n", *config)
 			}
 			continue
 		}
@@ -418,7 +419,7 @@ func getHistoryFilePath() string {
 func loadSystemMsg(modelname string) *Message {
 	promptfile := filepath.Join(homeDir, modelname+".system")
 	if u.FileExistsV2(promptfile) == nil {
-		fmt.Println("Loading system message for " + modelname)
+		fmt.Fprintln(os.Stderr, "Loading system message for "+modelname)
 		if data, err := os.ReadFile(promptfile); err == nil {
 			return &Message{Role: "system", Content: string(data)}
 		}
@@ -473,19 +474,19 @@ func handleCommand(text string, history *[]Message) {
 
 	case "/trimctx":
 		if arg == "" {
-			fmt.Println("Usage: /trimctx <index> or /trimctx <start-end>")
-			fmt.Println("Example: /trimctx 3-5 or /trimctx -1--3")
+			fmt.Fprintln(os.Stderr, "Usage: /trimctx <index> or /trimctx <start-end>")
+			fmt.Fprintln(os.Stderr, "Example: /trimctx 3-5 or /trimctx -1--3")
 			return
 		}
 		start, end, ok := ParseRangeFromInputString(arg)
 		if !ok {
-			fmt.Println("❌ Invalid format. Use <index> or <start-end> (e.g., 3-5-1--3)")
+			fmt.Fprintln(os.Stderr, "❌ Invalid format. Use <index> or <start-end> (e.g., 3-5-1--3)")
 			return
 		}
 
 		hLen := len(*history)
 		if hLen == 0 {
-			fmt.Println("ℹ️  History is empty.")
+			fmt.Fprintln(os.Stderr, "ℹ️  History is empty.")
 			return
 		}
 
@@ -504,7 +505,7 @@ func handleCommand(text string, history *[]Message) {
 		}
 
 		if minIdx < 0 || maxIdx >= hLen || minIdx > maxIdx {
-			fmt.Printf("❌ Error: indices out of range (valid range: 0-%d)\n", hLen-1)
+			fmt.Fprintf(os.Stderr, "❌ Error: indices out of range (valid range: 0-%d)\n", hLen-1)
 			return
 		}
 
@@ -514,22 +515,22 @@ func handleCommand(text string, history *[]Message) {
 		newHistory = append(newHistory, (*history)[maxIdx+1:]...)
 		*history = newHistory
 
-		fmt.Printf("✂️  Removed %d messages (indices %d to %d).\n", removedCount, minIdx, maxIdx)
+		fmt.Fprintf(os.Stderr, "✂️  Removed %d messages (indices %d to %d).\n", removedCount, minIdx, maxIdx)
 
 	case "/ctx":
 		switch {
 		case arg == "":
 			if config.ContextLimit == 0 {
-				fmt.Println("ℹ️  Context trimming disabled. Use /ctx <tokens> to enable (e.g. /ctx 6000).")
+				fmt.Fprintln(os.Stderr, "ℹ️  Context trimming disabled. Use /ctx <tokens> to enable (e.g. /ctx 6000).")
 			} else {
-				fmt.Printf("ℹ️  Context limit: %d tokens (~%d chars). Current usage: ~%d tokens.\n",
+				fmt.Fprintf(os.Stderr, "ℹ️  Context limit: %d tokens (~%d chars). Current usage: ~%d tokens.\n",
 					config.ContextLimit, config.ContextLimit*4, estimateTokens(*history))
 			}
 			return
 		case arg == "off":
 			config.ContextLimit = 0
 			saveConfig()
-			fmt.Println("✅ Context trimming disabled.")
+			fmt.Fprintln(os.Stderr, "✅ Context trimming disabled.")
 			return
 		case arg == "sum":
 			printContextSummary(*history)
@@ -537,12 +538,12 @@ func handleCommand(text string, history *[]Message) {
 		default:
 			n, err := strconv.Atoi(arg)
 			if err != nil || n < 500 {
-				fmt.Println("❌ Usage: /ctx <tokens> (min 500) or /ctx off")
+				fmt.Fprintln(os.Stderr, "❌ Usage: /ctx <tokens> (min 500) or /ctx off")
 				return
 			}
 			config.ContextLimit = n
 			saveConfig()
-			fmt.Printf("✅ Context limit set to %d tokens. Current usage: ~%d tokens.\n",
+			fmt.Fprintf(os.Stderr, "✅ Context limit set to %d tokens. Current usage: ~%d tokens.\n",
 				n, estimateTokens(*history))
 		}
 
@@ -551,22 +552,22 @@ func handleCommand(text string, history *[]Message) {
 		case "on":
 			config.ShowThinking = true
 			saveConfig()
-			fmt.Println("✅ Thinking text enabled.")
+			fmt.Fprintln(os.Stderr, "✅ Thinking text enabled.")
 		case "off":
 			config.ShowThinking = false
 			saveConfig()
-			fmt.Println("✅ Thinking text disabled.")
+			fmt.Fprintln(os.Stderr, "✅ Thinking text disabled.")
 		default:
-			fmt.Println("Usage: /showthink on|off")
+			fmt.Fprintln(os.Stderr, "Usage: /showthink on|off")
 		}
 
 	case "/mcpfunc":
 		if arg == "" {
-			fmt.Println("Usage: /mcpfunc <name> <auto|ask|deny|block> - If you set block you can set the next string which is a coma sep. tools name to block. If not set the current tool name will be block")
+			fmt.Fprintln(os.Stderr, "Usage: /mcpfunc <name> <auto|ask|deny|block> - If you set block you can set the next string which is a coma sep. tools name to block. If not set the current tool name will be block")
 			return
 		}
 		if len(parts) < 3 {
-			fmt.Println("❌ Error: Missing permission level. Usage: /mcpfunc <name> <auto|ask|deny|block [tool1,tool2]>")
+			fmt.Fprintln(os.Stderr, "❌ Error: Missing permission level. Usage: /mcpfunc <name> <auto|ask|deny|block [tool1,tool2]>")
 			return
 		}
 
@@ -574,7 +575,7 @@ func handleCommand(text string, history *[]Message) {
 		perm := strings.ToLower(parts[2])
 
 		if perm != "auto" && perm != "ask" && perm != "deny" && perm != "block" {
-			fmt.Println("❌ Error: Invalid permission level. Use 'auto', 'ask', 'deny', 'block'.")
+			fmt.Fprintln(os.Stderr, "❌ Error: Invalid permission level. Use 'auto', 'ask', 'deny', 'block'.")
 			return
 		}
 		switch perm {
@@ -589,22 +590,22 @@ func handleCommand(text string, history *[]Message) {
 			config.MCPPermissions[toolName] = perm
 		}
 		saveConfig()
-		fmt.Printf("✅ Permission for '%s' set to [%s]\n", toolName, perm)
+		fmt.Fprintf(os.Stderr, "✅ Permission for '%s' set to [%s]\n", toolName, perm)
 
 	case "/mcp":
 		if arg == "" {
 			if activeMCP == nil {
-				fmt.Println("ℹ️  No MCP server connected.")
-				fmt.Println("Usage:")
-				fmt.Println("  /mcp tcp://<host>:<port>    — connect to a running MCP TCP server")
-				fmt.Println("  /mcp <cmd> [args...]        — launch and connect to an MCP stdio server")
-				fmt.Println("  /mcp off                    — disconnect current MCP server")
-				fmt.Println("  /mcp tools                  — list available tools")
-				fmt.Println("  /mcp docs list              — list available resources")
-				fmt.Println("  /mcp docs read <uri>        — read resource contents")
+				fmt.Fprintln(os.Stderr, "ℹ️  No MCP server connected.")
+				fmt.Fprintln(os.Stderr, "Usage:")
+				fmt.Fprintln(os.Stderr, "  /mcp tcp://<host>:<port>    — connect to a running MCP TCP server")
+				fmt.Fprintln(os.Stderr, "  /mcp <cmd> [args...]        — launch and connect to an MCP stdio server")
+				fmt.Fprintln(os.Stderr, "  /mcp off                    — disconnect current MCP server")
+				fmt.Fprintln(os.Stderr, "  /mcp tools                  — list available tools")
+				fmt.Fprintln(os.Stderr, "  /mcp docs list              — list available resources")
+				fmt.Fprintln(os.Stderr, "  /mcp docs read <uri>        — read resource contents")
 			} else {
-				fmt.Printf("✅ MCP connected: %s\n", activeMCP.Spec)
-				fmt.Printf("   %d tool(s) available\n", len(activeMCP.Tools()))
+				fmt.Fprintf(os.Stderr, "✅ MCP connected: %s\n", activeMCP.Spec)
+				fmt.Fprintf(os.Stderr, "   %d tool(s) available\n", len(activeMCP.Tools()))
 			}
 			return
 		}
@@ -612,12 +613,12 @@ func handleCommand(text string, history *[]Message) {
 		switch arg {
 		case "docs":
 			if activeMCP == nil {
-				fmt.Println("ℹ️  No MCP server connected.")
+				fmt.Fprintln(os.Stderr, "ℹ️  No MCP server connected.")
 				return
 			}
 			args := strings.SplitN(strings.TrimSpace(text[len("/mcp docs"):]), " ", 2)
 			if len(args) == 0 || args[0] == "" {
-				fmt.Println("Usage: /mcp docs <list|read [uri]>")
+				fmt.Fprintln(os.Stderr, "Usage: /mcp docs <list|read [uri]>")
 				return
 			}
 			ops := args[0]
@@ -625,38 +626,38 @@ func handleCommand(text string, history *[]Message) {
 			case "list":
 				resources, err := activeMCP.Resources()
 				if err != nil {
-					fmt.Printf("❌ resources/list: %v\n", err)
+					fmt.Fprintf(os.Stderr, "❌ resources/list: %v\n", err)
 					return
 				}
 				if len(resources) == 0 {
-					fmt.Println("ℹ️  No resources available.")
+					fmt.Fprintln(os.Stderr, "ℹ️  No resources available.")
 					return
 				}
-				fmt.Printf("📄 Available resources (%d):\n", len(resources))
+				fmt.Fprintf(os.Stderr, "📄 Available resources (%d):\n", len(resources))
 				for _, r := range resources {
-					fmt.Printf("  • %s — %s\n", r.URI, r.Name)
+					fmt.Fprintf(os.Stderr, "  • %s — %s\n", r.URI, r.Name)
 					if r.Description != "" {
-						fmt.Printf("    %s\n", r.Description)
+						fmt.Fprintf(os.Stderr, "    %s\n", r.Description)
 					}
 				}
 				return
 
 			case "read":
 				if len(args) < 2 || strings.TrimSpace(args[1]) == "" {
-					fmt.Println("Usage: /mcp docs read <uri>")
+					fmt.Fprintln(os.Stderr, "Usage: /mcp docs read <uri>")
 					return
 				}
 				uri := args[1]
 				content, err := activeMCP.ReadResource(uri)
 				if err != nil {
-					fmt.Printf("❌ resources/read %s: %v\n", uri, err)
+					fmt.Fprintf(os.Stderr, "❌ resources/read %s: %v\n", uri, err)
 					return
 				}
-				fmt.Printf("📄 Resource: %s\n%s\n", uri, content)
+				fmt.Fprintf(os.Stderr, "📄 Resource: %s\n%s\n", uri, content)
 				return
 
 			default:
-				fmt.Printf("❌ Unknown docs op: %q. Use 'list' or 'read [uri]'.\n", ops)
+				fmt.Fprintf(os.Stderr, "❌ Unknown docs op: %q. Use 'list' or 'read [uri]'.\n", ops)
 				return
 			}
 
@@ -664,67 +665,67 @@ func handleCommand(text string, history *[]Message) {
 			if activeMCP != nil {
 				activeMCP.Close()
 				activeMCP = nil
-				fmt.Println("🔌 MCP server disconnected.")
+				fmt.Fprintln(os.Stderr, "🔌 MCP server disconnected.")
 			} else {
-				fmt.Println("ℹ️  No MCP server connected.")
+				fmt.Fprintln(os.Stderr, "ℹ️  No MCP server connected.")
 			}
 			return
 
 		case "tools":
 			if activeMCP == nil {
-				fmt.Println("ℹ️  No MCP server connected.")
+				fmt.Fprintln(os.Stderr, "ℹ️  No MCP server connected.")
 				return
 			}
 			tools := activeMCP.Tools()
 			if len(tools) == 0 {
-				fmt.Println("ℹ️  No tools available.")
+				fmt.Fprintln(os.Stderr, "ℹ️  No tools available.")
 				return
 			}
-			fmt.Printf("🔧 Available MCP tools (%d):\n", len(tools))
+			fmt.Fprintf(os.Stderr, "🔧 Available MCP tools (%d):\n", len(tools))
 			for _, t := range tools {
-				fmt.Printf("  • %s — %s\n", t.Name, t.Description)
+				fmt.Fprintf(os.Stderr, "  • %s — %s\n", t.Name, t.Description)
 			}
 			return
 
 		case "schema":
 			if activeMCP == nil {
-				fmt.Println("ℹ️  No MCP server connected.")
+				fmt.Fprintln(os.Stderr, "ℹ️  No MCP server connected.")
 				return
 			}
 			tools := activeMCP.Tools()
 			if len(tools) == 0 {
-				fmt.Println("ℹ️  No tools available.")
+				fmt.Fprintln(os.Stderr, "ℹ️  No tools available.")
 				return
 			}
-			fmt.Printf("🔧 MCP tool schemas:\n")
+			fmt.Fprintf(os.Stderr, "🔧 MCP tool schemas:\n")
 			for _, t := range tools {
-				fmt.Printf("\n  [%s]\n  Description: %s\n  InputSchema:\n", t.Name, t.Description)
+				fmt.Fprintf(os.Stderr, "\n  [%s]\n  Description: %s\n  InputSchema:\n", t.Name, t.Description)
 				var pretty interface{}
 				if err := json.Unmarshal(t.InputSchema, &pretty); err == nil {
 					b, _ := json.MarshalIndent(pretty, "    ", "  ")
-					fmt.Printf("    %s\n", string(b))
+					fmt.Fprintf(os.Stderr, "    %s\n", string(b))
 				} else {
-					fmt.Printf("    %s\n", string(t.InputSchema))
+					fmt.Fprintf(os.Stderr, "    %s\n", string(t.InputSchema))
 				}
 			}
 			return
 
 		case "refresh":
 			if activeMCP == nil {
-				fmt.Println("ℹ️  No MCP server connected.")
+				fmt.Fprintln(os.Stderr, "ℹ️  No MCP server connected.")
 				return
 			}
 			if err := activeMCP.refreshTools(); err != nil {
-				fmt.Printf("❌ Could not refresh tools: %v\n", err)
+				fmt.Fprintf(os.Stderr, "❌ Could not refresh tools: %v\n", err)
 			} else {
-				fmt.Printf("✅ Refreshed: %d tool(s)\n", len(activeMCP.Tools()))
+				fmt.Fprintf(os.Stderr, "✅ Refreshed: %d tool(s)\n", len(activeMCP.Tools()))
 			}
 			return
 		}
 
 		// No sub-command matched — treat rest as MCP server spec to connect
 		if activeMCP != nil {
-			fmt.Println("🔌 Disconnecting previous MCP server...")
+			fmt.Fprintln(os.Stderr, "🔌 Disconnecting previous MCP server...")
 			activeMCP.Close()
 			activeMCP = nil
 		}
@@ -736,57 +737,57 @@ func handleCommand(text string, history *[]Message) {
 		case strings.HasPrefix(arg, "http"):
 			raw, e := ConnectStreamableHTTP(arg)
 			if e != nil {
-				fmt.Printf("❌ MCP connect failed: %v\n", e)
+				fmt.Fprintf(os.Stderr, "❌ MCP connect failed: %v\n", e)
 				return
 			}
 			newMCP, err = NewResilientPassthrough(raw), e
 		default:
-			fmt.Printf("🚀 Launching MCP stdio server: %s\n", arg)
+			fmt.Fprintf(os.Stderr, "🚀 Launching MCP stdio server: %s\n", arg)
 			newMCP, err = NewResilientStdio(parts[1:])
 		}
 
 		if err != nil {
-			fmt.Printf("❌ MCP connect failed: %v\n", err)
+			fmt.Fprintf(os.Stderr, "❌ MCP connect failed: %v\n", err)
 			return
 		}
 
 		activeMCP = newMCP
 		tools := activeMCP.Tools()
-		fmt.Printf("✅ MCP connected: %s\n", activeMCP.Spec)
-		fmt.Printf("   %d tool(s) available:\n", len(tools))
+		fmt.Fprintf(os.Stderr, "✅ MCP connected: %s\n", activeMCP.Spec)
+		fmt.Fprintf(os.Stderr, "   %d tool(s) available:\n", len(tools))
 		for _, t := range tools {
-			fmt.Printf("   • %s — %s\n", t.Name, t.Description)
+			fmt.Fprintf(os.Stderr, "   • %s — %s\n", t.Name, t.Description)
 		}
 
 	case "/s":
 		if arg == "" {
-			fmt.Println("Usage: /s <index:filename>")
+			fmt.Fprintln(os.Stderr, "Usage: /s <index:filename>")
 			return
 		}
 		idx_file := strings.Split(arg, ":")
 		if len(idx_file) != 2 {
-			println("error input must be idx:file-path")
+			fmt.Fprintf(os.Stderr, "error input must be idx:file-path")
 			return
 		}
 		idxStr, path := idx_file[0], idx_file[1]
 		idx, err := strconv.Atoi(idxStr)
 		if err != nil {
-			println("error, index must be integer")
+			fmt.Fprintf(os.Stderr, "error, index must be integer")
 			return
 		}
 		if err := saveHistoryToFile(*history, idx, path); err != nil {
-			fmt.Printf("❌ Failed to save: %v\n", err)
+			fmt.Fprintf(os.Stderr, "❌ Failed to save: %v\n", err)
 		} else {
-			fmt.Printf("✅ Saved conversation up to index %d to: %s\n", idx, path)
+			fmt.Fprintf(os.Stderr, "✅ Saved conversation up to index %d to: %s\n", idx, path)
 		}
 
 	case "/cd":
 		if arg == "" {
-			fmt.Println("Usage: /cd <directory>")
+			fmt.Fprintln(os.Stderr, "Usage: /cd <directory>")
 			return
 		}
 		if err := os.Chdir(arg); err != nil {
-			fmt.Printf("[ERROR] can not chdir to %s - %v\n", arg, err)
+			fmt.Fprintf(os.Stderr, "[ERROR] can not chdir to %s - %v\n", arg, err)
 		}
 
 	case "/new", "/n":
@@ -807,9 +808,9 @@ func handleCommand(text string, history *[]Message) {
 
 			oldName := generateContextName(config.Model, firstUserMsg)
 			if err := saveHistory(); err != nil {
-				fmt.Printf("⚠️  Could not save current session: %v\n", err)
+				fmt.Fprintf(os.Stderr, "⚠️  Could not save current session: %v\n", err)
 			} else {
-				fmt.Printf("✅ Saved current session to: %s\n", oldName)
+				fmt.Fprintf(os.Stderr, "✅ Saved current session to: %s\n", oldName)
 			}
 		}
 
@@ -819,90 +820,90 @@ func handleCommand(text string, history *[]Message) {
 		if arg != "" {
 			newName := generateContextName(config.Model, arg)
 			currentContextPath = filepath.Join(homeDir, ".aig", newName)
-			fmt.Printf("✅ New context started with custom name: %s\n", newName)
+			fmt.Fprintf(os.Stderr, "✅ New context started with custom name: %s\n", newName)
 		} else {
 			currentContextPath = ""
-			fmt.Println("✅ New context started (name will be based on first question).")
+			fmt.Fprintln(os.Stderr, "✅ New context started (name will be based on first question).")
 		}
 
 	case "/help":
-		fmt.Println("Commands:")
-		fmt.Println("  /new , /n                     - Clear conversation history")
-		fmt.Println("  /edit,                        - Open EDITOR to edit user message")
-		fmt.Println("  /edit <index>,                - Open EDITOR to edit user message using existing conversation index")
-		fmt.Println("  /s <hist_index:filename>      - Save the history index to a file")
-		fmt.Println("  /history or /h                - Show current chat history")
-		fmt.Println("  /list, /l                     - List contexts for current model")
-		fmt.Println("  /add <file>,/a                - Stage file for next message (user role)")
-		fmt.Println("  /addsystem <file>,/as         - Stage file for system message (system role)")
-		fmt.Println("  /r <cmd>                      - Run shell command and show output")
-		fmt.Println("  /m <model>                    - Switch model (e.g., /m gpt-4). To list models run /m list or /m ls")
-		fmt.Println("  /ms <model-summary>           - Switch model used for context summary to comress context")
-		fmt.Println("  /msurl <model-summary-URL>    - Switch the api endpoint for summary model. If empty the global one will be used")
-		fmt.Println("  /msto <number-in-secs>        - Set model summary timeout (e.g., 300 - which 300 secs)")
-		fmt.Println("  /url <url>                    - Switch API URL")
-		fmt.Println("  /timeout or /t <dur>          - Set request timeout (e.g., 30s, 5m, 1h)")
-		fmt.Println("  /exit or /q                   - Exit REPL")
-		fmt.Println("  /use <name>                   - Switch to an existing context")
-		fmt.Println("  /del <name>                   - Delete specific context")
-		fmt.Println("  /del all                      - Delete all contexts for current model")
-		fmt.Println("  /debug <0|1|2>                - Enable/Disable debug and set debug level")
-		fmt.Println("  /show <thing>                 - Show details (e.g., /show context <name>)")
-		fmt.Println("  /showthink <on|off>           - Show thinking process. Default is off")
-		fmt.Println("  /cd <dirname>                 - Change to directory")
-		fmt.Println("  /mcp <spec>                   - Connect MCP server (tcp://host:port or cmd)")
-		fmt.Println("  /mcp off                      - Disconnect MCP server")
-		fmt.Println("  /mcp tools                    - List available MCP tools")
-		fmt.Println("  /mcp refresh                  - Refresh MCP tool list")
-		fmt.Println("  /mcpfunc <func> <perm>        - Set permission for tools func, auto|denied|ask")
-		fmt.Println("  /ctx <N>|off                  - Set context token limit (auto-trim when exceeded)")
-		fmt.Println("  /maxtoken <N>                 - Set max tokens in payload.")
-		fmt.Println("  /trimctx <idx|range>          - Remove messages at index or range (e.g. 3-5, -1--3)")
-		fmt.Println("  /autonudgedisabled <on|off>    - Disable the auto nudge feature")
-		fmt.Println("  /configdir <newdir>           - Switch config directory (.aigdotenv and .aig/). If run from from start add prefix dir:// so we dont treat the / as next command. eg. aig /n /configdir dir:///home/user/aig1 /repl - Within a session it is not required. ~ will be expanded into home dir")
-		fmt.Println()
-		fmt.Printf("Curl mode: using curl http://localhost:%d as base for these below cmds\n", statServerPort)
-		fmt.Println("  currently only reporting stats")
-		fmt.Println("Inline file attachment:")
-		fmt.Println("  Include file://<path> anywhere in your message to attach a file inline.")
-		fmt.Println("  Example: Summarise this file:/home/user/notes.txt please")
+		fmt.Fprintln(os.Stderr, "Commands:")
+		fmt.Fprintln(os.Stderr, "  /new , /n                     - Clear conversation history")
+		fmt.Fprintln(os.Stderr, "  /edit,                        - Open EDITOR to edit user message")
+		fmt.Fprintln(os.Stderr, "  /edit <index>,                - Open EDITOR to edit user message using existing conversation index")
+		fmt.Fprintln(os.Stderr, "  /s <hist_index:filename>      - Save the history index to a file")
+		fmt.Fprintln(os.Stderr, "  /history or /h                - Show current chat history")
+		fmt.Fprintln(os.Stderr, "  /list, /l                     - List contexts for current model")
+		fmt.Fprintln(os.Stderr, "  /add <file>,/a                - Stage file for next message (user role)")
+		fmt.Fprintln(os.Stderr, "  /addsystem <file>,/as         - Stage file for system message (system role)")
+		fmt.Fprintln(os.Stderr, "  /r <cmd>                      - Run shell command and show output")
+		fmt.Fprintln(os.Stderr, "  /m <model>                    - Switch model (e.g., /m gpt-4). To list models run /m list or /m ls")
+		fmt.Fprintln(os.Stderr, "  /ms <model-summary>           - Switch model used for context summary to comress context")
+		fmt.Fprintln(os.Stderr, "  /msurl <model-summary-URL>    - Switch the api endpoint for summary model. If empty the global one will be used")
+		fmt.Fprintln(os.Stderr, "  /msto <number-in-secs>        - Set model summary timeout (e.g., 300 - which 300 secs)")
+		fmt.Fprintln(os.Stderr, "  /url <url>                    - Switch API URL")
+		fmt.Fprintln(os.Stderr, "  /timeout or /t <dur>          - Set request timeout (e.g., 30s, 5m, 1h)")
+		fmt.Fprintln(os.Stderr, "  /exit or /q                   - Exit REPL")
+		fmt.Fprintln(os.Stderr, "  /use <name>                   - Switch to an existing context")
+		fmt.Fprintln(os.Stderr, "  /del <name>                   - Delete specific context")
+		fmt.Fprintln(os.Stderr, "  /del all                      - Delete all contexts for current model")
+		fmt.Fprintln(os.Stderr, "  /debug <0|1|2>                - Enable/Disable debug and set debug level")
+		fmt.Fprintln(os.Stderr, "  /show <thing>                 - Show details (e.g., /show context <name>)")
+		fmt.Fprintln(os.Stderr, "  /showthink <on|off>           - Show thinking process. Default is off")
+		fmt.Fprintln(os.Stderr, "  /cd <dirname>                 - Change to directory")
+		fmt.Fprintln(os.Stderr, "  /mcp <spec>                   - Connect MCP server (tcp://host:port or cmd)")
+		fmt.Fprintln(os.Stderr, "  /mcp off                      - Disconnect MCP server")
+		fmt.Fprintln(os.Stderr, "  /mcp tools                    - List available MCP tools")
+		fmt.Fprintln(os.Stderr, "  /mcp refresh                  - Refresh MCP tool list")
+		fmt.Fprintln(os.Stderr, "  /mcpfunc <func> <perm>        - Set permission for tools func, auto|denied|ask")
+		fmt.Fprintln(os.Stderr, "  /ctx <N>|off                  - Set context token limit (auto-trim when exceeded)")
+		fmt.Fprintln(os.Stderr, "  /maxtoken <N>                 - Set max tokens in payload.")
+		fmt.Fprintln(os.Stderr, "  /trimctx <idx|range>          - Remove messages at index or range (e.g. 3-5, -1--3)")
+		fmt.Fprintln(os.Stderr, "  /autonudgedisabled <on|off>    - Disable the auto nudge feature")
+		fmt.Fprintln(os.Stderr, "  /configdir <newdir>           - Switch config directory (.aigdotenv and .aig/). If run from from start add prefix dir:// so we dont treat the / as next command. eg. aig /n /configdir dir:///home/user/aig1 /repl - Within a session it is not required. ~ will be expanded into home dir")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintf(os.Stderr, "Curl mode: using curl http://localhost:%d as base for these below cmds\n", statServerPort)
+		fmt.Fprintln(os.Stderr, "  currently only reporting stats")
+		fmt.Fprintln(os.Stderr, "Inline file attachment:")
+		fmt.Fprintln(os.Stderr, "  Include file://<path> anywhere in your message to attach a file inline.")
+		fmt.Fprintln(os.Stderr, "  Example: Summarise this file:/home/user/notes.txt please")
 
 	case "/use":
 		if arg == "" {
-			fmt.Println("Usage: /use <context-name>")
+			fmt.Fprintln(os.Stderr, "Usage: /use <context-name>")
 			return
 		}
 		sanitizedName := strings.ReplaceAll(arg, " ", "_")
 		path := filepath.Join(filepath.Join(homeDir, ".aig"), sanitizedName)
 		if _, err := os.Stat(path); os.IsNotExist(err) {
-			fmt.Printf("Error: context '%s' not found.\n", arg)
+			fmt.Fprintf(os.Stderr, "Error: context '%s' not found.\n", arg)
 			return
 		}
 		if err := loadHistory(path, history); err != nil {
-			fmt.Printf("Error loading context: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error loading context: %v\n", err)
 			return
 		}
 		currentContextPath = path
-		fmt.Printf("✅ Switched to context: %s\n", arg)
+		fmt.Fprintf(os.Stderr, "✅ Switched to context: %s\n", arg)
 
 	case "/list", "/l":
-		fmt.Printf("📜 Contexts for model [%s]:\n", config.Model)
+		fmt.Fprintf(os.Stderr, "📜 Contexts for model [%s]:\n", config.Model)
 		files, _ := os.ReadDir(filepath.Join(homeDir, ".aig"))
 		found := false
 		for _, f := range files {
 			if !f.IsDir() {
-				fmt.Printf("  - %s\n", f.Name())
+				fmt.Fprintf(os.Stderr, "  - %s\n", f.Name())
 				found = true
 			}
 		}
 		if !found {
-			fmt.Println("  (No contexts found)")
+			fmt.Fprintln(os.Stderr, "  (No contexts found)")
 		}
-		fmt.Printf(" Current context: %s\n", filepath.Base(currentContextPath))
+		fmt.Fprintf(os.Stderr, " Current context: %s\n", filepath.Base(currentContextPath))
 
 	case "/del":
 		if arg == "" {
-			fmt.Println("Usage: /del <name> or /del all")
+			fmt.Fprintln(os.Stderr, "Usage: /del <name> or /del all")
 			return
 		}
 		if arg == "all" {
@@ -914,13 +915,13 @@ func handleCommand(text string, history *[]Message) {
 					count++
 				}
 			}
-			fmt.Printf("🗑️ Deleted %d contexts.\n", count)
+			fmt.Fprintf(os.Stderr, "🗑️ Deleted %d contexts.\n", count)
 		} else {
 			path := filepath.Join(filepath.Join(homeDir, ".aig"), arg+".json")
 			if err := os.Remove(path); err != nil {
-				fmt.Printf("Error deleting context: %v\n", err)
+				fmt.Fprintf(os.Stderr, "Error deleting context: %v\n", err)
 			} else {
-				fmt.Printf("✅ Deleted context: %s\n", arg)
+				fmt.Fprintf(os.Stderr, "✅ Deleted context: %s\n", arg)
 				if currentContextPath != "" && strings.Contains(currentContextPath, arg) {
 					currentContextPath = ""
 					*history = []Message{}
@@ -930,7 +931,7 @@ func handleCommand(text string, history *[]Message) {
 
 	case "/debug":
 		if arg == "" {
-			fmt.Println("Usage: /debug <0|1|2>")
+			fmt.Fprintln(os.Stderr, "Usage: /debug <0|1|2>")
 			return
 		}
 		switch arg {
@@ -946,9 +947,9 @@ func handleCommand(text string, history *[]Message) {
 
 	case "/system", "/sys":
 		if arg == "" {
-			fmt.Println("Usage: /system <text> It will create a new session. If text has file://<model-name> it will load the file <model-name>.system from the the current config directory. Normally at start the program already loaded for the corresponding model or when you switch model if these files are exist. This option allow you to load other model system to use for the current one")
+			fmt.Fprintln(os.Stderr, "Usage: /system <text> It will create a new session. If text has file://<model-name> it will load the file <model-name>.system from the the current config directory. Normally at start the program already loaded for the corresponding model or when you switch model if these files are exist. This option allow you to load other model system to use for the current one")
 			if len(*history) > 0 {
-				fmt.Printf("Current %s prompt: '%s'\n", (*history)[0].Role, (*history)[0].Content)
+				fmt.Fprintf(os.Stderr, "Current %s prompt: '%s'\n", (*history)[0].Role, (*history)[0].Content)
 			}
 			return
 		}
@@ -960,31 +961,31 @@ func handleCommand(text string, history *[]Message) {
 			systemMsg = &Message{Role: "system", Content: systemprompt}
 		}
 		os.WriteFile(filepath.Join(homeDir, config.Model+".system"), []byte(systemMsg.Content.(string)), 0o640)
-		fmt.Println("✅ System prompt added")
+		fmt.Fprintln(os.Stderr, "✅ System prompt added")
 		*history = []Message{*systemMsg}
 
 	case "/add", "/a":
 		if arg == "" {
-			fmt.Println("Usage: /add <filename>")
+			fmt.Fprintln(os.Stderr, "Usage: /add <filename>")
 			return
 		}
 		parts, err := processFile(arg)
 		if err != nil {
-			fmt.Printf("Error processing file %s: %v\n", arg, err)
+			fmt.Fprintf(os.Stderr, "Error processing file %s: %v\n", arg, err)
 			return
 		}
 		pendingFileContent = append(pendingFileContent, parts...)
-		fmt.Printf("📎 Staged '%s' — will be included in your next message.\n", arg)
-		fmt.Printf("   (Total staged parts: %d)\n", len(pendingFileContent))
+		fmt.Fprintf(os.Stderr, "📎 Staged '%s' — will be included in your next message.\n", arg)
+		fmt.Fprintf(os.Stderr, "   (Total staged parts: %d)\n", len(pendingFileContent))
 
 	case "/addsystem", "/as":
 		if arg == "" {
-			fmt.Println("Usage: /addsystem | /as <filename>. Add the file content to the system message")
+			fmt.Fprintln(os.Stderr, "Usage: /addsystem | /as <filename>. Add the file content to the system message")
 			return
 		}
 		parts, err := processFile(arg)
 		if err != nil {
-			fmt.Printf("Error processing file %s: %v\n", arg, err)
+			fmt.Fprintf(os.Stderr, "Error processing file %s: %v\n", arg, err)
 			return
 		}
 		var content any
@@ -999,14 +1000,14 @@ func handleCommand(text string, history *[]Message) {
 
 	case "/r":
 		if arg == "" {
-			fmt.Println("Usage: /r <command>")
+			fmt.Fprintln(os.Stderr, "Usage: /r <command>")
 			return
 		}
 		runSystemCommand(strings.Join(parts[1:], " "))
 
 	case "/m":
 		if arg == "" {
-			fmt.Println("Usage: /m <model>")
+			fmt.Fprintln(os.Stderr, "Usage: /m <model>")
 			return
 		}
 		switch arg {
@@ -1025,91 +1026,91 @@ func handleCommand(text string, history *[]Message) {
 			return
 		default:
 			config.Model = arg
-			fmt.Printf("Model switched to: %s\n", arg)
+			fmt.Fprintf(os.Stderr, "Model switched to: %s\n", arg)
 		}
 
 	case "/ms":
 		if arg == "" {
-			fmt.Println("Usage: /ms <summary-model>")
+			fmt.Fprintln(os.Stderr, "Usage: /ms <summary-model>")
 			return
 		}
 		config.SummaryModel = arg
-		fmt.Printf("Summary Model switched to: %s\n", arg)
+		fmt.Fprintf(os.Stderr, "Summary Model switched to: %s\n", arg)
 
 	case "/msto":
 		if arg == "" {
-			fmt.Println("Usage: /msto <summary-model-timout> eg. 300s")
+			fmt.Fprintln(os.Stderr, "Usage: /msto <summary-model-timout> eg. 300s")
 			return
 		}
 		config.SummaryModelTimeout = arg
-		fmt.Printf("Summary Model Timeout switched to: %s\n", arg)
+		fmt.Fprintf(os.Stderr, "Summary Model Timeout switched to: %s\n", arg)
 	case "/msurl":
 		if arg == "" {
-			fmt.Println("Usage: /msurl <summary-model-url>. By default if empty it uses the same endpoint as global url")
+			fmt.Fprintln(os.Stderr, "Usage: /msurl <summary-model-url>. By default if empty it uses the same endpoint as global url")
 			return
 		}
 		config.SummaryModelUrl = arg
-		fmt.Printf("Summary Model URL switched to: %s\n", arg)
+		fmt.Fprintf(os.Stderr, "Summary Model URL switched to: %s\n", arg)
 
 	case "/url":
 		if arg == "" {
-			fmt.Println("Usage: /url <url>")
+			fmt.Fprintln(os.Stderr, "Usage: /url <url>")
 			return
 		}
 		config.BaseURL = arg
-		fmt.Printf("URL switched to: %s\n", arg)
+		fmt.Fprintf(os.Stderr, "URL switched to: %s\n", arg)
 
 	case "/timeout", "/t":
 		if arg == "" {
-			fmt.Println("Usage: /timeout <duration> (e.g., 30s, 5m, 1h)")
+			fmt.Fprintln(os.Stderr, "Usage: /timeout <duration> (e.g., 30s, 5m, 1h)")
 			return
 		}
 		d, err := time.ParseDuration(arg)
 		if err != nil {
-			fmt.Printf("Error parsing duration: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error parsing duration: %v\n", err)
 			return
 		}
 		config.Timeout = d
-		fmt.Printf("Timeout set to: %v\n", d)
+		fmt.Fprintf(os.Stderr, "Timeout set to: %v\n", d)
 
 	case "/p":
-		fmt.Printf("Current config: %s\n", u.JsonDump(config, ""))
+		fmt.Fprintf(os.Stderr, "Current config: %s\n", u.JsonDump(config, ""))
 		if activeMCP != nil {
-			fmt.Printf("MCP: %s (%d tools)\n", activeMCP.Spec, len(activeMCP.Tools()))
+			fmt.Fprintf(os.Stderr, "MCP: %s (%d tools)\n", activeMCP.Spec, len(activeMCP.Tools()))
 		} else {
-			fmt.Println("MCP: not connected")
+			fmt.Fprintln(os.Stderr, "MCP: not connected")
 		}
 
 	case "/show":
 		if arg == "" {
-			fmt.Println("Usage: /show <thing> (e.g., /show context <name>)")
+			fmt.Fprintln(os.Stderr, "Usage: /show <thing> (e.g., /show context <name>)")
 			return
 		}
 		if strings.HasPrefix(arg, "context ") {
 			contextName := strings.TrimPrefix(arg, "context ")
 			path := filepath.Join(homeDir, ".aig", contextName)
 			if _, err := os.Stat(path); os.IsNotExist(err) {
-				fmt.Printf("Error: context '%s' not found.\n", contextName)
+				fmt.Fprintf(os.Stderr, "Error: context '%s' not found.\n", contextName)
 				return
 			}
 			var tempHistory []Message
 			if err := loadHistory(path, &tempHistory); err != nil {
-				fmt.Printf("Error loading context: %v\n", err)
+				fmt.Fprintf(os.Stderr, "Error loading context: %v\n", err)
 				return
 			}
-			fmt.Printf("📜 Showing context: %s\n", contextName)
-			fmt.Println(strings.Repeat("-", 20))
+			fmt.Fprintf(os.Stderr, "📜 Showing context: %s\n", contextName)
+			fmt.Fprintln(os.Stderr, strings.Repeat("-", 20))
 			for _, msg := range tempHistory {
 				switch msg.Role {
 				case "user":
-					fmt.Printf("user: %s\n", msg.Content)
+					fmt.Fprintf(os.Stderr, "user: %s\n", msg.Content)
 				case "assistant":
-					fmt.Printf("AI: %s\n", msg.Content)
+					fmt.Fprintf(os.Stderr, "AI: %s\n", msg.Content)
 				}
 			}
-			fmt.Println(strings.Repeat("-", 20))
+			fmt.Fprintln(os.Stderr, strings.Repeat("-", 20))
 		} else {
-			fmt.Printf("Unknown thing to show: %s. Try '/show context <name>'\n", arg)
+			fmt.Fprintf(os.Stderr, "Unknown thing to show: %s. Try '/show context <name>'\n", arg)
 		}
 
 	case "/configdir":
@@ -1124,19 +1125,19 @@ func handleCommand(text string, history *[]Message) {
 		arg, _ = expandHomeDir(arg)
 		absPath, err := filepath.Abs(arg)
 		if err != nil {
-			fmt.Printf("❌ Error resolving path: %v\n", err)
+			fmt.Fprintf(os.Stderr, "❌ Error resolving path: %v\n", err)
 			return
 		}
 		homeDir = absPath
 		_ = os.MkdirAll(homeDir, 0755)
-		fmt.Println("Re-load config")
+		fmt.Fprintln(os.Stderr, "Re-load config")
 		currentContextPath = getLatestContextPath(config.Model)
 		config = loadConfig()
-		println(u.JsonDump(config, ""))
+		fmt.Fprintf(os.Stderr, u.JsonDump(config, ""))
 		historyLoaded = false
 		*history = []Message{}
 
-		fmt.Printf("✅ Config directory switched to: %s\n", homeDir)
+		fmt.Fprintf(os.Stderr, "✅ Config directory switched to: %s\n", homeDir)
 	case "/maxtoken":
 		if arg == "" {
 			fmt.Fprintln(os.Stderr, "Usage: /maxtoken <int>")
@@ -1164,7 +1165,7 @@ func handleCommand(text string, history *[]Message) {
 			config.AutoNudgeDisabled = false
 		}
 	default:
-		fmt.Printf("Unknown command: %s\n", cmd)
+		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
 	}
 }
 
@@ -1248,7 +1249,7 @@ func runREPLFallback(history *[]Message) {
 		*history = append(*history, Message{Role: "user", Content: userMsg})
 		ans, thinking, l_history, err := askAI(ctx, *config, *history)
 		if err != nil {
-			fmt.Printf("Error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			*history = l_history[:len(l_history)-1]
 			continue
 		}

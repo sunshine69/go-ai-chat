@@ -3,6 +3,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 )
@@ -10,20 +11,20 @@ import (
 func TestStreamableHTTP(t *testing.T) {
 	url := "http://localhost:8080/mcp"
 
-	fmt.Printf("Connecting to %s\n", url)
+	fmt.Fprintf(os.Stderr, "Connecting to %s\n", url)
 	c, err := ConnectStreamableHTTP(url)
 	if err != nil {
 		t.Fatalf("❌ Failed: %v", err)
 	}
-	fmt.Printf("✅ Connected, %d tools:\n", len(c.Tools()))
+	fmt.Fprintf(os.Stderr, "✅ Connected, %d tools:\n", len(c.Tools()))
 	for _, tool := range c.Tools() {
-		fmt.Printf("  • %s\n", tool.Name)
+		fmt.Fprintf(os.Stderr, "  • %s\n", tool.Name)
 	}
 }
 
 func TestMental(t *testing.T) {
 	if aiThoughtBecomeMentalPtn.MatchString(`Let me go!!!!`) {
-		println("Caught ")
+		fmt.Fprintf(os.Stderr, "Caught ")
 	}
 }
 func TestGetSentencesAtPosition(t *testing.T) {

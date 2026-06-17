@@ -12,14 +12,14 @@ func main() {
 		url = os.Args[1]
 	}
 
-	fmt.Printf("Connecting to %s\n", url)
+	fmt.Fprintf(os.Stderr, "Connecting to %s\n", url)
 	c, err := ConnectStreamableHTTP(url)
 	if err != nil {
-		fmt.Printf("❌ Failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "❌ Failed: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("✅ Connected, %d tools:\n", len(c.Tools()))
+	fmt.Fprintf(os.Stderr, "✅ Connected, %d tools:\n", len(c.Tools()))
 	for _, t := range c.Tools() {
-		fmt.Printf("  • %s\n", t.Name)
+		fmt.Fprintf(os.Stderr, "  • %s\n", t.Name)
 	}
 }

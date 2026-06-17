@@ -35,7 +35,7 @@ func loadDotEnv() {
 	homeEnv, _ := godotenv.Read(homeDir + "/.aigdotenv")
 	for k, v := range homeEnv {
 		if err := os.Setenv(k, v); err != nil {
-			fmt.Println(err.Error())
+			fmt.Fprintln(os.Stderr, err.Error())
 		}
 	}
 }
@@ -141,7 +141,7 @@ func saveHistoryToFile(history []Message, index int, filename string) error {
 			return err
 		}
 	default:
-		fmt.Println("[INFO] skip saving non text content")
+		fmt.Fprintln(os.Stderr, "[INFO] skip saving non text content")
 	}
 	if msg.Thinking != "" {
 		return os.WriteFile(filename+".think", []byte(msg.Thinking), 0o644)
@@ -215,7 +215,7 @@ func getLatestContextPath(model string) string {
 }
 
 func printHistory(history []Message) {
-	fmt.Println("✅ Chat History (Current Session):")
+	fmt.Fprintln(os.Stderr, "✅ Chat History (Current Session):")
 	const maxContentLen = 100
 	const maxThinkLen = 50
 
@@ -259,9 +259,9 @@ func printHistory(history []Message) {
 				runes := []rune(thinkPreview)
 				thinkPreview = string(runes[:maxThinkLen-3]) + "..."
 			}
-			fmt.Printf(" %d [%s]: 🤔 %s | 💬 %s\n", i+1, role, thinkPreview, displayContent)
+			fmt.Fprintf(os.Stderr, " %d [%s]: 🤔 %s | 💬 %s\n", i+1, role, thinkPreview, displayContent)
 		} else {
-			fmt.Printf(" %d [%s]: 💬 %s\n", i+1, role, displayContent)
+			fmt.Fprintf(os.Stderr, " %d [%s]: 💬 %s\n", i+1, role, displayContent)
 		}
 	}
 }
@@ -275,7 +275,7 @@ func runSystemCommand(cmdStr string) {
 	defer cancel()
 
 	if strings.Contains(cmdStr, "&&") || strings.Contains(cmdStr, "||") || strings.Contains(cmdStr, ";") {
-		fmt.Println("⚠️  Command contains forbidden operators (&&, ||, or ;)")
+		fmt.Fprintln(os.Stderr, "⚠️  Command contains forbidden operators (&&, ||, or ;)")
 		return
 	}
 
@@ -283,14 +283,14 @@ func runSystemCommand(cmdStr string) {
 	o, err := u.RunSystemCommandV3(cmd, true)
 
 	if ctx.Err() == context.DeadlineExceeded {
-		fmt.Println("⚠️ Command timed out after 30s")
+		fmt.Fprintln(os.Stderr, "⚠️ Command timed out after 30s")
 		return
 	}
 	if err != nil {
-		fmt.Printf("❌ Command failed: %v\nStderr: %s\n", err, o)
+		fmt.Fprintf(os.Stderr, "❌ Command failed: %v\nStderr: %s\n", err, o)
 		return
 	}
-	fmt.Printf("✅ Output:\n%s\n", o)
+	fmt.Fprintf(os.Stderr, "✅ Output:\n%s\n", o)
 }
 
 // ---------------------------------------------------------------------------
@@ -381,7 +381,7 @@ func saveConfig() {
 	if err := os.WriteFile(dotEnvPath, []byte(sb.String()), 0600); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: Could not save config to %s: %v\n", dotEnvPath, err)
 	} else {
-		fmt.Printf("✅ Configuration saved to %s/.aigdotenv", homeDir)
+		fmt.Fprintf(os.Stderr, "✅ Configuration saved to %s/.aigdotenv", homeDir)
 	}
 }
 
@@ -423,13 +423,13 @@ func promptForMissingConfig(config *Config) {
 		return
 	}
 
-	fmt.Println()
-	fmt.Println("🤖 AI Chat CLI needs configuration")
-	fmt.Println("We'll help you set up your OpenAI API credentials.")
-	fmt.Println()
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "🤖 AI Chat CLI needs configuration")
+	fmt.Fprintln(os.Stderr, "We'll help you set up your OpenAI API credentials.")
+	fmt.Fprintln(os.Stderr)
 
 	if needsURL {
-		fmt.Printf("API URL [%s]: ", config.BaseURL)
+		fmt.Fprintf(os.Stderr, "API URL [%s]: ", config.BaseURL)
 		if input, _ := reader.ReadString('\n'); strings.TrimSpace(input) != "" {
 			config.BaseURL = strings.TrimSpace(input)
 			config.PromptedURL = true
@@ -437,7 +437,7 @@ func promptForMissingConfig(config *Config) {
 	}
 
 	if needsModel {
-		fmt.Printf("Model [%s]: ", config.Model)
+		fmt.Fprintf(os.Stderr, "Model [%s]: ", config.Model)
 		if input, _ := reader.ReadString('\n'); strings.TrimSpace(input) != "" {
 			config.Model = strings.TrimSpace(input)
 			config.PromptedModel = true
@@ -445,7 +445,7 @@ func promptForMissingConfig(config *Config) {
 	}
 
 	if needsAPIKey {
-		fmt.Printf("API Key (will not be displayed). If no need type anything and hit enter: ")
+		fmt.Fprintf(os.Stderr, "API Key (will not be displayed). If no need type anything and hit enter: ")
 		apiKey, _ := reader.ReadString('\n')
 		apiKey = strings.TrimSpace(string(apiKey))
 		if apiKey != "" {
@@ -454,11 +454,11 @@ func promptForMissingConfig(config *Config) {
 		}
 	}
 
-	fmt.Println()
+	fmt.Fprintln(os.Stderr)
 	if needsURL || needsModel || needsAPIKey {
 		saveConfig()
-		fmt.Println("✅ Configuration saved to ~/.aigdotenv")
-		fmt.Println()
+		fmt.Fprintln(os.Stderr, "✅ Configuration saved to ~/.aigdotenv")
+		fmt.Fprintln(os.Stderr)
 	}
 }
 
@@ -516,7 +516,7 @@ func loadConfig() *Config {
 
 	// Transform config data type example, where in dotenv value is just string but config type is different
 	dotEnvPath := filepath.Join(homeDir, ".aigdotenv")
-	fmt.Printf("Load config from %s\n", dotEnvPath)
+	fmt.Fprintf(os.Stderr, "Load config from %s\n", dotEnvPath)
 	if data, err := os.ReadFile(dotEnvPath); err == nil {
 		lines := strings.Split(string(data), "\n")
 		for _, line := range lines {

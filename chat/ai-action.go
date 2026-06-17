@@ -30,7 +30,7 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 		// but it still needs to be smaller than ctxOverSizeAllowed.
 		if config.ContextLimit > 0 && (!foundAndExecToolCall || currentEstToken >= config.CtxOverSizeAllowed) {
 			if currentEstToken >= config.ContextLimit {
-				fmt.Printf("📊 Context size: ~%d tokens (limit: %d)\n", estimateTokens(workingMsgs), config.ContextLimit)
+				fmt.Fprintf(os.Stderr, "📊 Context size: ~%d tokens (limit: %d)\n", estimateTokens(workingMsgs), config.ContextLimit)
 				workingMsgs = trimContext(ctx, config, workingMsgs)
 			}
 		}
@@ -82,7 +82,7 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 
 		sentences, _ := getSentencesAtPosition(content, "-2,-1")
 		if len(toolCalls) == 0 && !strings.Contains(content, "Task completed") && strings.Contains(content, "</think>") || strings.Contains(strings.Join(sentences, " "), "Let me") {
-			fmt.Println("\n> ⚡ [System Nudge]: LOOP - Forcing execution in 5 secs...")
+			fmt.Fprintln(os.Stderr, "\n> ⚡ [System Nudge]: LOOP - Forcing execution in 5 secs...")
 			time.Sleep(5 * time.Second)
 			remindAiFunc("You need to STOP and CHANGE thought to get out of loop. START action.")
 			continue
@@ -99,7 +99,7 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 
 		// content too short (less than 3 lines ~ 300) is also a sign of drop
 		if ctx.Err() == nil && !strings.Contains(content, "Task completed") && !strings.Contains(content, "has been successfully") && len(toolCalls) == 0 && (len(content) < 600 && thinking != "") {
-			fmt.Println("\n> ⚡ [System Nudge]: SLEEP after planning. Forcing execution in 5 secs...")
+			fmt.Fprintln(os.Stderr, "\n> ⚡ [System Nudge]: SLEEP after planning. Forcing execution in 5 secs...")
 			time.Sleep(5 * time.Second)
 			remindAiFunc("Continue. If completed replied with string 'Task completed'")
 			continue
@@ -138,18 +138,18 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 
 			switch perm {
 			case "deny":
-				fmt.Printf("\n🚫 Permission Denied: Tool '%s' is blocked.\n", tc.Function.Name)
+				fmt.Fprintf(os.Stderr, "\n🚫 Permission Denied: Tool '%s' is blocked.\n", tc.Function.Name)
 				allowed = false
 			case "ask":
-				fmt.Printf("\n⚠️  Tool '%s' requires permission.\n", tc.Function.Name)
-				fmt.Printf("   Arguments:\n%s\n", argsDisplay) // Print arguments BEFORE asking
-				fmt.Printf("   Allow? [y/N]: ")
+				fmt.Fprintf(os.Stderr, "\n⚠️  Tool '%s' requires permission.\n", tc.Function.Name)
+				fmt.Fprintf(os.Stderr, "   Arguments:\n%s\n", argsDisplay) // Print arguments BEFORE asking
+				fmt.Fprintf(os.Stderr, "   Allow? [y/N]: ")
 
 				var response string
 				// Use Scanln to wait for user input
 				fmt.Scanln(&response)
 				if strings.ToLower(response) != "y" {
-					fmt.Printf("❌ User denied permission for '%s'.\n", tc.Function.Name)
+					fmt.Fprintf(os.Stderr, "❌ User denied permission for '%s'.\n", tc.Function.Name)
 					allowed = false
 				}
 			}
@@ -159,7 +159,7 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 			if !allowed {
 				toolResult = fmt.Sprintf("error: permission denied for tool %s (policy: %s)", tc.Function.Name, perm)
 			} else {
-				fmt.Printf("\n🔧 Calling tool: %s\n", tc.Function.Name)
+				fmt.Fprintf(os.Stderr, "\n🔧 Calling tool: %s\n", tc.Function.Name)
 
 				// We already parsed argsMap above, let's reuse it or re-parse for the actual call
 				var finalArgs map[string]interface{}
@@ -171,18 +171,18 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 					toolResult, err = activeMCP.CallTool(tc.Function.Name, finalArgs)
 					if err != nil {
 						toolResult = fmt.Sprintf("error: %v", err)
-						fmt.Printf("   ❌ Tool error: %v\n", err)
-						fmt.Printf("   💡 Tip: run /mcp schema to check expected argument names\n")
+						fmt.Fprintf(os.Stderr, "   ❌ Tool error: %v\n", err)
+						fmt.Fprintf(os.Stderr, "   💡 Tip: run /mcp schema to check expected argument names\n")
 					} else {
 						if config.Debug {
-							fmt.Printf("   ✅ result: %s\n", toolResult)
+							fmt.Fprintf(os.Stderr, "   ✅ result: %s\n", toolResult)
 						}
 						foundAndExecToolCall = true
 					}
 				} else {
 					toolResult = "error: no MCP client connected"
 				}
-				fmt.Println("\n✅ Calling tool: done")
+				fmt.Fprintln(os.Stderr, "\n✅ Calling tool: done")
 			}
 			// Always append the tool result (including permission-denied errors) so the
 			// model receives a result for every tool call it made.
@@ -363,7 +363,7 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 					if _, exists := toolCallAccum[key]; !exists {
 						localCopy := tc // Create local scope copy for map pointer preservation
 						toolCallAccum[key] = &localCopy
-						fmt.Printf("\n> 🔧 Planning tool call (Text-Fallback): %s\n", localCopy.Function.Name)
+						fmt.Fprintf(os.Stderr, "\n> 🔧 Planning tool call (Text-Fallback): %s\n", localCopy.Function.Name)
 					}
 				}
 				// Find the position of the last closing tag we just processed
@@ -389,10 +389,10 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 					fmt.Print("\n> 🤔 Thinking...\n")
 					thinkingStarted = true
 				}
-				fmt.Print(rc)
+				fmt.Fprint(os.Stdout, rc)
 				os.Stdout.Sync()
 			} else if !thinkingStarted {
-				fmt.Print("\n> 🤔 Thinking hidden, run /showthink on to enable\n")
+				fmt.Fprint(os.Stderr, "\n> 🤔 Thinking hidden, run /showthink on to enable\n")
 				thinkingStarted = true
 			}
 			continue
@@ -412,11 +412,11 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 			globalStats.TokenArrived(tokenCount)
 
 			if !headerPrinted {
-				fmt.Print("\n> 📝 Response:\n")
+				fmt.Fprint(os.Stderr, "\n> 📝 Response:\n")
 				headerPrinted = true
 			}
 			fullContent.WriteString(delta.Content)
-			fmt.Print(delta.Content)
+			fmt.Fprint(os.Stdout, delta.Content)
 			os.Stdout.Sync()
 
 			if aiRestResponsePtn.MatchString(delta.Content) {
@@ -438,7 +438,7 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 
 			// Announce the JSON call as soon as the function name arrives
 			if tcDelta.Function.Name != "" && tc.Function.Name == "" {
-				fmt.Printf("\n> 🔧 Planning tool call (JSON): %s\n", tcDelta.Function.Name)
+				fmt.Fprintf(os.Stderr, "\n> 🔧 Planning tool call (JSON): %s\n", tcDelta.Function.Name)
 			}
 
 			if tcDelta.ID != "" {
@@ -477,19 +477,19 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 
 		args := strings.TrimSpace(tc.Function.Arguments)
 		if args == "" {
-			fmt.Printf("\n> ⚠️ Ignoring incomplete tool call (missing args): %s\n", tc.Function.Name)
+			fmt.Fprintf(os.Stderr, "\n> ⚠️ Ignoring incomplete tool call (missing args): %s\n", tc.Function.Name)
 			continue
 		}
 
 		// Perform validation check on completed strings
 		var tmp interface{}
 		if err := json.Unmarshal([]byte(args), &tmp); err != nil {
-			fmt.Printf("\n> ⚠️ Ignoring malformed tool call %s: %v\n", tc.Function.Name, err)
+			fmt.Fprintf(os.Stderr, "\n> ⚠️ Ignoring malformed tool call %s: %v\n", tc.Function.Name, err)
 			continue
 		}
 
 		if config.Debug {
-			fmt.Printf("CALL TOOL: %+v\n", tc)
+			fmt.Fprintf(os.Stderr, "CALL TOOL: %+v\n", tc)
 		}
 		toolCalls = append(toolCalls, *tc)
 	}

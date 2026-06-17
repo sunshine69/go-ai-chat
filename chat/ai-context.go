@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -17,8 +18,8 @@ import (
 //	  1  user           18  Can you help me refactor the…
 func printContextSummary(msgs []Message) {
 	total := 0
-	fmt.Printf("\n%-4s  %-10s  %-7s  %s\n", "idx", "role", "tokens", "preview")
-	fmt.Println(strings.Repeat("─", 72))
+	fmt.Fprintf(os.Stderr, "\n%-4s  %-10s  %-7s  %s\n", "idx", "role", "tokens", "preview")
+	fmt.Fprintln(os.Stderr, strings.Repeat("─", 72))
 
 	for i, m := range msgs {
 		// Reuse the existing per-message token logic from estimateTokens.
@@ -48,12 +49,12 @@ func printContextSummary(msgs []Message) {
 			preview = preview[:42] + "…"
 		}
 
-		fmt.Printf("%-4d  %-10s  %-7d  %s\n", i, m.Role, tokens, preview)
+		fmt.Fprintf(os.Stderr, "%-4d  %-10s  %-7d  %s\n", i, m.Role, tokens, preview)
 		total += tokens
 	}
 
-	fmt.Println(strings.Repeat("─", 72))
-	fmt.Printf("%-4s  %-10s  %-7d\n\n", "tot", "", total)
+	fmt.Fprintln(os.Stderr, strings.Repeat("─", 72))
+	fmt.Fprintf(os.Stderr, "%-4s  %-10s  %-7d\n\n", "tot", "", total)
 }
 
 // estimateTokens gives a fast token count estimate (chars/4 is the standard rule of thumb).
@@ -107,7 +108,7 @@ func trimContext(ctx context.Context, cfg Config, msgs []Message) []Message {
 		return msgs
 	}
 
-	fmt.Printf("✂️  Context too long (~%d tokens) — compressing %d middle messages…\n",
+	fmt.Fprintf(os.Stderr, "✂️  Context too long (~%d tokens) — compressing %d middle messages…\n",
 		estimateTokens(msgs), len(middle))
 
 	summary := tryAISummary(ctx, cfg, middle)
@@ -126,7 +127,7 @@ func trimContext(ctx context.Context, cfg Config, msgs []Message) []Message {
 		trimmed = concat([]Message{summaryMsg}, tail)
 	}
 
-	fmt.Printf("✅ Context trimmed to ~%d tokens (target <%d)\n",
+	fmt.Fprintf(os.Stderr, "✅ Context trimmed to ~%d tokens (target <%d)\n",
 		estimateTokens(trimmed), target)
 	return trimmed
 }
@@ -144,7 +145,7 @@ func tryAISummary(ctx context.Context, cfg Config, msgs []Message) string {
 
 	timeout, err := time.ParseDuration(cfg.SummaryModelTimeout)
 	if err != nil {
-		fmt.Println("[WARN] malformed SummaryModelTimeout, defaulting to 60s")
+		fmt.Fprintln(os.Stderr, "[WARN] malformed SummaryModelTimeout, defaulting to 60s")
 		timeout = 60 * time.Second
 	}
 
@@ -186,9 +187,9 @@ Constraints:
 	}
 	if err != nil || strings.TrimSpace(content) == "" {
 		if subCtx.Err() == context.DeadlineExceeded {
-			fmt.Println("⏱️  AI summary timed out — using structured fallback")
+			fmt.Fprintln(os.Stderr, "⏱️  AI summary timed out — using structured fallback")
 		} else {
-			fmt.Println("⚠️  AI summary failed — using structured fallback")
+			fmt.Fprintln(os.Stderr, "⚠️  AI summary failed — using structured fallback")
 		}
 		return manualPrefix + buildStructuredSummary(msgs)
 	}
