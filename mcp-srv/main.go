@@ -248,6 +248,7 @@ func buildServer(cfg config) *server.MCPServer {
 	}
 	registerBaseTool(s, &baseTool)
 	registerTextTools(s, &TextToolManager{})
+	RegisterSVGTools(s, NewSVGToolManager())
 	return s
 }
 
