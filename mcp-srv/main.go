@@ -240,15 +240,19 @@ func buildServer(cfg config) *server.MCPServer {
 		}
 	}
 
+	if strings.Contains(cfg.toolSet, "all") || strings.Contains(cfg.toolSet, "svg") {
+		RegisterSVGTools(s, NewSVGToolManager())
+	}
+
 	baseTool := BaseToolManager{
 		AllowedTerminalCommandPattern: u.Getenv("ALLOWED_TERM_CMD_PTN", defaultAllowCmd),
 		BlockedTerminalCommandPattern: u.Getenv("BLOCKED_TERM_CMD_PTN", ""),
 		AllowedPathPattern:            u.Getenv("ALLOWED_PATH_PTN", defaultAllowPath),
 		BlockedPathPattern:            u.Getenv("BLOCKED_PATH_PTN", ""),
 	}
+	// Default tools to load
 	registerBaseTool(s, &baseTool)
 	registerTextTools(s, &TextToolManager{})
-	RegisterSVGTools(s, NewSVGToolManager())
 	return s
 }
 
