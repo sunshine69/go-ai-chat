@@ -19,6 +19,7 @@ type config struct {
 	host      string
 	port      int
 	basePath  string
+	workDir   string
 	toolSet   string // extra tools to load, comma sep
 }
 
@@ -157,6 +158,7 @@ func parseArgs() config {
 	flag.StringVar(&cfg.host, "H", cfg.host, "Host to listen on")
 	flag.IntVar(&cfg.port, "p", cfg.port, "Port to listen on")
 	flag.StringVar(&cfg.basePath, "base-path", cfg.basePath, "URL base path prefix")
+	flag.StringVar(&cfg.workDir, "work-dir", ".", "Working dir")
 	flag.StringVar(&cfg.toolSet, "tools", "", "Extra tools to load in addition to base tools. Comma-separated. Possible values: postgres, octo, browser, godoc, all")
 
 	flag.Usage = printUsage
@@ -204,6 +206,7 @@ Environment variables (all accept Go regex patterns):
 
 // buildServer registers all tool sets onto an MCPServer instance.
 func buildServer(cfg config) *server.MCPServer {
+	u.CheckErr(os.Chdir(cfg.workDir), "Can not chdir to work-dir "+cfg.workDir)
 	s := server.NewMCPServer(
 		"mcp-fetch-server",
 		"1.0.0",
