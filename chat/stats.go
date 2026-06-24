@@ -90,14 +90,17 @@ func (s *Stats) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"uptime_seconds":         time.Since(s.Uptime).Seconds(),
-		"total_requests":         requests,
-		"total_tokens":           tokens,
-		"total_errors":           s.TotalErrors.Load(),
-		"avg_tokens_per_sec":     fmt.Sprintf("%.1f", avgTokPerSec),
-		"avg_ttft_sec":           fmt.Sprintf("%.2f", avgTTFT),
-		"current_tokens":         curTokens,
-		"current_tokens_per_sec": fmt.Sprintf("%.1f", currentTokPerSec),
+		"uptime_seconds":           time.Since(s.Uptime).Seconds(),
+		"total_requests":           requests,
+		"total_tokens":             tokens,
+		"total_errors":             s.TotalErrors.Load(),
+		"avg_tokens_per_sec":       fmt.Sprintf("%.1f", avgTokPerSec),
+		"avg_ttft_sec":             fmt.Sprintf("%.2f", avgTTFT),
+		"current_tokens":           curTokens,
+		"current_tokens_per_sec":   fmt.Sprintf("%.1f", currentTokPerSec),
+		"countSentencesWhenAILoop": countSentencesWhenAILoop,
+		"randomSentenceCount":      randomSentenceCount,
+		"randomSentence":           randomSentence,
 	})
 }
 
