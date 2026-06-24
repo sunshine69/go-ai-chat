@@ -80,8 +80,8 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 		// If it chose to "stop" naturally, but left you with ZERO tools and ZERO text
 		// after doing a bunch of thinking, it's being lazy. Wake it up!
 
-		sentences, _ := getSentencesAtPosition(content, "-2,-1")
-		if len(toolCalls) == 0 && !strings.Contains(content, "Task completed") && strings.Contains(content, "</think>") || strings.Contains(strings.Join(sentences, " "), "Let me") {
+		// sentences, _ := getSentencesAtPosition(content, "-2,-1")
+		if (len(toolCalls) == 0 && !strings.Contains(content, "CALL TOOL")) && !strings.Contains(content, "Task completed") && strings.Contains(content, "</think>") {
 			fmt.Fprintln(os.Stderr, "\n> ⚡ [System Nudge]: LOOP - Forcing execution in 5 secs...")
 			time.Sleep(5 * time.Second)
 			remindAiFunc("You need to STOP and CHANGE thought to get out of loop. START action.")
