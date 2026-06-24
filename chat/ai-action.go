@@ -322,9 +322,11 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 			thinkingContent.WriteString(rc)
 			rawTextBuffer.WriteString(rc)
 
-			for _, s := range []string{"Let me do this now", "I've been going in circles", "You're right - I need to stop analyzing and start making changes"} {
+			for _, s := range sentencesWhenAILoop {
 				if strings.Contains(fullContent.String(), s) {
-					if !config.AutoNudgeDisabled {
+					countSentencesWhenAILoop++
+					if !config.AutoNudgeDisabled && countSentencesWhenAILoop > 10 {
+						countSentencesWhenAILoop = 0
 						return fullContent.String(), thinkingContent.String(), []ToolCall{}, fmt.Errorf("AI HAS STUCK LOOP")
 					}
 				}

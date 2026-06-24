@@ -26,6 +26,8 @@ var aiRestResponsePtn = regexp.MustCompile(`Now I need to|I can|Let me|\<\/think
 
 // gemma4 when stuck READY!!!!! CALLING!!!!!!!!!!!!!!!!!!!!!!!!!!!!! DONE!!!!!!!!!
 var aiThoughtBecomeMentalPtn = regexp.MustCompile(`([\!]{4,})`)
+var sentencesWhenAILoop []string = []string{"Let me do this now", "going in circles.", "You're right - I need to stop analyzing and start making changes"}
+var countSentencesWhenAILoop = 0
 
 var randomSentenceCount = 0
 var randomSentence = ""
