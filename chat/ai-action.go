@@ -81,7 +81,7 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 		// after doing a bunch of thinking, it's being lazy. Wake it up!
 
 		// sentences, _ := getSentencesAtPosition(content, "-2,-1")
-		if (len(toolCalls) == 0 && !strings.Contains(content, "CALL TOOL")) && !strings.Contains(content, "Task completed") && strings.Contains(content, "</think>") {
+		if len(toolCalls) == 0 && !strings.Contains(content, "Task completed") && strings.Contains(content, "</think>") {
 			fmt.Fprintln(os.Stderr, "\n> ⚡ [System Nudge]: LOOP - Forcing execution in 5 secs...")
 			time.Sleep(5 * time.Second)
 			remindAiFunc("You need to STOP and CHANGE thought to get out of loop. START action.")
@@ -467,6 +467,7 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 	} // scanner end
 
 	if err := scanner.Err(); err != nil && ctx.Err() == nil {
+		fmt.Fprintf(os.Stderr, "[ERR] scanner error %s\n", err.Error())
 		return fullContent.String(), thinkingContent.String(), nil, fmt.Errorf("stream error: %v", err)
 	}
 
@@ -474,6 +475,7 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 	var toolCalls []ToolCall
 	for _, tc := range toolCallAccum {
 		if tc == nil || tc.Type != "function" || strings.TrimSpace(tc.Function.Name) == "" {
+			fmt.Fprintf(os.Stderr, "⚠️ Invalid - Type %s - Funcname %s\n ", tc.Type, tc.Function.Name)
 			continue
 		}
 
@@ -495,7 +497,6 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 		}
 		toolCalls = append(toolCalls, *tc)
 	}
-
 	// Trigger cutoff dumps only if the turn processed completely empty
 	if len(toolCalls) == 0 && fullContent.Len() == 0 && thinkingContent.Len() == 0 {
 		fmt.Fprintln(os.Stderr, "\n--- 🚨 STREAM CUTOFF DETECTED (LAST 10 LINES) ---")
