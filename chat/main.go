@@ -429,6 +429,16 @@ func loadSystemMsg(modelname string) *Message {
 	return &Message{Role: "system", Content: ""}
 }
 
+func RemoveSystemMessage(h History) History {
+	var o History
+	for _, msg := range h.History {
+		if msg.Role != "system" {
+			o.History = append(o.History, msg)
+		}
+	}
+	return o
+}
+
 func loadHistory(filePath string, historyPtr *[]Message) error {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
@@ -438,9 +448,9 @@ func loadHistory(filePath string, historyPtr *[]Message) error {
 	if err := json.Unmarshal(data, &h); err != nil {
 		return err
 	}
-	_h := []Message{*loadSystemMsg(config.Model)}
-	_h = append(_h, h.History[1:]...)
-	h.History = append(_h, h.History[1:]...)
+	_msg := []Message{*loadSystemMsg(config.Model)}
+	_msg = append(_msg, RemoveSystemMessage(h).History...)
+	h.History = _msg
 	*historyPtr = h.History
 	return nil
 }

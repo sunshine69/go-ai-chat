@@ -6,20 +6,20 @@ require (
 	github.com/JohannesKaufmann/html-to-markdown v1.6.0
 	github.com/joho/godotenv v1.5.1
 	github.com/lib/pq v1.12.3
-	github.com/mark3labs/mcp-go v0.54.0
-	github.com/reeflective/readline v1.1.4
-	github.com/sunshine69/golang-tools/utils v0.0.0-20260613050630-b8e4b1d01d08
+	github.com/mark3labs/mcp-go v0.55.1
+	github.com/reeflective/readline v1.2.2
+	github.com/sunshine69/golang-tools/utils v0.0.0-20260626041941-034b7ac9183e
 )
 
 require (
 	github.com/PuerkitoBio/goquery v1.12.0 // indirect
-	github.com/andybalholm/cascadia v1.3.3 // indirect
+	github.com/andybalholm/cascadia v1.3.4 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/klauspost/compress v1.18.6 // indirect
 	github.com/kr/fs v0.1.0 // indirect
 	github.com/pkg/sftp v1.13.10 // indirect
-	github.com/rivo/uniseg v0.4.4 // indirect
+	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
 	github.com/sebdah/goldie/v2 v2.8.0 // indirect
 	github.com/sergi/go-diff v1.4.0 // indirect
