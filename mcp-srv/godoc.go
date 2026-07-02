@@ -10,6 +10,16 @@
 // Large results (> resultSizeThreshold bytes) are written to a temp file and
 // the file path is returned instead, so the AI can use the text_* tools
 // (text_toc, text_grep, text_section, text_lines, …) to extract only what it needs.
+//
+// NOTE: this file calls PlaywrightProxy.CallTool directly (bypassing the
+// dynamic tool registry in playwright.go) because these are internal helper
+// calls, not tools exposed to the model. That means the two "ref"-based
+// interaction schemas playwright.go now discovers dynamically don't protect
+// this file — the browser_navigate/browser_evaluate contracts here are
+// hardcoded on purpose. Since playwright.go pins playwrightMCPVersion, the
+// contract assumed below (browser_evaluate takes a "code" string that is an
+// async (page) => {...} function, not a raw DOM script) is stable until that
+// version is deliberately bumped and this file is re-checked against it.
 
 package main
 
@@ -210,8 +220,41 @@ func navigate(pw *PlaywrightProxy, url string) error {
 	return err
 }
 
-func evaluate(pw *PlaywrightProxy, script string) (string, error) {
-	return pw.CallTool("browser_evaluate", map[string]any{"script": script})
+// evaluate runs a DOM-context script (an IIFE like "(function(){ ... })()")
+// on the current page and returns its result as a string.
+//
+// browser_evaluate's actual parameter name and calling convention have
+// changed across @playwright/mcp releases (seen as a raw DOM "script" in
+// some versions, and as a Playwright-side "async (page) => {...}" function
+// under other param names in others). Rather than hardcode a guess, this
+// asks the running server what it actually wants via
+// PlaywrightProxy.evaluateSchema() and adapts:
+//   - if the tool expects a page-function, we wrap the IIFE in
+//     `async (page) => page.evaluate(() => (...))` so page.evaluate runs it
+//     in DOM context;
+//   - otherwise we pass the IIFE through unwrapped.
+func evaluate(pw *PlaywrightProxy, domScript string) (string, error) {
+	paramName, wrapInPageFn, err := pw.evaluateSchema()
+	if err != nil {
+		return "", fmt.Errorf("resolve browser_evaluate schema: %w", err)
+	}
+
+	code := domScript
+	if wrapInPageFn {
+		code = fmt.Sprintf(
+			"async (page) => { return await page.evaluate(() => (%s)); }",
+			domScript,
+		)
+	}
+
+	result, err := pw.CallTool("browser_evaluate", map[string]any{paramName: code})
+	if err != nil {
+		return "", fmt.Errorf(
+			"browser_evaluate call failed (resolved param=%q wrapInPageFn=%v): %w\nfull schema: %s",
+			paramName, wrapInPageFn, err, pw.evalSchemaDebug(),
+		)
+	}
+	return result, nil
 }
 
 // ── fetchGoDocPackage ─────────────────────────────────────────────────────────

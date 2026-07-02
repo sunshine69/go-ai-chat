@@ -17,12 +17,29 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
+// playwrightMCPVersion pins the upstream @playwright/mcp package instead of
+// riding @latest. Tool names/params (ref vs target, browser_evaluate's code
+// param, etc.) have changed across releases before, and an unpinned version
+// can silently break this proxy on the next `npx` invocation. Bump this
+// deliberately after testing against the new version.
+const playwrightMCPVersion = "0.0.77"
+
 type PlaywrightProxy struct {
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
 	stdout *bufio.Reader
 	mu     sync.Mutex
 	nextID atomic.Int64
+
+	// evalOnce/evalParamName/evalWrapInPageFn/evalErr cache the resolved
+	// shape of the upstream browser_evaluate tool (see evaluateSchema).
+	// Resolved lazily on first use rather than hardcoded, since this param
+	// name/semantics have changed across @playwright/mcp releases before.
+	evalOnce         sync.Once
+	evalParamName    string
+	evalWrapInPageFn bool
+	evalRawSchema    json.RawMessage
+	evalErr          error
 }
 
 type jsonRPCRequest struct {
@@ -40,64 +57,54 @@ type jsonRPCResponse struct {
 	} `json:"error,omitempty"`
 }
 
-func registerPlaywrightTools(s *server.MCPServer, pw *PlaywrightProxy) {
-	// The most useful Playwright tools — add more as needed
-	playwrightTools := []struct {
-		name, desc string
-		params     []mcp.ToolOption
-	}{
-		{
-			"browser_navigate",
-			"Navigate the browser to a URL",
-			[]mcp.ToolOption{mcp.WithString("url", mcp.Required(), mcp.Description("URL to navigate to"))},
-		},
-		{
-			"browser_screenshot",
-			"Take a screenshot of the current browser page",
-			nil,
-		},
-		{
-			"browser_click",
-			"Click on an element on the page",
-			[]mcp.ToolOption{mcp.WithString("element", mcp.Required(), mcp.Description("Human-readable description of the element to click"))},
-		},
-		{
-			"browser_type",
-			"Type text into an input field",
-			[]mcp.ToolOption{
-				mcp.WithString("element", mcp.Required(), mcp.Description("Element to type into")),
-				mcp.WithString("text", mcp.Required(), mcp.Description("Text to type")),
-			},
-		},
-		{
-			"browser_get_text",
-			"Extract all visible text from the current page",
-			nil,
-		},
-		{
-			"browser_evaluate",
-			"Execute JavaScript in the browser context",
-			[]mcp.ToolOption{mcp.WithString("script", mcp.Required(), mcp.Description("JavaScript to execute"))},
-		},
+// rpcTool mirrors the shape of a single entry returned by the upstream
+// server's tools/list response.
+type rpcTool struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	InputSchema json.RawMessage `json:"inputSchema"`
+}
+
+// registerPlaywrightTools discovers the real tool set from the running
+// @playwright/mcp process via tools/list and registers each one with its
+// actual upstream JSON schema. This intentionally avoids hand-maintaining
+// tool definitions: names and parameters (e.g. browser_click's "ref",
+// browser_evaluate's "code") have changed across releases, and copying the
+// real schema through verbatim is the only way to stay correct without
+// re-auditing this file on every bump of playwrightMCPVersion.
+func registerPlaywrightTools(s *server.MCPServer, pw *PlaywrightProxy) error {
+	tools, err := pw.ListTools()
+	if err != nil {
+		return fmt.Errorf("listing playwright tools: %w", err)
+	}
+	if len(tools) == 0 {
+		return fmt.Errorf("playwright mcp reported zero tools (version pinned to %s — check it started correctly)", playwrightMCPVersion)
 	}
 
-	for _, t := range playwrightTools {
-		toolName := t.name
-		opts := append([]mcp.ToolOption{mcp.WithDescription(t.desc)}, t.params...)
-		s.AddTool(mcp.NewTool(toolName, opts...), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			// Convert map[string]any to map[string]any (already correct type)
-			result, err := pw.CallTool(toolName, args)
+	for _, t := range tools {
+		toolName := t.Name
+		schema := t.InputSchema
+		if len(schema) == 0 {
+			// Some tools (e.g. browser_snapshot) take no parameters and may
+			// omit inputSchema entirely. Fall back to an empty object schema
+			// so mcp-go doesn't choke on a nil RawInputSchema.
+			schema = json.RawMessage(`{"type":"object","properties":{}}`)
+		}
+		tool := mcp.NewToolWithRawSchema(toolName, t.Description, schema)
+		s.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			result, err := pw.CallTool(toolName, req.GetArguments())
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			return mcp.NewToolResultText(result), nil
 		})
 	}
+
+	return nil
 }
 
 func NewPlaywrightProxy() (*PlaywrightProxy, error) {
-	cmd := exec.Command("npx", "@playwright/mcp@latest", "--headless")
+	cmd := exec.Command("npx", fmt.Sprintf("@playwright/mcp@%s", playwrightMCPVersion), "--headless")
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -190,6 +197,94 @@ func (p *PlaywrightProxy) initialize() error {
 	})
 	fmt.Fprintf(p.stdin, "%s\n", notif)
 	return nil
+}
+
+// ListTools calls tools/list on the upstream server and returns the raw
+// tool definitions (name, description, JSON schema) as reported right now
+// by the pinned playwrightMCPVersion process. Used both for dynamic
+// registration in registerPlaywrightTools and available for ad-hoc
+// diagnostics (e.g. logging discovered tools at startup).
+func (p *PlaywrightProxy) ListTools() ([]rpcTool, error) {
+	result, err := p.call("tools/list", map[string]any{})
+	if err != nil {
+		return nil, err
+	}
+	var parsed struct {
+		Tools []rpcTool `json:"tools"`
+	}
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		return nil, fmt.Errorf("unmarshal tools/list: %w", err)
+	}
+	return parsed.Tools, nil
+}
+
+// evaluateSchema resolves, once, which parameter browser_evaluate actually
+// expects and whether its value should be an "async (page) => {...}"
+// wrapper (Playwright-side function receiving `page`) or a bare script.
+// This is read from the live tools/list response rather than assumed,
+// because both the field name (seen as "code", "function", "expression"
+// across releases) and the calling convention have changed between
+// @playwright/mcp versions.
+func (p *PlaywrightProxy) evaluateSchema() (paramName string, wrapInPageFn bool, err error) {
+	p.evalOnce.Do(func() {
+		tools, listErr := p.ListTools()
+		if listErr != nil {
+			p.evalErr = fmt.Errorf("resolving browser_evaluate schema: %w", listErr)
+			return
+		}
+		for _, t := range tools {
+			if t.Name != "browser_evaluate" {
+				continue
+			}
+			var schema struct {
+				Properties map[string]struct {
+					Type        string `json:"type"`
+					Description string `json:"description"`
+				} `json:"properties"`
+				Required []string `json:"required"`
+			}
+			if err := json.Unmarshal(t.InputSchema, &schema); err != nil {
+				p.evalErr = fmt.Errorf("parsing browser_evaluate schema: %w", err)
+				return
+			}
+
+			name := ""
+			if len(schema.Required) > 0 {
+				name = schema.Required[0]
+			} else {
+				for _, candidate := range []string{"function", "code", "script", "expression"} {
+					if prop, ok := schema.Properties[candidate]; ok && prop.Type == "string" {
+						name = candidate
+						break
+					}
+				}
+			}
+			if name == "" {
+				p.evalErr = fmt.Errorf("could not determine browser_evaluate's script parameter from schema: %s", string(t.InputSchema))
+				return
+			}
+			p.evalParamName = name
+			p.evalRawSchema = t.InputSchema
+
+			desc := strings.ToLower(schema.Properties[name].Description)
+			p.evalWrapInPageFn = strings.Contains(desc, "argument, page") ||
+				strings.Contains(desc, "(page)") ||
+				strings.Contains(desc, "playwright code")
+			return
+		}
+		p.evalErr = fmt.Errorf("browser_evaluate tool not found in tools/list (is it enabled for this --caps set?)")
+	})
+	return p.evalParamName, p.evalWrapInPageFn, p.evalErr
+}
+
+// evalSchemaDebug returns the raw JSON schema browser_evaluate reported at
+// resolution time, for inclusion in error messages when a call still fails
+// despite evaluateSchema's best guess at the param name/convention.
+func (p *PlaywrightProxy) evalSchemaDebug() string {
+	if len(p.evalRawSchema) == 0 {
+		return "(schema not resolved)"
+	}
+	return string(p.evalRawSchema)
 }
 
 func (p *PlaywrightProxy) CallTool(name string, args map[string]any) (string, error) {
