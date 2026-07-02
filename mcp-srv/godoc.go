@@ -254,7 +254,30 @@ func evaluate(pw *PlaywrightProxy, domScript string) (string, error) {
 			paramName, wrapInPageFn, err, pw.evalSchemaDebug(),
 		)
 	}
-	return result, nil
+	return extractEvalResult(result), nil
+}
+
+// extractEvalResult strips the markdown envelope browser_evaluate wraps its
+// return value in — typically a "### Result" heading followed by the value,
+// sometimes inside a ``` code fence — leaving just the raw value text
+// (which unwrapPlaywrightString then further unquotes if needed).
+func extractEvalResult(raw string) string {
+	raw = strings.TrimSpace(raw)
+
+	if idx := strings.LastIndex(raw, "### Result"); idx != -1 {
+		raw = strings.TrimSpace(raw[idx+len("### Result"):])
+	}
+
+	if strings.HasPrefix(raw, "```") {
+		if nl := strings.IndexByte(raw, '\n'); nl != -1 {
+			raw = raw[nl+1:]
+		}
+		raw = strings.TrimSpace(raw)
+		raw = strings.TrimSuffix(raw, "```")
+		raw = strings.TrimSpace(raw)
+	}
+
+	return raw
 }
 
 // ── fetchGoDocPackage ─────────────────────────────────────────────────────────
