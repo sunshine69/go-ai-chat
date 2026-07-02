@@ -57,11 +57,11 @@ func maybeOffload(content, hint string) (*mcp.CallToolResult, error) {
 	msg := fmt.Sprintf(
 		"Result is large (%d bytes) and has been saved to:\n\n%s\n\n"+
 			"Suggested next steps:\n"+
-			"  • text_wc      – check total size\n"+
-			"  • text_toc     – list all sections (headings) in the doc\n"+
-			"  • text_section – extract a specific section by heading name\n"+
-			"  • text_grep    – search for a symbol or keyword\n"+
-			"  • text_lines   – read a specific line range\n",
+			"  • text_wc      - check total size\n"+
+			"  • text_toc     - list all sections (headings) in the doc\n"+
+			"  • text_section - extract a specific section by heading name\n"+
+			"  • text_grep    - search for a symbol or keyword\n"+
+			"  • text_lines   - read a specific line range\n",
 		len(content), f.Name(),
 	)
 	if hint != "" {
