@@ -259,13 +259,21 @@ func evaluate(pw *PlaywrightProxy, domScript string) (string, error) {
 
 // extractEvalResult strips the markdown envelope browser_evaluate wraps its
 // return value in — typically a "### Result" heading followed by the value,
-// sometimes inside a ``` code fence — leaving just the raw value text
-// (which unwrapPlaywrightString then further unquotes if needed).
+// sometimes inside a ``` code fence, and often followed by further headings
+// (e.g. "### New console messages") that are NOT part of the value and must
+// not be included — leaving just the raw value text (which
+// unwrapPlaywrightString then further unquotes if needed).
 func extractEvalResult(raw string) string {
 	raw = strings.TrimSpace(raw)
 
 	if idx := strings.LastIndex(raw, "### Result"); idx != -1 {
-		raw = strings.TrimSpace(raw[idx+len("### Result"):])
+		rest := raw[idx+len("### Result"):]
+		// Cut off at the next heading, if any — everything from there on
+		// belongs to a different section, not the result value.
+		if next := strings.Index(rest, "\n### "); next != -1 {
+			rest = rest[:next]
+		}
+		raw = strings.TrimSpace(rest)
 	}
 
 	if strings.HasPrefix(raw, "```") {

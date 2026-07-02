@@ -247,6 +247,10 @@ func buildServer(cfg config) *server.MCPServer {
 		RegisterSVGTools(s, NewSVGToolManager())
 	}
 
+	if strings.Contains(cfg.toolSet, "all") || strings.Contains(cfg.toolSet, "rustdoc") {
+		registerRustDocTools(s)
+	}
+
 	baseTool := BaseToolManager{
 		AllowedTerminalCommandPattern: u.Getenv("ALLOWED_TERM_CMD_PTN", defaultAllowCmd),
 		BlockedTerminalCommandPattern: u.Getenv("BLOCKED_TERM_CMD_PTN", ""),
