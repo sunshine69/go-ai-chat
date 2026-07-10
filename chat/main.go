@@ -328,23 +328,29 @@ func runREPLWithShell(history *[]Message, shell *readline.Shell, histFile string
 		}
 
 		if strings.HasPrefix(text, "/") {
-			// ------------------------------------------------------------------
-			// /edit [index] — open $EDITOR
-			// ------------------------------------------------------------------
 			if strings.HasPrefix(text, "/edit") {
 				parts := strings.SplitN(text, " ", -1)
 				initialMsg := ""
 				if len(parts) > 1 {
-					idx, err := strconv.Atoi(parts[1])
-					if err != nil {
-						fmt.Fprintln(os.Stderr, "⚠️ Second arg should be a conversation index number. Run /h to see history.")
+					if u.FileExistsV2(parts[1]) == nil {
+						if ctb, err := os.ReadFile(parts[1]); err == nil {
+							initialMsg = string(ctb)
+						} else {
+							fmt.Fprintf(os.Stderr, "[ERROR] reading file %s\n", parts[1])
+							return
+						}
 					} else {
-						msg := (*history)[idx-1]
-						switch v := msg.Content.(type) {
-						case string:
-							initialMsg = v
-						default:
-							fmt.Fprintln(os.Stderr, "⚠️ skip editing non text content")
+						idx, err := strconv.Atoi(parts[1])
+						if err != nil {
+							fmt.Fprintln(os.Stderr, "⚠️ Second arg should be a conversation index number. Run /h to see history.")
+						} else {
+							msg := (*history)[idx-1]
+							switch v := msg.Content.(type) {
+							case string:
+								initialMsg = v
+							default:
+								fmt.Fprintln(os.Stderr, "⚠️ skip editing non text content")
+							}
 						}
 					}
 				}
