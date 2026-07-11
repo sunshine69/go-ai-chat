@@ -332,12 +332,14 @@ func runREPLWithShell(history *[]Message, shell *readline.Shell, histFile string
 				parts := strings.SplitN(text, " ", -1)
 				initialMsg := ""
 				if len(parts) > 1 {
-					if u.FileExistsV2(parts[1]) == nil {
-						if ctb, err := os.ReadFile(parts[1]); err == nil {
-							initialMsg = string(ctb)
-						} else {
-							fmt.Fprintf(os.Stderr, "[ERROR] reading file %s\n", parts[1])
-							return
+					if myfile, err := expandHomeDir(parts[1]); err == nil {
+						if u.FileExistsV2(myfile) == nil {
+							if ctb, err := os.ReadFile(myfile); err == nil {
+								initialMsg = string(ctb)
+							} else {
+								fmt.Fprintf(os.Stderr, "[ERROR] reading file %s\n", parts[1])
+								return
+							}
 						}
 					} else {
 						idx, err := strconv.Atoi(parts[1])
@@ -785,16 +787,21 @@ func handleCommand(text string, history *[]Message) {
 			fmt.Fprintf(os.Stderr, "error input must be idx:file-path")
 			return
 		}
-		idxStr, path := idx_file[0], idx_file[1]
+		idxStr, filePath := idx_file[0], idx_file[1]
+		expandedPath, err := expandHomeDir(filePath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "⚠️  Could not resolve path '%s': %v\n", filePath, err)
+			return
+		}
 		idx, err := strconv.Atoi(idxStr)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error, index must be integer")
 			return
 		}
-		if err := saveHistoryToFile(*history, idx, path); err != nil {
+		if err := saveHistoryToFile(*history, idx, expandedPath); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ Failed to save: %v\n", err)
 		} else {
-			fmt.Fprintf(os.Stderr, "✅ Saved conversation up to index %d to: %s\n", idx, path)
+			fmt.Fprintf(os.Stderr, "✅ Saved conversation up to index %d to: %s\n", idx, expandedPath)
 		}
 
 	case "/cd":
@@ -985,9 +992,14 @@ func handleCommand(text string, history *[]Message) {
 			fmt.Fprintln(os.Stderr, "Usage: /add <filename>")
 			return
 		}
-		parts, err := processFile(arg)
+		expandedPath, err := expandHomeDir(arg)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error processing file %s: %v\n", arg, err)
+			fmt.Fprintf(os.Stderr, "⚠️  Could not resolve path '%s': %v\n", arg, err)
+			return
+		}
+		parts, err := processFile(expandedPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error processing file %s: %v\n", expandedPath, err)
 			return
 		}
 		pendingFileContent = append(pendingFileContent, parts...)
@@ -999,9 +1011,14 @@ func handleCommand(text string, history *[]Message) {
 			fmt.Fprintln(os.Stderr, "Usage: /addsystem | /as <filename>. Add the file content to the system message")
 			return
 		}
-		parts, err := processFile(arg)
+		expandedPath, err := expandHomeDir(arg)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error processing file %s: %v\n", arg, err)
+			fmt.Fprintf(os.Stderr, "⚠️  Could not resolve path '%s': %v\n", arg, err)
+			return
+		}
+		parts, err := processFile(expandedPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error processing file %s: %v\n", expandedPath, err)
 			return
 		}
 		var content any
