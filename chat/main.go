@@ -277,8 +277,8 @@ func runREPL() {
 	}
 	shell.History.Add("aig", hist)
 
-	// Set file path completer for commands that accept file arguments
-	shell.Completer = createCompleter()
+	// Set file path completer for commands that accept file arguments TODO fix this
+	// shell.Completer = createCompleter()
 
 	runREPLWithShell(&history, shell, histFile)
 }
@@ -286,8 +286,6 @@ func runREPL() {
 // ---------------------------------------------------------------------------
 // Completer
 // ---------------------------------------------------------------------------
-
-
 
 func createCompleter() completer {
 	// Return a function that readline calls for each argument
