@@ -18,6 +18,8 @@ import (
 	u "github.com/sunshine69/golang-tools/utils"
 )
 
+const MAX_OUPUT_SIZE = 20000
+
 type BaseToolManager struct {
 	AllowedTerminalCommandPattern string
 	BlockedTerminalCommandPattern string
@@ -141,12 +143,6 @@ func (t *BaseToolManager) createNewFile(ctx context.Context, request mcp.CallToo
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	//if !overwrite {
-	//	if _, err := os.Stat(cleanPath); err == nil {
-	//		return mcp.NewToolResultError(fmt.Sprintf("file already exists: %s (set overwrite=true to replace it)", cleanPath)), nil
-	//	}
-	//}
-
 	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
 	f, err := os.OpenFile(cleanPath, flags, 0644)
 	if err != nil {
@@ -230,8 +226,14 @@ func (t *BaseToolManager) runTerminalCommand(ctx context.Context, request mcp.Ca
 	if stdout.Len() == 0 && stderr.Len() == 0 && runErr == nil {
 		sb.WriteString("(command completed with no output)\n")
 	}
-
-	return mcp.NewToolResultText(sb.String()), nil
+	if sb.Len() >= MAX_OUPUT_SIZE {
+		tempfile := u.Must(os.CreateTemp("", "mcp"))
+		_ = u.Must(tempfile.Write([]byte(sb.String())))
+		tempfile.Sync()
+		return mcp.NewToolResultText("Command output is saved to a file " + tempfile.Name() + "\nBecause t is too big thus use text tools to extract information. DON'T read full content. REMEMBER to remove it after use."), nil
+	} else {
+		return mcp.NewToolResultText(sb.String()), nil
+	}
 }
 
 func (t *BaseToolManager) fileGlobSearch(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -411,7 +413,7 @@ func (t *BaseToolManager) fetchUrl(ctx context.Context, request mcp.CallToolRequ
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 	docSize := len(markdownText)
-	if docSize > 20000 {
+	if docSize > MAX_OUPUT_SIZE {
 		tempDir := u.Must(os.MkdirTemp("", "aig*"))
 		tempFile := filepath.Join(tempDir, "fetch-url-doc.md")
 		u.CheckErr(os.WriteFile(tempFile, []byte(markdownText), 0o644), "write doc file")
@@ -457,7 +459,7 @@ func (t *BaseToolManager) httpRequest(ctx context.Context, request mcp.CallToolR
 		return mcp.NewToolResultErrorFromErr("unable to read request response", err), nil
 	}
 	dataLen := len(respBody)
-	if dataLen > 20000 {
+	if dataLen > MAX_OUPUT_SIZE {
 		tmpDir, err := os.MkdirTemp("", "mcp-tool")
 		if err != nil {
 			return mcp.NewToolResultText("[ERROR] " + err.Error()), err
@@ -562,7 +564,9 @@ To run a command in a specific directory, use the working_dir argument otherwise
   WRONG : command="cd /app && go build ./..."
   CORRECT: command="go build ./..."  working_dir="./app"
 
-If the command does not return it will block you.`),
+If the command does not return it will block you.
+
+If the output is too big it will be saved to a temp file and give you the file path. You SHOULD NOT read the whole file as it will overflow your context. You should use text tools to extract relevant information from it`),
 		mcp.WithString("command", mcp.Required(), mcp.Description("The shell command to execute. Must not use 'cd' — use working_dir instead.")),
 		mcp.WithString("working_dir", mcp.Description("Directory to run the command in. Use this instead of 'cd'. Must be a relative path from the current directory.")),
 		// mcp.WithBoolean("confirmed", mcp.DefaultBool(false), mcp.Description("Must be explicitly set to true to actually run the command. When false or omitted a confirmation message is returned and nothing is executed.")),

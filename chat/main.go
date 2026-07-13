@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -276,8 +277,74 @@ func runREPL() {
 	}
 	shell.History.Add("aig", hist)
 
+	// Set file path completer for commands that accept file arguments
+	shell.Completer = createCompleter()
+
 	runREPLWithShell(&history, shell, histFile)
 }
+
+// ---------------------------------------------------------------------------
+// Completer
+// ---------------------------------------------------------------------------
+
+
+
+func createCompleter() completer {
+	// Return a function that readline calls for each argument
+	return func(line []string, pos int) []string {
+		if pos == 0 {
+			return nil // nothing to complete on the first arg (command)
+		}
+
+		// Get the current arg (line[pos-1]) and the next arg (line[pos])
+		// We want to complete line[pos] against files matching the prefix
+		prefix := line[pos-1]
+
+		// Expand ~ at the start
+		expanded, err := expandHomeDir(prefix)
+		if err != nil {
+			return nil
+		}
+
+		// If the prefix ends with / or is empty, do a directory listing
+		if strings.HasSuffix(expanded, "/") || expanded == "~" {
+			// Remove trailing slash for glob
+			base := strings.TrimSuffix(expanded, "/")
+			pattern := filepath.Join(base, "*")
+			matches, _ := filepath.Glob(pattern)
+			// Sort for consistent results
+			sort.Strings(matches)
+			// Return only the filename part
+			result := make([]string, len(matches))
+			for i, m := range matches {
+				result[i] = filepath.Base(m)
+			}
+			return result
+		}
+
+		// Otherwise, do a glob for files matching the prefix
+		pattern := filepath.Join(filepath.Dir(expanded), "*")
+		matches, _ := filepath.Glob(pattern)
+		sort.Strings(matches)
+
+		// Filter: only keep matches that start with the expanded prefix
+		var filtered []string
+		for _, m := range matches {
+			if strings.HasPrefix(m, expanded) {
+				filtered = append(filtered, m)
+			}
+		}
+
+		// Return the suffix after the prefix (what readline expects)
+		if len(filtered) > 0 {
+			suffix := strings.TrimPrefix(filtered[0], expanded)
+			return []string{suffix}
+		}
+		return nil
+	}
+}
+
+type completer func([]string, int) []string
 
 // runREPLWithShell is the main REPL loop.
 func runREPLWithShell(history *[]Message, shell *readline.Shell, histFile string) {
