@@ -177,7 +177,9 @@ func handleNonInteractive(config *Config) (runmode string) {
 	for i < len(args) {
 		arg := args[i]
 
-		isCommand := strings.HasPrefix(arg, "/") && !strings.HasPrefix(arg, "./") && !strings.HasPrefix(arg, "../")
+		// Accept both / and - as command prefixes (cross-platform: Linux uses /, Windows conventionally uses -)
+		// Exclude path-like args: ./foo, ../foo
+		isCommand := (strings.HasPrefix(arg, "/") || strings.HasPrefix(arg, "-")) && !strings.HasPrefix(arg, "./") && !strings.HasPrefix(arg, "../")
 
 		if !isCommand {
 			fmt.Fprintf(os.Stderr, "⚠️  Unexpected argument (not a command): %s\n", arg)
@@ -185,19 +187,20 @@ func handleNonInteractive(config *Config) (runmode string) {
 			continue
 		}
 
-		cmd := arg
+		// Normalize: strip the leading / or - so we can match commands uniformly
+		cmd := strings.TrimLeft(arg, "/-")
 		i++
 
 		switch cmd {
-		case "/repl":
+		case "repl":
 			config.ShowThinking = os.Getenv("SHOW_THINKING") == "on"
 			runREPL()
 			runmode = ""
 			return
 
-		case "/c", "/chat", "/q", "/question":
+		case "c", "chat", "q", "question":
 			if i >= len(args) {
-				fmt.Fprintln(os.Stderr, "❌ No question provided after", cmd)
+				fmt.Fprintln(os.Stderr, "❌ No question provided after %s", arg)
 				return
 			}
 			rawQuestion := strings.Join(args[i:], " ")
@@ -240,16 +243,17 @@ func handleNonInteractive(config *Config) (runmode string) {
 			var cmdArgs []string
 			for i < len(args) {
 				next := args[i]
-				nextIsCommand := strings.HasPrefix(next, "/") && !strings.HasPrefix(next, "./") && !strings.HasPrefix(next, "../")
+				nextIsCommand := (strings.HasPrefix(next, "/") || strings.HasPrefix(next, "-")) && !strings.HasPrefix(next, "./") && !strings.HasPrefix(next, "../")
 				if nextIsCommand {
 					break
 				}
 				cmdArgs = append(cmdArgs, next)
 				i++
 			}
-			fullCmd := cmd
+			// Add "/" prefix back so handleCommand's switch cases match
+			fullCmd := "/" + cmd
 			if len(cmdArgs) > 0 {
-				fullCmd = cmd + " " + strings.Join(cmdArgs, " ")
+				fullCmd = fullCmd + " " + strings.Join(cmdArgs, " ")
 			}
 			handleCommand(fullCmd, &history)
 		}
