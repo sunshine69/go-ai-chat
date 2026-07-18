@@ -947,8 +947,8 @@ func handleCommand(text string, history *[]Message) {
 		fmt.Fprintln(os.Stderr, "  /ctx <N>|off                  - Set context token limit (auto-trim when exceeded)")
 		fmt.Fprintln(os.Stderr, "  /maxtoken <N>                 - Set max tokens in payload.")
 		fmt.Fprintln(os.Stderr, "  /trimctx <idx|range>          - Remove messages at index or range (e.g. 3-5, -1--3)")
-		fmt.Fprintln(os.Stderr, "  /autonudgedisabled <on|off>    - Disable the auto nudge feature")
-		fmt.Fprintln(os.Stderr, "  /configdir <newdir>           - Switch config directory (.aigdotenv and .aig/). If run from from start add prefix dir:// so we dont treat the / as next command. eg. aig /n /configdir dir:///home/user/aig1 /repl - Within a session it is not required. ~ will be expanded into home dir")
+		fmt.Fprintln(os.Stderr, "  /autonudgedisabled <on|off>   - Disable the auto nudge feature")
+		fmt.Fprintln(os.Stderr, "  /configdir dir://<newdir>     - Switch config directory (.aigdotenv and .aig/). If run from from start add prefix dir:// so we dont treat the / as next command. eg. aig /n /configdir dir:///home/user/aig1 /repl - Within a session it is not required. ~ will be expanded into home dir")
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintf(os.Stderr, "Curl mode: using curl http://localhost:%d as base for these below cmds\n", statServerPort)
 		fmt.Fprintln(os.Stderr, "  currently only reporting stats")
@@ -1214,7 +1214,7 @@ func handleCommand(text string, history *[]Message) {
 	case "/configdir":
 		arg = strings.TrimPrefix(arg, "dir://")
 		if arg == "" {
-			panic("Usage: /configdir <newdir>")
+			panic("Usage: /configdir dir://<newdir>. Understand ~ expansion into user home dir")
 		}
 		if currentContextPath != "" {
 			saveHistory()
