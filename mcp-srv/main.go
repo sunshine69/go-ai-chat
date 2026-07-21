@@ -46,8 +46,8 @@ func init() {
 	// gets concatenated into the final regex alternation.
 	// ---------------------------------------------------------------------------
 	sharedCmds := `` +
-		// --- Go toolchain ---
-		`go|gobind|gofmt|gomobile|govet|staticcheck|` +
+		// --- Go toolchain gorun is mine ---
+		`go|gobind|gofmt|gomobile|govet|gorun|` +
 		// --- Rust ---
 		`cargo|rustc|rustfmt|rustup|` +
 		// --- Java / JVM ---
@@ -65,12 +65,12 @@ func init() {
 		// --- Mobile ---
 		`adb|fastboot|flutter|dart|` +
 		// --- Version control ---
-		`git|gh|gitlab|hg|svn|git-lfs|pre-commit|` +
+		`git|gh|gitlab|git-lfs|pre-commit|` +
 		// --- Containers ---
 		// `docker|podman|` +
 		// --- Kubernetes ---
-		`kubectl|helm|helmfile|kustomize|skaffold|argocd|flux|istioctl|linkerd|` +
-		`kind|minikube|kubectx|kubens|stern|k9s|` +
+		`kubectl|helm|kustomize|skaffold|argocd|flux|linkerd|` +
+		`kind|minikube|kubens|k9s|` +
 		// --- IaC ---
 		`terraform|terragrunt|tofu|pulumi|packer|ansible|ansible-playbook|ansible-vault|ansible-galaxy|vagrant|` +
 		// --- AWS ---
@@ -88,7 +88,7 @@ func init() {
 		// --- Secrets / security ---
 		// `sops|op|chamber|age|` +
 		// --- Misc dev tools ---
-		`jq|yq|`
+		`jq|yq|perl|lua|`
 
 	// ---------------------------------------------------------------------------
 	// Platform-specific additions — things that only exist (or only make sense)
@@ -118,9 +118,7 @@ func init() {
 			// --- C / C++ ---
 			`gcc|g\+\+|clang|clang\+\+|make|cmake|ninja|m4|bison|flex|` +
 				// --- Archive / transfer ---
-				`tar|zip|unzip|7z|curl|wget|zstd` +
-				// --- Scripting ---
-				`perl|lua|` +
+				`tar|zip|unzip|7z|curl|wget|zstd|` +
 				// --- macOS ---
 				`xcodebuild|xcrun|brew|open|pbcopy|` +
 				// --- File / text utils ---
