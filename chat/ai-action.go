@@ -30,7 +30,7 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 		// but it still needs to be smaller than ctxOverSizeAllowed.
 		if config.ContextLimit > 0 && (!foundAndExecToolCall || currentEstToken >= config.CtxOverSizeAllowed) {
 			if currentEstToken >= config.ContextLimit {
-				fmt.Fprintf(os.Stderr, "📊 Context size: ~%d tokens (limit: %d). Start triming context ...\n", estimateTokens(workingMsgs), config.ContextLimit)
+				fmt.Fprintf(os.Stderr, "📊 Context size: ~%d tokens (limit: %d). Start triming context ... ", estimateTokens(workingMsgs), config.ContextLimit)
 				workingMsgs = trimContext(ctx, config, workingMsgs)
 				fmt.Fprintln(os.Stderr, "done")
 			}
