@@ -166,3 +166,64 @@ Stable, most features completed.
 - Some times Qwen3.6 stop in the middle of something.
 
 There are a lots of efforts to bypass, ignore some strange `think outloud` from Qween! However it may still happen. You just need to type continue to make the model continue. It is not just this prog, many other ai gant has the similar like this as well eg. vscode continue, it is just the model producing some quirky texts at times
+
+## My best experience
+
+I used it to create a pretty large complicated projects and leanrt a lot about its behaviour and usages to get
+best results.
+
+As of now my config .aigdotenv is like below
+
+```
+MCP_PERM_browser_click=auto
+MCP_PERM_browser_network_request=auto
+MCP_PERM_browser_press_key=auto
+MCP_PERM_browser_handle_dialog=auto
+MCP_PERM_browser_network_requests.=auto
+MCP_PERM_browser_run_code_unsafe=auto
+MCP_PERM_browser_drag=auto
+MCP_PERM_postgres_execute=ask
+MCP_PERM_browser_navigate=auto
+MCP_PERM_postgres_connect=auto
+MCP_PERM_postgres_describe_table=auto
+MCP_PERM_browser_tabs=auto
+SUMMARY_MODEL_TIMEOUT=600s
+MCP_PERM_browser_get_text=auto
+MCP_PERM_browser_evaluate=auto
+MCP_PERM_browser_fill_form=auto
+MCP_PERM_browser_network_requests=auto
+MCP_PERM_browser_take_screenshot=auto
+MCP_PERM_browser_select_option=auto
+MCP_PERM_browser_hover=auto
+MCP_PERM_browser_drop=auto
+MCP_PERM_browser_close=auto
+MCP_PERM_create_directory=auto
+CONTEXT_LIMIT=50000
+MCP_PERM_remove_file_or_directory=auto
+MCP_PERM_browser_snapshot=auto
+MCP_PERM_find_replace_in_file=auto
+BLOCKED_TOOLS=block_in_file
+OPENAI_URL=http://192.168.20.23:11434/chat/completions
+MCP_PERM_postgres_list_tables=auto
+OPENAI_API_KEY=xxx
+MCP_PERM_read_file=auto
+MCP_PERM_browser_wait_for=auto
+MCP_PERM_postgres_query=auto
+MCP_PERM_browser_type=auto
+MCP_PERM_browser_file_upload=auto
+MCP_PERM_create_new_file=auto
+MCP_PERM_browser_resize=auto
+SHOW_THINKING=on
+DEBUG_LEVEL=1
+OPENAI_MODEL=ornith-apex
+MCP_PERM_insert_text_to_file=auto
+TIMEOUT=2h0m0s
+MCP_PERM_run_terminal_command=auto
+MCP_PERM_browser_console_messages=auto
+MCP_PERM_browser_navigate_back=auto
+MCP_PERM_browser_screenshot=auto
+
+```
+
+The model used is in three - Ornith 35B a3b is main worker/ Sometimes consult ornith-9b and gemma4 a4b (very little and not really useful) - qwen3.6 35b a3b is the second main worker which is very close.
+

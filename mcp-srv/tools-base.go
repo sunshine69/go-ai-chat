@@ -157,6 +157,59 @@ func (t *BaseToolManager) createNewFile(ctx context.Context, request mcp.CallToo
 	return mcp.NewToolResultText(fmt.Sprintf("File created successfully: %s (%d bytes)", cleanPath, len(content))), nil
 }
 
+func (t *BaseToolManager) execCommand(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	command := ""
+	if c, ok := args["command"]; ok {
+		command = fmt.Sprintf("%v", c)
+	}
+	// Parse the second part - it is the path and check it.
+	cmdSlice := strings.Fields(command)
+
+	workingDir := "./"
+	if wd, ok := args["working_dir"]; ok {
+		workingDir = fmt.Sprintf("%v", wd)
+	}
+	if res, err := t.checkPath(workingDir); err != nil {
+		return res, err
+	}
+
+	var cmd *exec.Cmd = exec.Command(cmdSlice[0], cmdSlice[1:]...)
+	if workingDir != "" {
+		cmd.Dir = filepath.Clean(workingDir)
+	}
+
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	runErr := cmd.Run()
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("$ %s\n", command))
+	if stdout.Len() > 0 {
+		sb.WriteString("\n--- stdout ---\n")
+		sb.WriteString(stdout.String())
+	}
+	if stderr.Len() > 0 {
+		sb.WriteString("\n--- stderr ---\n")
+		sb.WriteString(stderr.String())
+	}
+	if runErr != nil {
+		sb.WriteString(fmt.Sprintf("\n--- exit error ---\n%s\n", runErr.Error()))
+	}
+	if stdout.Len() == 0 && stderr.Len() == 0 && runErr == nil {
+		sb.WriteString("(command completed with no output)\n")
+	}
+	if sb.Len() >= MAX_OUPUT_SIZE {
+		tempfile := u.Must(os.CreateTemp("", "mcp"))
+		_ = u.Must(tempfile.Write([]byte(sb.String())))
+		tempfile.Sync()
+		return mcp.NewToolResultText("Command output is saved to a file " + tempfile.Name() + "\nBecause t is too big thus use text tools to extract information. DON'T read full content. REMEMBER to remove it after use."), nil
+	} else {
+		return mcp.NewToolResultText(sb.String()), nil
+	}
+}
 func (t *BaseToolManager) runTerminalCommand(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.GetArguments()
 	command := ""
@@ -571,6 +624,16 @@ If the output is too big it will be saved to a temp file and give you the file p
 		mcp.WithString("working_dir", mcp.Description("Directory to run the command in. Use this instead of 'cd'. Must be a relative path from the current directory.")),
 		// mcp.WithBoolean("confirmed", mcp.DefaultBool(false), mcp.Description("Must be explicitly set to true to actually run the command. When false or omitted a confirmation message is returned and nothing is executed.")),
 	), t.runTerminalCommand)
+
+	s.AddTool(mcp.NewTool("exec_command",
+		mcp.WithDescription(`Exec a command and returns its stdout and stderr. Eg. run "/bin/ls ." will exec /bin/ls and first arg is . 
+
+Note this tool does not use shell to exec, it exec directly the binary. Used it when SHELL is not available otherwise use run_terminal_command instead.
+
+If the output is too big it will be saved to a temp file and give you the file path. You SHOULD NOT read the whole file as it will overflow your context. You should use text tools to extract relevant information from it`),
+		mcp.WithString("command", mcp.Required(), mcp.Description("The command path to execute.")),
+		mcp.WithString("working_dir", mcp.Description("Directory to run the command in.")),
+	), t.execCommand)
 
 	s.AddTool(mcp.NewTool("file_glob_search",
 		mcp.WithDescription("Searches for files matching a glob pattern under a root directory and returns their paths."),
