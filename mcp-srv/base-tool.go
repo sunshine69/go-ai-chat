@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/google/shlex"
 	mcp "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	u "github.com/sunshine69/golang-tools/utils"
@@ -161,10 +162,16 @@ func (t *BaseToolManager) execCommand(ctx context.Context, request mcp.CallToolR
 	args := request.GetArguments()
 	command := ""
 	if c, ok := args["command"]; ok {
-		command = fmt.Sprintf("%v", c)
+		command = c.(string)
+		if RequiresShell(command) {
+			return t.runTerminalCommand(ctx, request)
+		}
 	}
 	// Parse the second part - it is the path and check it.
-	cmdSlice := strings.Fields(command)
+	cmdSlice, err := shlex.Split(command)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse command syntax: %w", err)
+	}
 
 	workingDir := "./"
 	if wd, ok := args["working_dir"]; ok {
@@ -205,7 +212,7 @@ func (t *BaseToolManager) execCommand(ctx context.Context, request mcp.CallToolR
 		tempfile := u.Must(os.CreateTemp("", "mcp"))
 		_ = u.Must(tempfile.Write([]byte(sb.String())))
 		tempfile.Sync()
-		return mcp.NewToolResultText("Command output is saved to a file " + tempfile.Name() + "\nBecause t is too big thus use text tools to extract information. DON'T read full content. REMEMBER to remove it after use."), nil
+		return mcp.NewToolResultText("Command output is saved to a file " + tempfile.Name() + "\nYou MUST use text tools to extract information. DON'T read full content. REMEMBER to remove it after use."), nil
 	} else {
 		return mcp.NewToolResultText(sb.String()), nil
 	}
@@ -626,7 +633,7 @@ If the output is too big it will be saved to a temp file and give you the file p
 	), t.runTerminalCommand)
 
 	s.AddTool(mcp.NewTool("exec_command",
-		mcp.WithDescription(`Exec a command *WITHOUT USING SHELL* and returns its stdout and stderr. Eg. run "/bin/ls ." will exec /bin/ls and first arg is .
+		mcp.WithDescription(`Exec a command and returns its stdout and stderr. Eg. run "/bin/ls ." will exec /bin/ls and first arg is .
 
 Used it when you are not sure if SHELL is available or you want to exec command directly, otherwise use run_terminal_command instead.
 
