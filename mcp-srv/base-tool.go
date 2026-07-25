@@ -626,9 +626,9 @@ If the output is too big it will be saved to a temp file and give you the file p
 	), t.runTerminalCommand)
 
 	s.AddTool(mcp.NewTool("exec_command",
-		mcp.WithDescription(`Exec a command and returns its stdout and stderr. Eg. run "/bin/ls ." will exec /bin/ls and first arg is . 
+		mcp.WithDescription(`Exec a command *WITHOUT USING SHELL* and returns its stdout and stderr. Eg. run "/bin/ls ." will exec /bin/ls and first arg is .
 
-Note this tool does not use shell to exec, it exec directly the binary. Used it when SHELL is not available otherwise use run_terminal_command instead.
+Used it when you are not sure if SHELL is available or you want to exec command directly, otherwise use run_terminal_command instead.
 
 If the output is too big it will be saved to a temp file and give you the file path. You SHOULD NOT read the whole file as it will overflow your context. You should use text tools to extract relevant information from it`),
 		mcp.WithString("command", mcp.Required(), mcp.Description("The command path to execute.")),
