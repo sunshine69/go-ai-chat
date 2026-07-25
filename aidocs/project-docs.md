@@ -14,7 +14,6 @@
 ## Models Available
 | Model | Context Size | Notes |
 |-------|-------------|-------|
-| Qwen3-Coder-Next-APEX-I-Mini (70B) | 64K | Great for coding tasks |
 | gemma-4-26B-A4B-it-UD-Q5_K_XL | 24K | Good general purpose |
 | Qwen3.6-35B-A3B-Uncensored | 24K | Uncensored variant |
 
