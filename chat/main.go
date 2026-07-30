@@ -557,10 +557,15 @@ func handleCommand(text string, history *[]Message) {
 
 	case "/trimctx":
 		if arg == "" {
-			fmt.Fprintln(os.Stderr, "Usage: /trimctx <index> or /trimctx <start-end>")
+			fmt.Fprintln(os.Stderr, "Usage: /trimctx <index> or /trimctx <start-end> or auto auto will sue the current compression")
 			fmt.Fprintln(os.Stderr, "Example: /trimctx 3-5 or /trimctx -1--3")
 			return
 		}
+		if arg == "auto" {
+			*history = trimContext(context.TODO(), *config, *history)
+			return
+		}
+
 		start, end, ok := ParseRangeFromInputString(arg)
 		if !ok {
 			fmt.Fprintln(os.Stderr, "❌ Invalid format. Use <index> or <start-end> (e.g., 3-5-1--3)")
