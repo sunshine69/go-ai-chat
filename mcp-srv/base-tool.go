@@ -477,7 +477,7 @@ func (t *BaseToolManager) fetchUrl(ctx context.Context, request mcp.CallToolRequ
 		tempDir := u.Must(os.MkdirTemp("", "aig*"))
 		tempFile := filepath.Join(tempDir, "fetch-url-doc.md")
 		u.CheckErr(os.WriteFile(tempFile, []byte(markdownText), 0o644), "write doc file")
-		return mcp.NewToolResultText(fmt.Sprintf("Document saved at file path '%s'. Size %d bytes. You can extract information from it using current available tools. Avoid reading the whole file with that size to avoid context overflow. Clean up the file after you no longer need it", tempFile, docSize)), nil
+		return mcp.NewToolResultText(fmt.Sprintf("Document saved to file; path '%s'. Size %d bytes. You can extract information from it using current available text extraction tools. Avoid reading the whole file with that size to avoid context overflow. Clean up the file after you no longer need it", tempFile, docSize)), nil
 	}
 	return mcp.NewToolResultText(markdownText), nil
 }
@@ -528,7 +528,7 @@ func (t *BaseToolManager) httpRequest(ctx context.Context, request mcp.CallToolR
 		if err := os.WriteFile(filePath, respBody, 0o640); err != nil {
 			return mcp.NewToolResultText("[ERROR] " + err.Error()), err
 		}
-		return mcp.NewToolResultText(fmt.Sprintf("Status: %d\nSaved To: %s", resp.StatusCode, filePath)), nil
+		return mcp.NewToolResultText(fmt.Sprintf("Status: %d\nDocument saved to file; path '%s'. Size %d bytes. You can extract information from it using current available text extraction tools. Avoid reading the whole file with that size to avoid context overflow. Clean up the file after you no longer need it", resp.StatusCode, filePath, dataLen)), nil
 	}
 	return mcp.NewToolResultText(fmt.Sprintf("Status: %d\nBody: %s", resp.StatusCode, string(respBody))), nil
 }
