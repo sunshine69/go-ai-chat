@@ -98,7 +98,13 @@ func trimContext(ctx context.Context, cfg Config, msgs []Message) []Message {
 
 	if len(rest) <= keepHead+keepTail {
 		fmt.Fprintln(os.Stderr, "rest msg not valid to compress more. Will cut off the last message")
-		return msgs[0 : len(msgs)-1]
+		l0 := len(msgs) - 1
+		//fmt.Fprintf("role l0 %s - l1 %s\n", msgs[l0-1].Role, msgs[l1-1].Role)
+		summaryMsg := Message{
+			Role:    "user",
+			Content: "continue",
+		}
+		return append(msgs[0:l0], summaryMsg)
 	}
 
 	// head := rest[:keepHead]
@@ -107,7 +113,11 @@ func trimContext(ctx context.Context, cfg Config, msgs []Message) []Message {
 
 	if len(middle) == 0 {
 		fmt.Fprintln(os.Stderr, "no middle messages to remove. Will cut off the last message")
-		return msgs[0 : len(msgs)-1]
+		summaryMsg := Message{
+			Role:    "user",
+			Content: "continue",
+		}
+		return append(msgs[0:len(msgs)-1], summaryMsg)
 	}
 
 	fmt.Fprintf(os.Stderr, "✂️  Context too long (~%d tokens) — compressing %d middle messages…\n",

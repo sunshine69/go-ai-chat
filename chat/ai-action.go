@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -35,7 +36,16 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 				fmt.Fprintln(os.Stderr, "done")
 			}
 		}
+		// Timestamp each AI model turn so the user can see how long each
+		// round-trip took (thinking → response → tool execution → response).
+		log.Printf("━━━ AI turn start ━━━")
+
 		content, thinking, toolCalls, err := streamOnce(ctx, config, workingMsgs)
+
+		// If streamOnce failed with a recoverable error (nudge-loop, cutoff…)
+		// we still want a final timestamp on the last turn it produced.
+		finalizeTurn := func() { log.Printf("━━━ AI turn end   ━━━") }
+
 		var collectContentAndThink = func() {
 			// Always gather whatever text it managed to output
 			if content != "" {
@@ -47,6 +57,7 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 		}
 		var remindAiFunc = func(msg string) {
 			collectContentAndThink()
+			finalizeTurn()
 			workingMsgs = append(workingMsgs, Message{
 				Role:    "assistant",
 				Content: thinking,
@@ -71,9 +82,11 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 					}
 					continue
 				default:
+					finalizeTurn()
 					return accumulatedContent.String() + content, accumulatedThinking.String() + thinking, workingMsgs, err
 				}
 			}
+			finalizeTurn()
 			return accumulatedContent.String() + content, accumulatedThinking.String() + thinking, workingMsgs, err
 		}
 		collectContentAndThink()
@@ -107,6 +120,7 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 		}
 		// No tool calls — we're done
 		if len(toolCalls) == 0 {
+			finalizeTurn()
 			return accumulatedContent.String(), accumulatedThinking.String(), workingMsgs, nil
 		} else {
 			foundAndExecToolCall = false // reset it here
@@ -389,13 +403,13 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 			}
 			if config.ShowThinking {
 				if !thinkingStarted {
-					fmt.Print("\n> 🤔 Thinking...\n")
+					log.Print("\n> 🤔 Thinking...\n")
 					thinkingStarted = true
 				}
 				fmt.Fprint(os.Stdout, rc)
 				os.Stdout.Sync()
 			} else if !thinkingStarted {
-				fmt.Fprint(os.Stderr, "\n> 🤔 Thinking hidden, run /showthink on to enable\n")
+				log.Print("\n> 🤔 Thinking hidden, run /showthink on to enable\n")
 				thinkingStarted = true
 			}
 			continue
@@ -415,7 +429,7 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 			globalStats.TokenArrived(tokenCount)
 
 			if !headerPrinted {
-				fmt.Fprint(os.Stderr, "\n> 📝 Response:\n")
+				log.Print("\n> 📝 Response:\n")
 				headerPrinted = true
 			}
 			fullContent.WriteString(delta.Content)
@@ -441,7 +455,7 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 
 			// Announce the JSON call as soon as the function name arrives
 			if tcDelta.Function.Name != "" && tc.Function.Name == "" {
-				fmt.Fprintf(os.Stderr, "\n> 🔧 Planning tool call (JSON): %s\n", tcDelta.Function.Name)
+				log.Printf("\n> 🔧 Planning tool call (JSON): %s\n", tcDelta.Function.Name)
 			}
 
 			if tcDelta.ID != "" {
@@ -468,7 +482,7 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 	} // scanner end
 
 	if err := scanner.Err(); err != nil && ctx.Err() == nil {
-		fmt.Fprintf(os.Stderr, "[ERR] scanner error %s\n", err.Error())
+		log.Printf("[ERR] scanner error %s\n", err.Error())
 		return fullContent.String(), thinkingContent.String(), nil, fmt.Errorf("stream error: %v", err)
 	}
 
@@ -476,7 +490,7 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 	var toolCalls []ToolCall
 	for _, tc := range toolCallAccum {
 		if tc == nil || tc.Type != "function" || strings.TrimSpace(tc.Function.Name) == "" {
-			fmt.Fprintf(os.Stderr, "⚠️ Invalid - Type %s - Funcname %s\n ", tc.Type, tc.Function.Name)
+			log.Printf("⚠️ Invalid - Type %s - Funcname %s\n ", tc.Type, tc.Function.Name)
 			continue
 		}
 
@@ -494,7 +508,7 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 		}
 
 		if config.Debug {
-			fmt.Fprintf(os.Stderr, "CALL TOOL: %+v\n", tc)
+			log.Printf("CALL TOOL: %+v\n", tc)
 		}
 		toolCalls = append(toolCalls, *tc)
 	}
