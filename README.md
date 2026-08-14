@@ -6,7 +6,7 @@ This is simple, pure go, console based AI chat with support for mcp in agent mod
 
 - Model selection
 - Can connect to MCP server currently support stdio and http streamable.
-  I provided one will full tools to enable coding agent mode in mcp-stdio-q36 dir.
+  I provided one will full tools to enable coding agent mode in mcp-srv dir.
   User can implement new one based on the existing pattern.
 - Context trimming. Support different model for sumarizing the context (faster)
 - Session management, be able to save conversations into file in order to be read by other editor (vim)
