@@ -140,7 +140,7 @@ func init() {
 		// The old pattern `(\/tmp|[^\/])[^\s]*$` had a bug: [^\/] matched any
 		// single non-slash char, so `/etc/shadow` passed because `shadow` starts
 		// with `s`. Anchoring explicitly closes that gap.
-		defaultAllowPath = `(^[^/]|\.\/)[^\s]*$`
+		defaultAllowPath = `^(?:\.\./|\./)?(?:\.[^/\s]|[^./\s])[^\s]*$`
 	}
 }
 
@@ -248,13 +248,14 @@ func buildServer(cfg config) *server.MCPServer {
 	if strings.Contains(cfg.toolSet, "all") || strings.Contains(cfg.toolSet, "rustdoc") {
 		registerRustDocTools(s)
 	}
-
-	baseTool := BaseToolManager{
+	println("[DEBUG] defaultAllowPath - ", defaultAllowPath)
+	baseTool := BaseToolManager{ // Noticed very very strange behaviour of env var corruptions when using tmux
 		AllowedTerminalCommandPattern: u.Getenv("ALLOWED_TERM_CMD_PTN", defaultAllowCmd),
 		BlockedTerminalCommandPattern: u.Getenv("BLOCKED_TERM_CMD_PTN", ""),
 		AllowedPathPattern:            u.Getenv("ALLOWED_PATH_PTN", defaultAllowPath),
 		BlockedPathPattern:            u.Getenv("BLOCKED_PATH_PTN", ""),
 	}
+	println("[DEBUG] baseTool - ", u.JsonDump(baseTool, ""))
 	// Default tools to load
 	registerBaseTool(s, &baseTool)
 	registerTextTools(s, &TextToolManager{})
