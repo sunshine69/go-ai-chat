@@ -26,6 +26,7 @@ type config struct {
 var (
 	defaultAllowCmd  string
 	defaultAllowPath string
+	pathErrorMsg     string
 	unixFileTools    map[string]any = u.SliceToMap([]string{"cat", "find", "head", "ls", "cp", "mv", "rm", "chmod", "chown", "touch", "file", "stat", "ln", "realpath", "dirname", "basename", "cd"})
 )
 
@@ -108,10 +109,28 @@ func init() {
 			// We allow the space after, could be none which has a limitation, eg. if command 'cd' is not in the list but there is command cdk, then 'cd path' will be accepted. To solve it we might be throughly review each cmd and which one allow space which one not.
 		defaultAllowCmd = `^(` + sharedCmds + windowsCmds + `)[\s]*.*$`
 
-		// Allow: %TEMP%/%TMP%/%USERPROFILE% literals, relative paths (no drive
-		// letter or leading backslash), and absolute paths under Users\, Temp\,
-		// Windows\Temp\. (?i) because Windows paths are case-insensitive.
-		defaultAllowPath = `(?i)^(?!.*\.\.)[^\\/:*?"<>|][^:*?"<>|]*$`
+		// — regexp.MustCompile on that pattern panics at startup. This rewrite
+		// gets the same "no .. anywhere" guarantee via segment-level alternation,
+		// same technique as the unix pattern.
+		//
+		// Allows: relative paths (backslash or forward slash separators, one
+		// "..\" step up), OR absolute paths under the literal env-var tokens
+		// %TEMP%, %TMP%, %USERPROFILE% (agent should pass these unresolved —
+		// the OS/shell expands them, we never see or need to know the real path).
+		//
+		// Deliberately does NOT allow bare drive-letter paths (C:\Users\...) or
+		// UNC paths (\\server\share) — colon and leading backslash are excluded
+		// from every segment, so both classes fail to match. If you want direct
+		// drive-letter access, that's a real widening of the blast radius (any
+		// path on that drive vs. a scoped temp/profile dir) and should be an
+		// explicit, deliberate addition — same trade-off logic as the bare-shell
+		// omission above.
+		winSegment := `(?:[^./\\:*?"<>|][^\\/:*?"<>|]*|\.[^./\\:*?"<>|][^\\/:*?"<>|]*|\.)`
+		sep := `[\\/]`
+		winRelative := `(?:\.\.` + sep + `|\.` + sep + `)?` + winSegment + `(?:` + sep + winSegment + `)*`
+		winAbs := `(?:%TEMP%|%TMP%|%USERPROFILE%)(?:` + sep + winSegment + `(?:` + sep + winSegment + `)*)?`
+		defaultAllowPath = `(?i)^(?:` + winRelative + `|` + winAbs + `)$`
+		pathErrorMsg = `[ERROR] denied access for path: '%s'. ONLY RELATIVE PATH TO THE CURRENT DIR AND ONE LEVEL UPPER ARE ALLOWED. EXCEPTIONS ARE ABSOLUTE PATH START FROM TEMP DIR`
 
 	default: // linux, darwin, and everything else
 		unixCmds :=
@@ -136,36 +155,16 @@ func init() {
 
 		defaultAllowCmd = `^(` + sharedCmds + unixCmds + `)[\s]*.*$`
 
-		// Relative-to-cwd only, with at most one "../" to step out of the
-		// mcp working dir — no absolute paths, no deeper/embedded traversal.
-		//
-		// Every path segment (text between slashes) must not be exactly ".."
-		// — the one exception is a single leading "../", consumed once by
-		// the optional group up front. Everything after that is walked
-		// segment-by-segment and any segment equal to ".." kills the match,
-		// wherever it appears in the path (start, middle, or end).
-		//
-		// Allowed:   foo/bar.txt   ./foo   .env   ../foo   ../sibling/file
-		// Blocked:   /etc/passwd (absolute)
-		//            ../../etc/passwd (more than one level up)
-		//            foo/../../etc/shadow (embedded traversal after the first segment)
-		//
-		// Go's regexp is RE2 — no lookahead/backreferences — so this is
-		// spelled out via segment-level alternation rather than a lookahead
-		// like `(?!.*\.\.)`, which Go can't compile.
-		//
-		// NOTE: as a side effect, a literal filename that IS exactly ".."
-		// or starts with ".." followed by another dot (e.g. "...", "..backup")
-		// is also rejected. Intentional over-block in favor of safety.
-		//
-		// Historical note: an earlier pattern `(\/tmp|[^\/])[^\s]*$` had a bug
-		// where [^\/] matched any single non-slash char, so `/etc/shadow` passed
-		// because `shadow` starts with `s`. A later fix anchored the prefix but
-		// still only constrained the *start* of the string — embedded `../../`
-		// sequences later in the path were unguarded (e.g. `foo/../../etc/shadow`
-		// slipped through). This version validates every segment, not just the first.
+		// Relative-to-cwd (one "../" allowed), OR absolute under /tmp or /var/tmp.
+		// Every path segment must not be exactly ".." — this closes traversal
+		// both in the relative form (../../etc/passwd) and inside the /tmp
+		// exception (/tmp/../etc/shadow). See detailed segment-matching notes
+		// in the earlier version of this comment.
 		pathSegment := `(?:[^./\s][^/\s]*|\.[^./\s][^/\s]*|\.)`
-		defaultAllowPath = `^(?:\.\./|\./)?` + pathSegment + `(?:/` + pathSegment + `)*$`
+		relativePath := `(?:\.\./|\./)?` + pathSegment + `(?:/` + pathSegment + `)*`
+		tmpPath := `(?:/tmp|/var/tmp)(?:/` + pathSegment + `(?:/` + pathSegment + `)*)?`
+		defaultAllowPath = `^(?:` + relativePath + `|` + tmpPath + `)$`
+		pathErrorMsg = `[ERROR] denied access for path: '%s'. ONLY RELATIVE PATH TO THE CURRENT DIR AND ONE LEVEL UPPER ARE ALLOWED. EXCEPTIONS ARE /tmp and /var/tmp. That is ./XXX ../XXX XXX /tmp, /var/tmp should work, BUT NOT / and ../../`
 	}
 }
 
