@@ -136,11 +136,36 @@ func init() {
 
 		defaultAllowCmd = `^(` + sharedCmds + unixCmds + `)[\s]*.*$`
 
-		// Allow /tmp/, /var/tmp/, or any relative path (no leading /).
-		// The old pattern `(\/tmp|[^\/])[^\s]*$` had a bug: [^\/] matched any
-		// single non-slash char, so `/etc/shadow` passed because `shadow` starts
-		// with `s`. Anchoring explicitly closes that gap.
-		defaultAllowPath = `^(?:\.\./|\./)?(?:\.[^/\s]|[^./\s]|/)?[^\s]*$`
+		// Relative-to-cwd only, with at most one "../" to step out of the
+		// mcp working dir — no absolute paths, no deeper/embedded traversal.
+		//
+		// Every path segment (text between slashes) must not be exactly ".."
+		// — the one exception is a single leading "../", consumed once by
+		// the optional group up front. Everything after that is walked
+		// segment-by-segment and any segment equal to ".." kills the match,
+		// wherever it appears in the path (start, middle, or end).
+		//
+		// Allowed:   foo/bar.txt   ./foo   .env   ../foo   ../sibling/file
+		// Blocked:   /etc/passwd (absolute)
+		//            ../../etc/passwd (more than one level up)
+		//            foo/../../etc/shadow (embedded traversal after the first segment)
+		//
+		// Go's regexp is RE2 — no lookahead/backreferences — so this is
+		// spelled out via segment-level alternation rather than a lookahead
+		// like `(?!.*\.\.)`, which Go can't compile.
+		//
+		// NOTE: as a side effect, a literal filename that IS exactly ".."
+		// or starts with ".." followed by another dot (e.g. "...", "..backup")
+		// is also rejected. Intentional over-block in favor of safety.
+		//
+		// Historical note: an earlier pattern `(\/tmp|[^\/])[^\s]*$` had a bug
+		// where [^\/] matched any single non-slash char, so `/etc/shadow` passed
+		// because `shadow` starts with `s`. A later fix anchored the prefix but
+		// still only constrained the *start* of the string — embedded `../../`
+		// sequences later in the path were unguarded (e.g. `foo/../../etc/shadow`
+		// slipped through). This version validates every segment, not just the first.
+		pathSegment := `(?:[^./\s][^/\s]*|\.[^./\s][^/\s]*|\.)`
+		defaultAllowPath = `^(?:\.\./|\./)?` + pathSegment + `(?:/` + pathSegment + `)*$`
 	}
 }
 
@@ -252,7 +277,7 @@ func buildServer(cfg config) *server.MCPServer {
 	baseTool := BaseToolManager{ // Noticed very very strange behaviour of env var corruptions when using tmux
 		AllowedTerminalCommandPattern: u.Getenv("ALLOWED_TERM_CMD_PTN", defaultAllowCmd),
 		BlockedTerminalCommandPattern: u.Getenv("BLOCKED_TERM_CMD_PTN", ""),
-		AllowedPathPattern:            u.Getenv("ALLOWED_PATH_PTN", defaultAllowPath),
+		AllowedPathPattern:            defaultAllowPath,
 		BlockedPathPattern:            u.Getenv("BLOCKED_PATH_PTN", ""),
 	}
 	println("[DEBUG] baseTool - ", u.JsonDump(baseTool, ""))

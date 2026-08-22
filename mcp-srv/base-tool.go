@@ -34,7 +34,7 @@ func (t *BaseToolManager) checkPath(path string) (*mcp.CallToolResult, error) {
 
 	if t.AllowedPathPattern != "" {
 		if !regexp.MustCompile(t.AllowedPathPattern).MatchString(normalizedPath) {
-			return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] denied access for path: '%s'. Allowed path pattern: '%s'", path, t.AllowedPathPattern)
+			return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] denied access for path: '%s'. ONLY RELATIVE PATH TO THE CURRENT DIR AND ONE LEVEL UPPER ARE ALLOWED. That is ./XXX ../XXX XXX should work, BUT NOT / and ../../", path)
 		}
 	}
 	if t.BlockedPathPattern != "" {
