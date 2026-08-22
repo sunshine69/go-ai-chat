@@ -24,7 +24,8 @@ import (
 //  4. text_grep      – search for a term when the section name is unknown
 //  5. text_lines     – pull an exact line range after grep/toc reveals the position
 //  6. text_head/tail – quick orientation at top or bottom of file
-//  7. text_cat       – last resort; capped at max_lines (default 200)
+//  7. text_sed       – edit the file in place (substitute/delete lines) once you know what to change
+//  8. text_cat       – last resort; capped at max_lines (default 200)
 type TextToolManager struct{}
 
 // ── internal helpers ─────────────────────────────────────────────────────────
@@ -477,6 +478,269 @@ func (t *TextToolManager) handleCat(_ context.Context, req mcp.CallToolRequest) 
 	return textResult(sb.String()), nil
 }
 
+// ── text_sed ─────────────────────────────────────────────────────────────────
+//
+// handleSed is a deliberately small subset of sed, aimed at being unambiguous
+// for an AI model to generate rather than being feature-complete. It edits the
+// file IN PLACE (like `sed -i`) — pass dry_run=true to preview the effect of a
+// command without writing anything to disk.
+//
+// Pattern syntax is Go's RE2 (regexp.Compile), the same as text_grep's
+// "pattern" argument — NOT POSIX BRE/ERE, NOT PCRE. No backreferences in the
+// pattern, no lookahead/lookbehind. Capture groups are usable in the
+// replacement string as $1 / ${1} / $name via regexp.ExpandString.
+//
+// Delimiter is always "|" (no custom delimiter support, to keep the grammar
+// unambiguous). Because "|" is the delimiter, patterns/replacements must not
+// contain a literal, unescaped "|" — e.g. regex alternation via `a|b` is not
+// supported; use a character class or bracket expression instead where possible.
+//
+// Supported forms:
+//
+//  1. s|ptn|replace|g          substitute over the whole file, all matches per line
+//     s|ptn|replace            substitute over the whole file, first match per line only
+//  2. |ptn|d                   delete every line matching ptn
+//     |ptn|!d                  delete every line NOT matching ptn (i.e. keep only matches)
+//  3. 5d                       delete line 5
+//     5!d                      delete every line EXCEPT line 5
+//  4. 1,5d                     delete lines 1 through 5 (inclusive)
+//     1,5!d                    delete every line EXCEPT lines 1 through 5
+//  5. 2,5s|old|new|g           substitute, but only within lines 2 through 5
+//     5,$s|old|new             substitute from line 5 to end of file ("$" = last line),
+//     first match per line only
+//
+// The tool never guesses: any command that doesn't cleanly match one of the
+// forms above is rejected with an error listing the supported forms, rather
+// than silently doing something unexpected to the file.
+func (t *TextToolManager) handleSed(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	file := req.GetString("file", "")
+	command := req.GetString("command", "")
+	dryRun := req.GetBool("dry_run", false)
+
+	if file == "" || command == "" {
+		return errResult(fmt.Errorf("file and command are required")), nil
+	}
+
+	lines, err := readLines(file)
+	if err != nil {
+		return errResult(err), nil
+	}
+	n := len(lines)
+
+	if n == 0 {
+		return textResult(fmt.Sprintf("file %q is empty — nothing to do", file)), nil
+	}
+
+	const usage = "unrecognized sed command %q — supported forms: " +
+		"s|ptn|repl|g, s|ptn|repl, N,Ms|ptn|repl|g, |ptn|d, |ptn|!d, Nd, N!d, N,Md, N,M!d"
+
+	resolveAddr := func(s string) (int, error) {
+		if s == "$" {
+			return n, nil
+		}
+		v, err := strconv.Atoi(s)
+		if err != nil {
+			return 0, fmt.Errorf("invalid line address %q", s)
+		}
+		return v, nil
+	}
+
+	parseRange := func(body string) (start, end int, err error) {
+		if strings.Contains(body, ",") {
+			bits := strings.SplitN(body, ",", 2)
+			start, err = resolveAddr(bits[0])
+			if err != nil {
+				return 0, 0, err
+			}
+			end, err = resolveAddr(bits[1])
+			if err != nil {
+				return 0, 0, err
+			}
+		} else {
+			start, err = resolveAddr(body)
+			if err != nil {
+				return 0, 0, err
+			}
+			end = start
+		}
+		if start < 1 || end > n || start > end {
+			return 0, 0, fmt.Errorf("line range %d,%d out of bounds (file has %d lines)", start, end, n)
+		}
+		return start, end, nil
+	}
+
+	var outLines []string
+	var changed int
+	var action string
+
+	parts := strings.Split(command, "|")
+
+	switch {
+	// ── |ptn|d  /  |ptn|!d ── pattern-based delete, whole file, no address ──
+	case len(parts) == 3 && parts[0] == "" && (parts[2] == "d" || parts[2] == "!d"):
+		pattern := parts[1]
+		invert := parts[2] == "!d"
+
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			return errResult(fmt.Errorf("invalid regex %q: %w", pattern, err)), nil
+		}
+		outLines = make([]string, 0, n)
+		for _, l := range lines {
+			isMatch := re.MatchString(l)
+			del := isMatch
+			if invert {
+				del = !isMatch
+			}
+			if del {
+				changed++
+				continue
+			}
+			outLines = append(outLines, l)
+		}
+		if invert {
+			action = fmt.Sprintf("deleted %d line(s) NOT matching /%s/", changed, pattern)
+		} else {
+			action = fmt.Sprintf("deleted %d line(s) matching /%s/", changed, pattern)
+		}
+
+	// ── [addr]s|ptn|repl|flags  or  [addr]s|ptn|repl ── substitute ──
+	case (len(parts) == 3 || len(parts) == 4) && strings.HasSuffix(parts[0], "s"):
+		addrPart := strings.TrimSuffix(parts[0], "s")
+		start, end := 1, n
+		if addrPart != "" {
+			start, end, err = parseRange(addrPart)
+			if err != nil {
+				return errResult(err), nil
+			}
+		}
+
+		pattern, replacement := parts[1], parts[2]
+		flags := ""
+		if len(parts) == 4 {
+			flags = parts[3]
+		}
+		global := strings.Contains(flags, "g")
+
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			return errResult(fmt.Errorf("invalid regex %q: %w", pattern, err)), nil
+		}
+
+		outLines = make([]string, n)
+		copy(outLines, lines)
+		for i := start - 1; i <= end-1; i++ {
+			orig := outLines[i]
+			var replaced string
+			if global {
+				replaced = re.ReplaceAllString(orig, replacement)
+			} else {
+				loc := re.FindStringSubmatchIndex(orig)
+				if loc == nil {
+					replaced = orig
+				} else {
+					var buf []byte
+					buf = re.ExpandString(buf, replacement, orig, loc)
+					replaced = orig[:loc[0]] + string(buf) + orig[loc[1]:]
+				}
+			}
+			if replaced != orig {
+				changed++
+				outLines[i] = replaced
+			}
+		}
+		rangeDesc := fmt.Sprintf("%d", start)
+		if start != end {
+			rangeDesc = fmt.Sprintf("%d,%d", start, end)
+		}
+		if addrPart == "" {
+			rangeDesc = "whole file"
+		}
+		action = fmt.Sprintf("substituted on %d line(s) (%s, /%s/ -> /%s/, flags=%q)",
+			changed, rangeDesc, pattern, replacement, flags)
+
+	// ── Nd / N!d / N,Md / N,M!d ── numeric line delete, no pattern ──
+	case len(parts) == 1:
+		body := parts[0]
+		invert := false
+		switch {
+		case strings.HasSuffix(body, "!d"):
+			invert = true
+			body = strings.TrimSuffix(body, "!d")
+		case strings.HasSuffix(body, "d"):
+			body = strings.TrimSuffix(body, "d")
+		default:
+			return errResult(fmt.Errorf(usage, command)), nil
+		}
+		if body == "" {
+			return errResult(fmt.Errorf(usage, command)), nil
+		}
+		start, end, err := parseRange(body)
+		if err != nil {
+			return errResult(err), nil
+		}
+		outLines = make([]string, 0, n)
+		for i, l := range lines {
+			lineNo := i + 1
+			inRange := lineNo >= start && lineNo <= end
+			del := inRange
+			if invert {
+				del = !inRange
+			}
+			if del {
+				changed++
+				continue
+			}
+			outLines = append(outLines, l)
+		}
+		rangeDesc := fmt.Sprintf("%d", start)
+		if start != end {
+			rangeDesc = fmt.Sprintf("%d,%d", start, end)
+		}
+		if invert {
+			action = fmt.Sprintf("deleted %d line(s) outside range %s", changed, rangeDesc)
+		} else {
+			action = fmt.Sprintf("deleted %d line(s) in range %s", changed, rangeDesc)
+		}
+
+	default:
+		return errResult(fmt.Errorf(usage, command)), nil
+	}
+
+	if dryRun {
+		return textResult(fmt.Sprintf("[dry run] would have %s in %q — no changes written (dry_run=true)", action, file)), nil
+	}
+
+	if changed == 0 {
+		return textResult(fmt.Sprintf("no changes: 0 line(s) affected by %q in %q — file left untouched", command, file)), nil
+	}
+
+	// Write in place. This overwrites the original file, so callers that want
+	// a safety net should run with dry_run=true first, or keep their own backup
+	// (e.g. via version control) — this tool intentionally does not create one,
+	// to keep behaviour predictable and match `sed -i` semantics.
+	f, err := os.Create(file)
+	if err != nil {
+		return errResult(fmt.Errorf("cannot write file %q: %w", file, err)), nil
+	}
+	w := bufio.NewWriter(f)
+	for _, l := range outLines {
+		if _, err := w.WriteString(l + "\n"); err != nil {
+			f.Close()
+			return errResult(fmt.Errorf("write error: %w", err)), nil
+		}
+	}
+	if err := w.Flush(); err != nil {
+		f.Close()
+		return errResult(fmt.Errorf("flush error: %w", err)), nil
+	}
+	if err := f.Close(); err != nil {
+		return errResult(fmt.Errorf("close error: %w", err)), nil
+	}
+
+	return textResult(fmt.Sprintf("OK: %s. Wrote %d line(s) to %q.", action, len(outLines), file)), nil
+}
+
 // ── registration ─────────────────────────────────────────────────────────────
 
 func registerTextTools(s *server.MCPServer, tool *TextToolManager) {
@@ -574,4 +838,40 @@ func registerTextTools(s *server.MCPServer, tool *TextToolManager) {
 		mcp.WithBoolean("line_number", mcp.Description("Prefix each line with its 1-based line number. Default: false.")),
 		mcp.WithNumber("max_lines", mcp.Description("Hard cap on lines returned (0 = unlimited). Default: 200.")),
 	), tool.handleCat)
+
+	// ── text_sed ──
+	s.AddTool(mcp.NewTool("text_sed",
+		mcp.WithDescription(
+			"Edit a file IN PLACE using a tiny, unambiguous subset of sed. "+
+				"PATTERN SYNTAX IS GO RE2 (regexp.Compile / pkg.go.dev/regexp/syntax), the SAME syntax as text_grep's "+
+				"'pattern' argument — it is NOT POSIX BRE/ERE and NOT PCRE. "+
+				"Practical implications: '+ ? ( ) { } |' are ALREADY special, do not backslash-escape them like POSIX BRE. "+
+				"Backreferences inside the pattern (e.g. '(a)\\1') are NOT supported. "+
+				"Lookahead/lookbehind are NOT supported. "+
+				"Numbered/named capture groups ARE supported in the replacement string only, as $1, ${1}, or $name. "+
+				"Delimiter is always the literal '|' character — patterns/replacements must not contain a literal, "+
+				"unescaped '|' (so alternation like 'a|b' cannot be used; use a character class '[ab]' or write two "+
+				"separate commands instead). "+
+				"Writes the file immediately unless dry_run=true, in which case nothing is written and a preview "+
+				"summary is returned instead. "+
+				"Supported command forms:\n"+
+				"  s|ptn|repl|g        substitute all matches, whole file (ptn is Go RE2)\n"+
+				"  s|ptn|repl          substitute first match per line, whole file\n"+
+				"  2,5s|ptn|repl|g     substitute, restricted to lines 2-5 (use $ for last line, e.g. 5,$s|ptn|repl)\n"+
+				"  |ptn|d              delete every line matching ptn (Go RE2)\n"+
+				"  |ptn|!d             delete every line NOT matching ptn\n"+
+				"  5d                  delete line 5 (no pattern involved)\n"+
+				"  5!d                 delete every line except line 5\n"+
+				"  1,5d                delete lines 1-5\n"+
+				"  1,5!d               delete every line except lines 1-5\n"+
+				"Unrecognized commands are rejected with an error rather than guessed at.",
+		),
+		mcp.WithString("file", mcp.Required(), mcp.Description("Path to the file to edit.")),
+		mcp.WithString("command", mcp.Required(), mcp.Description(
+			"The sed-lite command. 'ptn' fields are Go RE2 regex (same syntax as text_grep's pattern arg, "+
+				"see pkg.go.dev/regexp/syntax) — NOT POSIX, NOT PCRE, no backreferences/lookaround. "+
+				"Delimiter is always '|'. Examples: \"s|foo|bar|g\", \"s|^\\\\s+||\", \"|TODO|d\", \"1,5d\", \"5,$s|old|new\".",
+		)),
+		mcp.WithBoolean("dry_run", mcp.Description("If true, compute and describe the change but do not write the file. Default: false.")),
+	), tool.handleSed)
 }

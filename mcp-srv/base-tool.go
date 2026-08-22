@@ -62,7 +62,8 @@ func (t *BaseToolManager) listDirectory(ctx context.Context, request mcp.CallToo
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Directory listing for: %s\n", cleanPath))
-	sb.WriteString(strings.Repeat("-", 40) + "\n")
+	sb.WriteString(strings.Repeat("-", 40))
+	sb.WriteString("\n")
 	for _, entry := range entries {
 		icon := "📄 "
 		if entry.IsDir() {
@@ -129,12 +130,6 @@ func (t *BaseToolManager) createNewFile(ctx context.Context, request mcp.CallToo
 	if c, ok := args["content"]; ok {
 		content = fmt.Sprintf("%v", c)
 	}
-	//overwrite := true
-	//if o, ok := args["overwrite"]; ok {
-	//	if bv, ok2 := o.(bool); ok2 {
-	//		overwrite = bv
-	//	}
-	//}
 
 	cleanPath := filepath.Clean(path)
 	if res, err := t.checkPath(cleanPath); err != nil {
@@ -605,14 +600,6 @@ func registerBaseTool(s *server.MCPServer, t *BaseToolManager) {
 			mcp.Required(),
 			mcp.Description("UTF-8 text content to write into the file."),
 		),
-		//mcp.WithBoolean(
-		//	"overwrite",
-		//	mcp.DefaultBool(true),
-		//	mcp.Description(`OPTIONAL - Whether to replace an existing file.
-
-		//rue when updating, regenerating, or recreating files.
-		//alse only when you explicitly need fail-if-exists behavior.`),
-	//),
 	), t.createNewFile)
 
 	s.AddTool(mcp.NewTool("run_terminal_command",
