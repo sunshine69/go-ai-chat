@@ -171,7 +171,7 @@ func init() {
 		tmpPath := `(?:/tmp|/var/tmp)(?:/` + segments + `)?`
 		defaultAllowPath = `^(?:` + relativePath + `|` + tmpPath + `)$`
 		pathErrorMsg = `[ERROR] denied access for path: '%s'. ONLY RELATIVE PATH TO THE CURRENT DIR AND ONE LEVEL UPPER ARE ALLOWED. EXCEPTIONS ARE /tmp and /var/tmp. That is ./XXX ../XXX XXX /tmp, /var/tmp should work, BUT NOT / and ../../`
-		PathPtn = regexp.MustCompile(`(?:\.|\/)[a-zA-Z0-9_\.\-\/]+`)
+		PathPtn = regexp.MustCompile(`(?:^|\s)([\.\/][a-zA-Z0-9_\.\-\/]+)`)
 	}
 }
 
