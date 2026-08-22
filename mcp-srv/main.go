@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"runtime"
 	"strings"
 
@@ -27,6 +28,7 @@ var (
 	defaultAllowCmd  string
 	defaultAllowPath string
 	pathErrorMsg     string
+	PathPtn          *regexp.Regexp
 	unixFileTools    map[string]any = u.SliceToMap([]string{"cat", "find", "head", "ls", "cp", "mv", "rm", "chmod", "chown", "touch", "file", "stat", "ln", "realpath", "dirname", "basename", "cd"})
 )
 
@@ -127,10 +129,12 @@ func init() {
 		// omission above.
 		winSegment := `(?:[^./\\:*?"<>|][^\\/:*?"<>|]*|\.[^./\\:*?"<>|][^\\/:*?"<>|]*|\.)`
 		sep := `[\\/]`
-		winRelative := `(?:\.\.` + sep + `|\.` + sep + `)?` + winSegment + `(?:` + sep + winSegment + `)*`
-		winAbs := `(?:%TEMP%|%TMP%|%USERPROFILE%)(?:` + sep + winSegment + `(?:` + sep + winSegment + `)*)?`
+		winSegments := winSegment + `(?:` + sep + winSegment + `)*`
+		winRelative := `(?:(?:\.\.` + sep + `|\.` + sep + `)(?:` + winSegments + `)?|` + winSegments + `)`
+		winAbs := `(?:%TEMP%|%TMP%|%USERPROFILE%)(?:` + sep + winSegments + `)?`
 		defaultAllowPath = `(?i)^(?:` + winRelative + `|` + winAbs + `)$`
 		pathErrorMsg = `[ERROR] denied access for path: '%s'. ONLY RELATIVE PATH TO THE CURRENT DIR AND ONE LEVEL UPPER ARE ALLOWED. EXCEPTIONS ARE ABSOLUTE PATH START FROM TEMP DIR`
+		PathPtn = regexp.MustCompile(`(?:[a-zA-Z]:\\|\\\\|\.\\|\.\.\\)[a-zA-Z0-9_\.\-\\]+`)
 
 	default: // linux, darwin, and everything else
 		unixCmds :=
@@ -161,10 +165,13 @@ func init() {
 		// exception (/tmp/../etc/shadow). See detailed segment-matching notes
 		// in the earlier version of this comment.
 		pathSegment := `(?:[^./\s][^/\s]*|\.[^./\s][^/\s]*|\.)`
-		relativePath := `(?:\.\./|\./)?` + pathSegment + `(?:/` + pathSegment + `)*`
-		tmpPath := `(?:/tmp|/var/tmp)(?:/` + pathSegment + `(?:/` + pathSegment + `)*)?`
+		segments := pathSegment + `(?:/` + pathSegment + `)*`
+		// prefix with optional trailing segments (covers bare "./" and "../"), or plain segments with no prefix
+		relativePath := `(?:(?:\.\./|\./)(?:` + segments + `)?|` + segments + `)`
+		tmpPath := `(?:/tmp|/var/tmp)(?:/` + segments + `)?`
 		defaultAllowPath = `^(?:` + relativePath + `|` + tmpPath + `)$`
 		pathErrorMsg = `[ERROR] denied access for path: '%s'. ONLY RELATIVE PATH TO THE CURRENT DIR AND ONE LEVEL UPPER ARE ALLOWED. EXCEPTIONS ARE /tmp and /var/tmp. That is ./XXX ../XXX XXX /tmp, /var/tmp should work, BUT NOT / and ../../`
+		PathPtn = regexp.MustCompile(`(?:\.|\/)[a-zA-Z0-9_\.\-\/]+`)
 	}
 }
 

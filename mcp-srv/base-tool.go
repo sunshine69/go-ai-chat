@@ -135,6 +135,9 @@ func (t *BaseToolManager) createNewFile(ctx context.Context, request mcp.CallToo
 	if res, err := t.checkPath(cleanPath); err != nil {
 		return res, err
 	}
+	if res, err := t.checkPath(cleanPath); err != nil {
+		return res, err
+	}
 	if err := os.MkdirAll(filepath.Dir(cleanPath), 0755); err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -162,6 +165,13 @@ func (t *BaseToolManager) execCommand(ctx context.Context, request mcp.CallToolR
 			return t.runTerminalCommand(ctx, request)
 		}
 	}
+
+	for _, cmd := range PathPtn.FindAllString(command, -1) {
+		if res, err := t.checkPath(cmd); err != nil {
+			return res, err
+		}
+	}
+
 	// Parse the second part - it is the path and check it.
 	cmdSlice, err := shlex.Split(command)
 	if err != nil {
@@ -172,6 +182,7 @@ func (t *BaseToolManager) execCommand(ctx context.Context, request mcp.CallToolR
 	if wd, ok := args["working_dir"]; ok {
 		workingDir = fmt.Sprintf("%v", wd)
 	}
+
 	if res, err := t.checkPath(workingDir); err != nil {
 		return res, err
 	}
@@ -230,13 +241,19 @@ func (t *BaseToolManager) runTerminalCommand(ctx context.Context, request mcp.Ca
 		}
 	}
 	// Parse the second part - it is the path and check it.
-	cmdSlice := strings.Fields(command)
-	if _, ok := unixFileTools[cmdSlice[0]]; ok {
-		if len(cmdSlice) == 1 { // no good- these cmd requries to have the path
-			return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] command %s is denied. It needs to have the PATH as first argument.", command)
-		}
-		path := cmdSlice[1]
-		if res, err := t.checkPath(path); err != nil {
+	// cmdSlice := strings.Fields(command)
+	// if _, ok := unixFileTools[cmdSlice[0]]; ok {
+	// 	if len(cmdSlice) == 1 { // no good- these cmd requries to have the path
+	// 		return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] command %s is denied. It needs to have the PATH as first argument.", command)
+	// 	}
+	// 	path := cmdSlice[1]
+	// 	if res, err := t.checkPath(path); err != nil {
+	// 		return res, err
+	// 	}
+	// }
+
+	for _, cmd := range PathPtn.FindAllString(command, -1) {
+		if res, err := t.checkPath(cmd); err != nil {
 			return res, err
 		}
 	}
@@ -245,6 +262,7 @@ func (t *BaseToolManager) runTerminalCommand(ctx context.Context, request mcp.Ca
 	if wd, ok := args["working_dir"]; ok {
 		workingDir = fmt.Sprintf("%v", wd)
 	}
+
 	if res, err := t.checkPath(workingDir); err != nil {
 		return res, err
 	}
@@ -581,6 +599,9 @@ func registerBaseTool(s *server.MCPServer, t *BaseToolManager) {
 		path := ""
 		if p, ok := args["path"]; ok {
 			path = fmt.Sprintf("%v", p)
+		}
+		if res, err := t.checkPath(path); err != nil {
+			return res, err
 		}
 		content, err := readFileContent(path)
 		if err != nil {
