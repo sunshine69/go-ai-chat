@@ -27,6 +27,7 @@ type config struct {
 var (
 	defaultAllowCmd  string
 	defaultAllowPath string
+	ForbiddenString  = []string{` ~/. `, ` $HOME `, ` ${HOME} `}
 	pathErrorMsg     string
 	PathPtn          *regexp.Regexp
 	unixFileTools    map[string]any = u.SliceToMap([]string{"cat", "find", "head", "ls", "cp", "mv", "rm", "chmod", "chown", "touch", "file", "stat", "ln", "realpath", "dirname", "basename", "cd"})

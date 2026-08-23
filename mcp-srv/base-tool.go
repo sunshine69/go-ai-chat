@@ -42,6 +42,7 @@ func (t *BaseToolManager) checkPath(path string) (*mcp.CallToolResult, error) {
 			return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] denied access for path: '%s'. Blocked path pattern: '%s'", path, t.BlockedPathPattern)
 		}
 	}
+	CheckForbiddenString(path)
 	return nil, nil
 }
 
@@ -172,6 +173,8 @@ func (t *BaseToolManager) execCommand(ctx context.Context, request mcp.CallToolR
 		}
 	}
 
+	CheckForbiddenString(command)
+
 	// Parse the second part - it is the path and check it.
 	cmdSlice, err := shlex.Split(command)
 	if err != nil {
@@ -223,6 +226,16 @@ func (t *BaseToolManager) execCommand(ctx context.Context, request mcp.CallToolR
 		return mcp.NewToolResultText(sb.String()), nil
 	}
 }
+
+func CheckForbiddenString(teststr string) (*mcp.CallToolResult, error) {
+	for _, forbiddenStr := range ForbiddenString {
+		if strings.Contains(teststr, forbiddenStr) {
+			return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] denied access for path: '%s'", forbiddenStr)
+		}
+	}
+	return nil, nil
+}
+
 func (t *BaseToolManager) runTerminalCommand(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.GetArguments()
 	command := ""
@@ -234,6 +247,8 @@ func (t *BaseToolManager) runTerminalCommand(ctx context.Context, request mcp.Ca
 			return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] command %s is denied. Only command matches the pattern '%s' will be allowed", command, t.AllowedTerminalCommandPattern)
 		}
 	}
+
+	CheckForbiddenString(command)
 
 	if t.BlockedTerminalCommandPattern != "" {
 		if regexp.MustCompile(t.BlockedTerminalCommandPattern).MatchString(command) {
