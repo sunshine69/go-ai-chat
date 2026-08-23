@@ -167,7 +167,7 @@ func (t *BaseToolManager) execCommand(ctx context.Context, request mcp.CallToolR
 	}
 
 	for _, cmd := range PathPtn.FindAllString(command, -1) {
-		if res, err := t.checkPath(cmd); err != nil {
+		if res, err := t.checkPath(strings.TrimSpace(cmd)); err != nil {
 			return res, err
 		}
 	}
@@ -253,7 +253,7 @@ func (t *BaseToolManager) runTerminalCommand(ctx context.Context, request mcp.Ca
 	// }
 
 	for _, cmd := range PathPtn.FindAllString(command, -1) {
-		if res, err := t.checkPath(cmd); err != nil {
+		if res, err := t.checkPath(strings.TrimSpace(cmd)); err != nil {
 			return res, err
 		}
 	}

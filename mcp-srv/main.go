@@ -130,9 +130,11 @@ func init() {
 		winSegment := `(?:[^./\\:*?"<>|][^\\/:*?"<>|]*|\.[^./\\:*?"<>|][^\\/:*?"<>|]*|\.)`
 		sep := `[\\/]`
 		winSegments := winSegment + `(?:` + sep + winSegment + `)*`
-		winRelative := `(?:(?:\.\.` + sep + `|\.` + sep + `)(?:` + winSegments + `)?|` + winSegments + `)`
-		winAbs := `(?:%TEMP%|%TMP%|%USERPROFILE%)(?:` + sep + winSegments + `)?`
+		winPathBody := winSegments + sep + `?`
+		winRelative := `(?:(?:\.\.` + sep + `|\.` + sep + `)(?:` + winPathBody + `)?|` + winPathBody + `)`
+		winAbs := `(?:%TEMP%|%TMP%|%USERPROFILE%)(?:` + sep + `(?:` + winPathBody + `)?)?`
 		defaultAllowPath = `(?i)^(?:` + winRelative + `|` + winAbs + `)$`
+
 		pathErrorMsg = `[ERROR] denied access for path: '%s'. ONLY RELATIVE PATH TO THE CURRENT DIR AND ONE LEVEL UPPER ARE ALLOWED. EXCEPTIONS ARE ABSOLUTE PATH START FROM TEMP DIR`
 		PathPtn = regexp.MustCompile(`(?:[a-zA-Z]:\\|\\\\|\.\\|\.\.\\)[a-zA-Z0-9_\.\-\\]+`)
 
@@ -166,10 +168,11 @@ func init() {
 		// in the earlier version of this comment.
 		pathSegment := `(?:[^./\s][^/\s]*|\.[^./\s][^/\s]*|\.)`
 		segments := pathSegment + `(?:/` + pathSegment + `)*`
-		// prefix with optional trailing segments (covers bare "./" and "../"), or plain segments with no prefix
-		relativePath := `(?:(?:\.\./|\./)(?:` + segments + `)?|` + segments + `)`
-		tmpPath := `(?:/tmp|/var/tmp)(?:/` + segments + `)?`
+		pathBody := segments + `/?` // fix: allow one optional trailing slash after the last segment
+		relativePath := `(?:(?:\.\./|\./)(?:` + pathBody + `)?|` + pathBody + `)`
+		tmpPath := `(?:/tmp|/var/tmp)(?:/(?:` + pathBody + `)?)?`
 		defaultAllowPath = `^(?:` + relativePath + `|` + tmpPath + `)$`
+
 		pathErrorMsg = `[ERROR] denied access for path: '%s'. ONLY RELATIVE PATH TO THE CURRENT DIR AND ONE LEVEL UPPER ARE ALLOWED. EXCEPTIONS ARE /tmp and /var/tmp. That is ./XXX ../XXX XXX /tmp, /var/tmp should work, BUT NOT / and ../../`
 		PathPtn = regexp.MustCompile(`(?:^|\s)([\.\/][a-zA-Z0-9_\.\-\/]+)`)
 	}
@@ -279,6 +282,11 @@ func buildServer(cfg config) *server.MCPServer {
 	if strings.Contains(cfg.toolSet, "all") || strings.Contains(cfg.toolSet, "rustdoc") {
 		registerRustDocTools(s)
 	}
+
+	if strings.Contains(cfg.toolSet, "all") || strings.Contains(cfg.toolSet, "skills") {
+		registerSkillsTools(s, u.Must(NewSkillsProxy()))
+	}
+
 	println("[DEBUG] defaultAllowPath - ", defaultAllowPath)
 	baseTool := BaseToolManager{ // Noticed very very strange behaviour of env var corruptions when using tmux
 		AllowedTerminalCommandPattern: u.Getenv("ALLOWED_TERM_CMD_PTN", defaultAllowCmd),
