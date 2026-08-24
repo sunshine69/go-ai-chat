@@ -68,6 +68,48 @@ func clamp(v, lo, hi int) int {
 	return v
 }
 
+// unescapeReplacement converts a handful of backslash escape sequences in a
+// sed replacement string into their literal characters: \n -> newline,
+// \t -> tab, \r -> carriage return, \\ -> backslash.
+//
+// This exists because Go's regexp.ReplaceAllString/ExpandString only treats
+// "$" specially in the replacement — unlike the pattern side (parsed by RE2,
+// which already understands \n/\t natively), a literal two-character "\n" in
+// the replacement is passed through unchanged and would otherwise show up in
+// the file as a literal backslash-n instead of a real line break. Any other
+// backslash sequence (e.g. "\d") is left untouched so it doesn't silently eat
+// characters the caller didn't mean to escape.
+func unescapeReplacement(s string) string {
+	if !strings.Contains(s, "\\") {
+		return s
+	}
+	var sb strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) {
+			switch s[i+1] {
+			case 'n':
+				sb.WriteByte('\n')
+				i++
+				continue
+			case 't':
+				sb.WriteByte('\t')
+				i++
+				continue
+			case 'r':
+				sb.WriteByte('\r')
+				i++
+				continue
+			case '\\':
+				sb.WriteByte('\\')
+				i++
+				continue
+			}
+		}
+		sb.WriteByte(s[i])
+	}
+	return sb.String()
+}
+
 // formatBlock renders a slice of lines with their 1-based file line numbers.
 // startLine is the 1-based index of lines[0] in the original file.
 func formatBlock(lines []string, startLine int, showNums bool) string {
@@ -616,6 +658,7 @@ func (t *TextToolManager) handleSed(_ context.Context, req mcp.CallToolRequest) 
 		}
 
 		pattern, replacement := parts[1], parts[2]
+		replacement = unescapeReplacement(replacement)
 		flags := ""
 		if len(parts) == 4 {
 			flags = parts[3]
@@ -849,6 +892,9 @@ func registerTextTools(s *server.MCPServer, tool *TextToolManager) {
 				"Backreferences inside the pattern (e.g. '(a)\\1') are NOT supported. "+
 				"Lookahead/lookbehind are NOT supported. "+
 				"Numbered/named capture groups ARE supported in the replacement string only, as $1, ${1}, or $name. "+
+				"The replacement string ALSO supports these escapes: \\n (newline), \\t (tab), \\r (carriage return), "+
+				"\\\\ (literal backslash) — use \\n to split one line into two. Any other backslash sequence is left "+
+				"as-is. "+
 				"Delimiter is always the literal '|' character — patterns/replacements must not contain a literal, "+
 				"unescaped '|' (so alternation like 'a|b' cannot be used; use a character class '[ab]' or write two "+
 				"separate commands instead). "+
