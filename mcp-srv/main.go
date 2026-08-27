@@ -167,7 +167,7 @@ func init() {
 		// both in the relative form (../../etc/passwd) and inside the /tmp
 		// exception (/tmp/../etc/shadow). See detailed segment-matching notes
 		// in the earlier version of this comment.
-		pathSegment := `(?:[^./\s][^/\s]*|\.[^./\s][^/\s]*|\.)`
+		pathSegment := `(?:[^./:\s][^/\s]*|\.[^./\s][^/\s]*|\.)`
 		segments := pathSegment + `(?:/` + pathSegment + `)*`
 		pathBody := segments + `/?` // fix: allow one optional trailing slash after the last segment
 		relativePath := `(?:(?:\.\./|\./)(?:` + pathBody + `)?|` + pathBody + `)`

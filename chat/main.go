@@ -1267,6 +1267,28 @@ func handleCommand(text string, history *[]Message) {
 			fmt.Fprintln(os.Stderr, "Enable autonudge")
 			config.AutoNudgeDisabled = false
 		}
+
+	case "/unload":
+		if arg == "" {
+			fmt.Fprintln(os.Stderr, "Usage: /unload <model-name> - Unload a model from the backend")
+			fmt.Fprintln(os.Stderr, "Example: /unload gpt-3.5-turbo")
+			return
+		}
+		modelName := strings.TrimSpace(arg)
+		if modelName == "" {
+			fmt.Fprintln(os.Stderr, "❌ No model name provided.")
+			return
+		}
+		url, _ := url.Parse(config.BaseURL)
+		// Build the POST request body
+		bodyBytes, _ := json.Marshal(map[string]string{"model": modelName})
+		// Make the unload request
+		if _, err := u.Curl("POST", fmt.Sprintf("%s://%s/models/unload", url.Scheme, url.Host), string(bodyBytes), "application/json", []string{"Content-Type: application/json"}, nil); err == nil {
+			fmt.Fprintf(os.Stderr, "✅ Model unloaded: %s\n", modelName)
+		} else {
+			fmt.Fprintf(os.Stderr, "❌ Failed to unload model %s: %v\n", modelName, err)
+		}
+
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
 	}
