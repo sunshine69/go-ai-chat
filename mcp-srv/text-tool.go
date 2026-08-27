@@ -550,6 +550,12 @@ func (t *TextToolManager) handleCat(_ context.Context, req mcp.CallToolRequest) 
 //  5. 2,5s|old|new|g           substitute, but only within lines 2 through 5
 //     5,$s|old|new             substitute from line 5 to end of file ("$" = last line),
 //     first match per line only
+//  6. 5c|text                  change (replace) line 5 with "text"
+//     5!c|text                 change every line EXCEPT line 5 to "text" (one copy per line)
+//  7. 1,5c|text                change lines 1-5, collapsing the whole range into ONE line: "text"
+//     1,5!c|text                change every line OUTSIDE 1-5 to "text" (one copy per line)
+//  8. |ptn|c|text              change every line matching ptn to "text" (one-for-one)
+//     |ptn|!c|text             change every line NOT matching ptn to "text" (one-for-one)
 //
 // The tool never guesses: any command that doesn't cleanly match one of the
 // forms above is rejected with an error listing the supported forms, rather
@@ -574,7 +580,8 @@ func (t *TextToolManager) handleSed(_ context.Context, req mcp.CallToolRequest) 
 	}
 
 	const usage = "unrecognized sed command %q — supported forms: " +
-		"s|ptn|repl|g, s|ptn|repl, N,Ms|ptn|repl|g, |ptn|d, |ptn|!d, Nd, N!d, N,Md, N,M!d"
+		"s|ptn|repl|g, s|ptn|repl, N,Ms|ptn|repl|g, |ptn|d, |ptn|!d, Nd, N!d, N,Md, N,M!d, " +
+		"Nc|text, N!c|text, N,Mc|text, N,M!c|text, |ptn|c|text, |ptn|!c|text"
 
 	resolveAddr := func(s string) (int, error) {
 		if s == "$" {
@@ -644,6 +651,36 @@ func (t *TextToolManager) handleSed(_ context.Context, req mcp.CallToolRequest) 
 			action = fmt.Sprintf("deleted %d line(s) NOT matching /%s/", changed, pattern)
 		} else {
 			action = fmt.Sprintf("deleted %d line(s) matching /%s/", changed, pattern)
+		}
+
+	// ── |ptn|c|text  /  |ptn|!c|text ── pattern-based change, one-for-one ──
+	case len(parts) == 4 && parts[0] == "" && (parts[2] == "c" || parts[2] == "!c"):
+		pattern := parts[1]
+		invert := parts[2] == "!c"
+		text := unescapeReplacement(parts[3])
+
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			return errResult(fmt.Errorf("invalid regex %q: %w", pattern, err)), nil
+		}
+		outLines = make([]string, 0, n)
+		for _, l := range lines {
+			isMatch := re.MatchString(l)
+			repl := isMatch
+			if invert {
+				repl = !isMatch
+			}
+			if repl {
+				changed++
+				outLines = append(outLines, text)
+				continue
+			}
+			outLines = append(outLines, l)
+		}
+		if invert {
+			action = fmt.Sprintf("changed %d line(s) NOT matching /%s/ to %q", changed, pattern, text)
+		} else {
+			action = fmt.Sprintf("changed %d line(s) matching /%s/ to %q", changed, pattern, text)
 		}
 
 	// ── [addr]s|ptn|repl|flags  or  [addr]s|ptn|repl ── substitute ──
@@ -744,6 +781,62 @@ func (t *TextToolManager) handleSed(_ context.Context, req mcp.CallToolRequest) 
 			action = fmt.Sprintf("deleted %d line(s) outside range %s", changed, rangeDesc)
 		} else {
 			action = fmt.Sprintf("deleted %d line(s) in range %s", changed, rangeDesc)
+		}
+
+	// ── Nc|text / N!c|text / N,Mc|text / N,M!c|text ── numeric line change ──
+	// A plain (non-inverted) range is a single sed address, so it collapses to
+	// ONE instance of text replacing the whole range — matching real sed's
+	// `N,Mc\text` behaviour. Inverted forms replace each excluded line
+	// individually (those lines aren't a contiguous address), one copy of
+	// text per line, same as |ptn|c does.
+	case len(parts) == 2 && strings.HasSuffix(parts[0], "c"):
+		body := parts[0]
+		invert := false
+		switch {
+		case strings.HasSuffix(body, "!c"):
+			invert = true
+			body = strings.TrimSuffix(body, "!c")
+		default:
+			body = strings.TrimSuffix(body, "c")
+		}
+		if body == "" {
+			return errResult(fmt.Errorf(usage, command)), nil
+		}
+		start, end, err := parseRange(body)
+		if err != nil {
+			return errResult(err), nil
+		}
+		text := unescapeReplacement(parts[1])
+
+		outLines = make([]string, 0, n)
+		inserted := false
+		for i, l := range lines {
+			lineNo := i + 1
+			inRange := lineNo >= start && lineNo <= end
+			repl := inRange
+			if invert {
+				repl = !inRange
+			}
+			if repl {
+				changed++
+				if invert {
+					outLines = append(outLines, text) // scattered lines: one copy each
+				} else if !inserted {
+					outLines = append(outLines, text) // contiguous range: collapse to one copy
+					inserted = true
+				}
+				continue
+			}
+			outLines = append(outLines, l)
+		}
+		rangeDesc := fmt.Sprintf("%d", start)
+		if start != end {
+			rangeDesc = fmt.Sprintf("%d,%d", start, end)
+		}
+		if invert {
+			action = fmt.Sprintf("changed %d line(s) outside range %s to %q (one copy per line)", changed, rangeDesc, text)
+		} else {
+			action = fmt.Sprintf("changed %d line(s) in range %s to a single line: %q", changed, rangeDesc, text)
 		}
 
 	default:
@@ -891,10 +984,15 @@ func registerTextTools(s *server.MCPServer, tool *TextToolManager) {
 				"Practical implications: '+ ? ( ) { } |' are ALREADY special, do not backslash-escape them like POSIX BRE. "+
 				"Backreferences inside the pattern (e.g. '(a)\\1') are NOT supported. "+
 				"Lookahead/lookbehind are NOT supported. "+
-				"Numbered/named capture groups ARE supported in the replacement string only, as $1, ${1}, or $name. "+
-				"The replacement string ALSO supports these escapes: \\n (newline), \\t (tab), \\r (carriage return), "+
-				"\\\\ (literal backslash) — use \\n to split one line into two. Any other backslash sequence is left "+
-				"as-is. "+
+				"Numbered/named capture groups ($1, ${1}, $name) work ONLY in 's' — they are NOT expanded in 'c' text, "+
+				"which is inserted literally (after escape processing below). "+
+				"The replacement/text string (used by both 's' and 'c') supports these escapes: \\n (newline), "+
+				"\\t (tab), \\r (carriage return), \\\\ (literal backslash) — use \\n to split one line into two. "+
+				"Any other backslash sequence is left as-is. "+
+				"IMPORTANT for the 'c' (change) command: a plain numeric RANGE (e.g. 1,5c|text, no '!') is a single "+
+				"address, so ALL matched lines collapse into exactly ONE output line — you do not get 5 copies of "+
+				"'text' for 1,5c|text, you get 1. Single-line addresses (5c|text), pattern addresses (|ptn|c|text), "+
+				"and any '!'-inverted form instead replace one-for-one (one copy of 'text' per matched line). "+
 				"Delimiter is always the literal '|' character — patterns/replacements must not contain a literal, "+
 				"unescaped '|' (so alternation like 'a|b' cannot be used; use a character class '[ab]' or write two "+
 				"separate commands instead). "+
@@ -910,6 +1008,12 @@ func registerTextTools(s *server.MCPServer, tool *TextToolManager) {
 				"  5!d                 delete every line except line 5\n"+
 				"  1,5d                delete lines 1-5\n"+
 				"  1,5!d               delete every line except lines 1-5\n"+
+				"  5c|text             change (replace) line 5 with 'text'\n"+
+				"  5!c|text            change every line except line 5 to 'text' (one copy per line)\n"+
+				"  1,5c|text           change lines 1-5, COLLAPSED into a single line: 'text'\n"+
+				"  1,5!c|text          change every line outside 1-5 to 'text' (one copy per line)\n"+
+				"  |ptn|c|text         change every line matching ptn to 'text' (one-for-one, Go RE2)\n"+
+				"  |ptn|!c|text        change every line NOT matching ptn to 'text' (one-for-one)\n"+
 				"Unrecognized commands are rejected with an error rather than guessed at.",
 		),
 		mcp.WithString("file", mcp.Required(), mcp.Description("Path to the file to edit.")),
