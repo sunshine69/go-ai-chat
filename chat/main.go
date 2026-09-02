@@ -964,7 +964,7 @@ func handleCommand(text string, history *[]Message) {
 
 	case "/use":
 		if arg == "" {
-			fmt.Fprintln(os.Stderr, "Usage: /use <context-name>")
+			fmt.Fprintln(os.Stderr, "Usage: /use <context-file-path> Load the context file path to current context. It will persist until you run /new.")
 			return
 		}
 		path := strings.ReplaceAll(arg, " ", "_")
