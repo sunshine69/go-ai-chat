@@ -966,8 +966,7 @@ func handleCommand(text string, history *[]Message) {
 			fmt.Fprintln(os.Stderr, "Usage: /use <context-name>")
 			return
 		}
-		sanitizedName := strings.ReplaceAll(arg, " ", "_")
-		path := filepath.Join(filepath.Join(homeDir, ".aig"), sanitizedName)
+		path := strings.ReplaceAll(arg, " ", "_")
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			fmt.Fprintf(os.Stderr, "Error: context '%s' not found.\n", arg)
 			return
