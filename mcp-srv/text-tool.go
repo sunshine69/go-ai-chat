@@ -979,6 +979,7 @@ func registerTextTools(s *server.MCPServer, tool *TextToolManager) {
 	s.AddTool(mcp.NewTool("text_sed",
 		mcp.WithDescription(
 			"Edit a file IN PLACE using a tiny, unambiguous subset of sed. "+
+				"LINE BASED EDITING for most command except the c (change) command.\n"+
 				"PATTERN SYNTAX IS GO RE2 (regexp.Compile / pkg.go.dev/regexp/syntax), the SAME syntax as text_grep's "+
 				"'pattern' argument — it is NOT POSIX BRE/ERE and NOT PCRE. "+
 				"Practical implications: '+ ? ( ) { } |' are ALREADY special, do not backslash-escape them like POSIX BRE. "+
@@ -993,7 +994,7 @@ func registerTextTools(s *server.MCPServer, tool *TextToolManager) {
 				"address, so ALL matched lines collapse into exactly ONE output line — you do not get 5 copies of "+
 				"'text' for 1,5c|text, you get 1. Single-line addresses (5c|text), pattern addresses (|ptn|c|text), "+
 				"and any '!'-inverted form instead replace one-for-one (one copy of 'text' per matched line). "+
-				"Delimiter is always the literal '|' character — patterns/replacements must not contain a literal, "+
+				"Delimiter is ALWAYS the literal '|' character — patterns/replacements must not contain a literal, "+
 				"unescaped '|' (so alternation like 'a|b' cannot be used; use a character class '[ab]' or write two "+
 				"separate commands instead). "+
 				"Writes the file immediately unless dry_run=true, in which case nothing is written and a preview "+
