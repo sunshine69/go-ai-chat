@@ -882,6 +882,7 @@ func handleCommand(text string, history *[]Message) {
 		if err := os.Chdir(arg); err != nil {
 			fmt.Fprintf(os.Stderr, "[ERROR] can not chdir to %s - %v\n", arg, err)
 		}
+		fmt.Fprintln(os.Stderr, "Changed directory. You have to run restart mcp like /mcp mcp.exe")
 
 	case "/new", "/n":
 		if len(*history) > 0 {
