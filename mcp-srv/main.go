@@ -51,7 +51,7 @@ func init() {
 	// ---------------------------------------------------------------------------
 	sharedCmds := `` +
 		// --- Go toolchain gorun is mine ---
-		`go|gobind|gofmt|gomobile|govet|gorun|` +
+		`nohup|go|gobind|gofmt|gomobile|govet|gorun|` +
 		// --- Rust ---
 		`cargo|rustc|rustfmt|rustup|` +
 		// --- Java / JVM ---
