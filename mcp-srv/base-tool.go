@@ -3,6 +3,9 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +15,8 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/google/shlex"
 	mcp "github.com/mark3labs/mcp-go/mcp"
@@ -20,6 +25,134 @@ import (
 )
 
 const MAX_OUPUT_SIZE = 20000
+
+// ---------------------------------------------------------------------------
+// LoopGuard: detects a tool being called repeatedly with identical arguments
+// that keep producing an identical (i.e. no-progress) result, and short
+// circuits further identical calls with an explicit error instructing the
+// model to change approach instead of retrying blindly.
+// ---------------------------------------------------------------------------
+
+const (
+	loopGuardThreshold  = 3                // consecutive no-progress repeats allowed before blocking
+	loopGuardIdleExpiry = 10 * time.Minute // forget a signature if it's been quiet this long
+)
+
+type loopRecord struct {
+	count      int
+	lastResult string
+	lastSeen   time.Time
+}
+
+type LoopGuard struct {
+	mu      sync.Mutex
+	records map[string]*loopRecord
+}
+
+func NewLoopGuard() *LoopGuard {
+	return &LoopGuard{records: make(map[string]*loopRecord)}
+}
+
+// signature canonicalizes tool name + args into a stable key.
+// json.Marshal on a map[string]interface{} sorts keys alphabetically,
+// so identical arg sets always hash the same regardless of call order.
+func loopGuardSignature(toolName string, args map[string]interface{}) string {
+	b, err := json.Marshal(args)
+	if err != nil {
+		// If args can't be marshaled, don't guard this call.
+		return ""
+	}
+	h := sha256.Sum256(append([]byte(toolName+"\x00"), b...))
+	return hex.EncodeToString(h[:])
+}
+
+func loopGuardResultText(res *mcp.CallToolResult) string {
+	if res == nil {
+		return ""
+	}
+	var sb strings.Builder
+	for _, c := range res.Content {
+		if tc, ok := c.(mcp.TextContent); ok {
+			sb.WriteString(tc.Text)
+		}
+	}
+	return sb.String()
+}
+
+// check runs before the real handler. If this exact signature has already
+// produced loopGuardThreshold consecutive identical results, it returns a
+// synthetic error result and blocked=true, meaning the caller must NOT run
+// the underlying handler.
+func (lg *LoopGuard) check(toolName string, args map[string]interface{}) (blocked bool, blockResult *mcp.CallToolResult, sig string) {
+	sig = loopGuardSignature(toolName, args)
+	if sig == "" {
+		return false, nil, ""
+	}
+
+	lg.mu.Lock()
+	defer lg.mu.Unlock()
+
+	rec, ok := lg.records[sig]
+	if !ok {
+		return false, nil, sig
+	}
+	if time.Since(rec.lastSeen) > loopGuardIdleExpiry {
+		delete(lg.records, sig)
+		return false, nil, sig
+	}
+	if rec.count >= loopGuardThreshold {
+		msg := fmt.Sprintf(
+			"ERROR: You have called tool '%s' with these exact arguments %d times in a row, and it resulted in NO CHANGE each time. Your arguments are invalid for the current file/system state. You MUST change your parameters, try a different tool, or ask the user for clarification. Do not repeat the previous call.",
+			toolName, rec.count,
+		)
+		return true, mcp.NewToolResultError(msg), sig
+	}
+	return false, nil, sig
+}
+
+// record runs after the real handler executes, updating the no-progress
+// counter for this signature based on whether the result changed.
+func (lg *LoopGuard) record(sig string, result *mcp.CallToolResult) {
+	if sig == "" {
+		return
+	}
+	text := loopGuardResultText(result)
+
+	lg.mu.Lock()
+	defer lg.mu.Unlock()
+
+	rec, ok := lg.records[sig]
+	if !ok || time.Since(rec.lastSeen) > loopGuardIdleExpiry {
+		lg.records[sig] = &loopRecord{count: 1, lastResult: text, lastSeen: time.Now()}
+		return
+	}
+	if rec.lastResult == text {
+		rec.count++
+	} else {
+		rec.count = 1
+		rec.lastResult = text
+	}
+	rec.lastSeen = time.Now()
+}
+
+// defaultLoopGuard is process-wide since a given MCP server process is
+// effectively one active session's worth of tool traffic.
+var defaultLoopGuard = NewLoopGuard()
+
+// guarded wraps a tool handler with loop-detection. name must match the
+// registered tool name (used as part of the signature key).
+func guarded(name string, handler server.ToolHandlerFunc) server.ToolHandlerFunc {
+	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := request.GetArguments()
+		blocked, blockResult, sig := defaultLoopGuard.check(name, args)
+		if blocked {
+			return blockResult, nil
+		}
+		result, err := handler(ctx, request)
+		defaultLoopGuard.record(sig, result)
+		return result, err
+	}
+}
 
 type BaseToolManager struct {
 	AllowedTerminalCommandPattern string
@@ -255,17 +388,6 @@ func (t *BaseToolManager) runTerminalCommand(ctx context.Context, request mcp.Ca
 			return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] command %s is denied. Command matches the pattern '%s' will be blocked", command, t.BlockedTerminalCommandPattern)
 		}
 	}
-	// Parse the second part - it is the path and check it.
-	// cmdSlice := strings.Fields(command)
-	// if _, ok := unixFileTools[cmdSlice[0]]; ok {
-	// 	if len(cmdSlice) == 1 { // no good- these cmd requries to have the path
-	// 		return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] command %s is denied. It needs to have the PATH as first argument.", command)
-	// 	}
-	// 	path := cmdSlice[1]
-	// 	if res, err := t.checkPath(path); err != nil {
-	// 		return res, err
-	// 	}
-	// }
 
 	for _, cmd := range PathPtn.FindAllString(command, -1) {
 		if res, err := t.checkPath(strings.TrimSpace(cmd)); err != nil {
@@ -562,21 +684,6 @@ func (t *BaseToolManager) httpRequest(ctx context.Context, request mcp.CallToolR
 }
 
 func registerBaseTool(s *server.MCPServer, t *BaseToolManager) {
-	// 	s.AddTool(mcp.NewTool("replace_lines_in_file",
-	// 		mcp.WithDescription(`Replaces a range of lines in a file by 1-based line number.
-	// Use when you know the exact line numbers from a previous text_head / text_section /
-	// read_file output. start_line and end_line are both inclusive means IT WILL BE REPLACED. Set end_line to -1 to
-	// replace from start_line to the end of the file.
-
-	// The replacement text is written *VERBATIM* include a leading, trailing newline or spaces if you add them.
-	// *IMPORTANT* to pay attention to the leading space at first line to maintain correct indentation with existing code
-	// *ALWAYS* re read back after change to see changes and validate`),
-	// 		mcp.WithString("path", mcp.Required(), mcp.Description("Path to the file to modify.")),
-	// 		mcp.WithInteger("start_line", mcp.Required(), mcp.Description("First line to replace (1-based, inclusive).")),
-	// 		mcp.WithInteger("end_line", mcp.Required(), mcp.Description("Last line to replace (1-based, inclusive). Pass -1 to replace through end of file.")),
-	// 		mcp.WithString("replace", mcp.Required(), mcp.Description("Replacement text. Written verbatim in place of the removed lines.")),
-	// 	), t.replaceLinesInFile)
-
 	s.AddTool(mcp.NewTool("insert_text_to_file",
 		mcp.WithDescription(`Insert a chunk of text  to a file BEFORE a 1-based line number.
 	Use when you know the exact line numbers from a previous text_head / text_section /	read_file output.
@@ -584,7 +691,7 @@ func registerBaseTool(s *server.MCPServer, t *BaseToolManager) {
 		mcp.WithString("path", mcp.Required(), mcp.Description("Path to the file to modify.")),
 		mcp.WithInteger("before_line", mcp.Required(), mcp.Description("First line to insert the code bfore it (1-based).")),
 		mcp.WithString("chunk", mcp.Required(), mcp.Description("Chunk of text to insert.")),
-	), t.insertTextBlockToFile)
+	), guarded("insert_text_to_file", t.insertTextBlockToFile))
 
 	s.AddTool(mcp.NewTool("fetch_url",
 		mcp.WithDescription("Fetches a URL over HTTP and converts its HTML content into markdown text. If the content is larger than 20kb the content will be saved to a file and the result will be the file path so you can selectively read using grep using text tool"),
@@ -599,12 +706,12 @@ func registerBaseTool(s *server.MCPServer, t *BaseToolManager) {
 	s.AddTool(mcp.NewTool("create_directory",
 		mcp.WithDescription("Create directory in a given path. same as run unix command mkdir -p <path>."),
 		mcp.WithString("path", mcp.Required(), mcp.Description("The directory path to create.")),
-	), t.createDirectory)
+	), guarded("create_directory", t.createDirectory))
 
 	s.AddTool(mcp.NewTool("remove_file_or_directory",
 		mcp.WithDescription("Remove file or directory in a given path. same as run unix command rm -rf <path>. Wildcard in path accepted."),
 		mcp.WithString("path", mcp.Required(), mcp.Description("The directory path to remove.")),
-	), t.removeDirectory)
+	), guarded("remove_file_or_directory", t.removeDirectory))
 
 	s.AddTool(mcp.NewTool("read_file",
 		mcp.WithDescription("Reads the content of a file from the local filesystem."),
@@ -636,7 +743,7 @@ func registerBaseTool(s *server.MCPServer, t *BaseToolManager) {
 			mcp.Required(),
 			mcp.Description("UTF-8 text content to write into the file."),
 		),
-	), t.createNewFile)
+	), guarded("create_new_file", t.createNewFile))
 
 	s.AddTool(mcp.NewTool("run_terminal_command",
 		mcp.WithDescription(`Runs a shell command and returns its stdout and stderr.
@@ -652,8 +759,7 @@ If the command does not return it will block you.
 If the output is too big it will be saved to a temp file and give you the file path. You SHOULD NOT read the whole file as it will overflow your context. You should use text tools to extract relevant information from it`),
 		mcp.WithString("command", mcp.Required(), mcp.Description("The shell command to execute. Must not use 'cd' — use working_dir instead.")),
 		mcp.WithString("working_dir", mcp.Description("Directory to run the command in. Use this instead of 'cd'. Must be a relative path from the current directory.")),
-		// mcp.WithBoolean("confirmed", mcp.DefaultBool(false), mcp.Description("Must be explicitly set to true to actually run the command. When false or omitted a confirmation message is returned and nothing is executed.")),
-	), t.runTerminalCommand)
+	), guarded("run_terminal_command", t.runTerminalCommand))
 
 	s.AddTool(mcp.NewTool("exec_command",
 		mcp.WithDescription(`Exec a command and returns its stdout and stderr. Eg. run "/bin/ls ." will exec /bin/ls and first arg is .
@@ -663,7 +769,7 @@ Used it when you are not sure if SHELL is available or you want to exec command 
 If the output is too big it will be saved to a temp file and give you the file path. You SHOULD NOT read the whole file as it will overflow your context. You should use text tools to extract relevant information from it`),
 		mcp.WithString("command", mcp.Required(), mcp.Description("The command path to execute.")),
 		mcp.WithString("working_dir", mcp.Description("Directory to run the command in.")),
-	), t.execCommand)
+	), guarded("exec_command", t.execCommand))
 
 	s.AddTool(mcp.NewTool("file_glob_search",
 		mcp.WithDescription("Searches for files matching a glob pattern under a root directory and returns their paths."),
@@ -691,42 +797,7 @@ For simple literal text replacement, set use_regex=false (default) — the 'find
 		mcp.WithString("replace", mcp.Required(), mcp.Description(`The replacement text. Supports $1, $2, etc. back-references when use_regex=true to refer to captured groups from the 'find' pattern. Example: "func ${1}() {" where $1 is a captured group. For multi-line replacements, include \\n in the string.`)),
 		mcp.WithBoolean("use_regex", mcp.DefaultBool(false), mcp.Description(`Treat 'find' as a Go regex pattern instead of literal text. Set to true for flexible matching (e.g., replacing multiple similar patterns at once). When false, 'find' is matched exactly as written — no special regex characters are interpreted.`)),
 		mcp.WithBoolean("replace_all", mcp.DefaultBool(false), mcp.Description(`When false, replaces only the first occurrence of 'find'. When true, replaces ALL occurrences in the file simultaneously. Use with caution to avoid unintended changes across unrelated parts of the file.`)),
-	), t.findReplaceInFile)
-
-	// 	s.AddTool(mcp.NewTool("block_in_file",
-	// 		mcp.WithDescription(`Replaces a multi-line block of text within a file. This tool uses LINE anchors instead of LINE numbers, making it safe for iterative editing even after previous edits have shifted the file's structure.
-
-	// Use this tool when:
-	// - You need to replace, delete, or insert a specific section of code/text
-	// - You know unique text LINE on both the start and end lines of the block to target
-	// - You want to avoid the "line number drift" problem that occurs with line-number-based tools
-
-	// Do NOT use this for simple single-line replacements.
-	// DO NOT give start_block_string and end_block_string are the same — use find_replace_in_file instead.
-	// DO NOT use too short search strings. Shorter than 5 will be rejected.
-
-	// How it works:
-
-	// 1. Match marker_string (an intermediate pattern, between start and end to confirm accuracy)
-	// 2. Search START LINE by matching for start_block_string upward from the marker position. If found then
-	// 3. Search END LINE by matching for end_block_string downward from marker position. If found then
-
-	// Replace everything from the START LINE through to (and including) the END LINE with 'replace'
-
-	// If end_block_string ends with EOF, reaching the end of file counts as a match (useful for appending to files).
-
-	// **TIP**
-	// - To be 100% sure, you can generate your own pattern markers
-	//   - Use insert_text_to_file at a line with your own text string for start
-	//   - repeat it for the end
-	//   - Call block_in_file with your own pattern marker
-	// `),
-	// 		mcp.WithString("path", mcp.Required(), mcp.Description("Absolute or relative path to the file. Use '.'-based paths like './src/main.py' — never absolute system paths.")),
-	// 		mcp.WithString("start_block_string", mcp.Required(), mcp.Description(`Search string for the first line of the block to replace.`)),
-	// 		mcp.WithString("end_block_string", mcp.Required(), mcp.Description(`Search string for the last line of the block to replace. To append content (match end-of-file), use "EOF"`)),
-	// 		mcp.WithString("marker_string", mcp.Required(), mcp.Description(`Search string for an intermediate line within the block.`)),
-	// 		mcp.WithString("replace", mcp.Required(), mcp.Description(`The replacement text. Replace will completely overwrite everything from start_block_string through end_block_string (inclusive). Use \n for newlines within the replacement string.`)),
-	// 	), t.blockInFile)
+	), guarded("find_replace_in_file", t.findReplaceInFile))
 
 	s.AddTool(mcp.NewTool("http_request",
 		mcp.WithDescription("Make HTTP requests to external APIs. If response is greater 20Kb it will be saved into a file and file path will be returned."),
@@ -749,37 +820,31 @@ For simple literal text replacement, set use_regex=false (default) — the 'find
 // InsertTextBlock inserts a chunk of text into a file at a 1-based line number.
 // Position must be "before" or "after". Pass -1 to automatically insert at the end of the file.
 func InsertTextBlock(filePath string, lineNumber int, textBlock string, position string) error {
-	// 1. Validate position input
 	position = strings.ToLower(position)
 	if position != "before" && position != "after" {
 		return fmt.Errorf("invalid position %q: must be 'before' or 'after'", position)
 	}
 
-	// 2. Open the file for reading
 	file, err := os.Open(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to open file: %w", err)
 	}
 
-	// Read file line by line into a slice
 	var lines []string
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		lines = append(lines, scanner.Text())
 	}
-	file.Close() // Close early before rewriting
+	file.Close()
 
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("failed to read file contents: %w", err)
 	}
 
-	// 3. Normalize the text block
 	textBlock = strings.TrimSuffix(textBlock, "\n")
 
-	// 4. Calculate the 0-based insertion index
 	var insertIndex int
 	if lineNumber == -1 {
-		// Explicit AI instruction to target the end of the file
 		insertIndex = len(lines)
 	} else if position == "before" {
 		insertIndex = lineNumber - 1
@@ -787,7 +852,6 @@ func InsertTextBlock(filePath string, lineNumber int, textBlock string, position
 		insertIndex = lineNumber
 	}
 
-	// 5. Bound the index safely to prevent runtime panics
 	if insertIndex < 0 {
 		insertIndex = 0
 	}
@@ -795,13 +859,11 @@ func InsertTextBlock(filePath string, lineNumber int, textBlock string, position
 		insertIndex = len(lines)
 	}
 
-	// 6. Perform the slice insertion
 	updatedLines := make([]string, 0, len(lines)+1)
 	updatedLines = append(updatedLines, lines[:insertIndex]...)
 	updatedLines = append(updatedLines, textBlock)
 	updatedLines = append(updatedLines, lines[insertIndex:]...)
 
-	// 7. Write the updated content back to the file
 	output, err := os.OpenFile(filePath, os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to open file for writing: %w", err)
@@ -817,6 +879,7 @@ func InsertTextBlock(filePath string, lineNumber int, textBlock string, position
 
 	return writer.Flush()
 }
+
 func (t BaseToolManager) insertTextBlockToFile(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.GetArguments()
 	path := ""
@@ -858,27 +921,20 @@ func (t BaseToolManager) insertTextBlockToFile(_ context.Context, request mcp.Ca
 // IsRegexPattern returns true if the string contains unescaped regex metacharacters
 // AND is a syntactically valid regular expression pattern.
 func IsRegexPattern(input string) bool {
-	// 1. Check if the string compiles as valid regex first.
-	// If it doesn't compile, it's either a broken regex or just a weird raw string.
 	_, err := regexp.Compile(input)
 	if err != nil {
 		return false
 	}
 
-	// 2. Define the core characters that change a string from a literal to a pattern.
-	// We omit '\' because a standalone backslash isn't a pattern on its own,
-	// and we handle escaping explicitly below.
 	activeMetacharacters := `.+*?()|[]{}^$`
 
 	runes := []rune(input)
 	for i := 0; i < len(runes); i++ {
 		currentChar := runes[i]
 
-		// If we find an active metacharacter, check if it's functional or escaped
 		if strings.ContainsRune(activeMetacharacters, currentChar) {
 			backslashCount := 0
 
-			// Count consecutive backslashes immediately preceding this character
 			for j := i - 1; j >= 0; j-- {
 				if runes[j] == '\\' {
 					backslashCount++
@@ -887,8 +943,6 @@ func IsRegexPattern(input string) bool {
 				}
 			}
 
-			// If the number of backslashes is even (or zero), the metacharacter
-			// is NOT escaped, meaning it acts as a functional regex pattern token.
 			if backslashCount%2 == 0 {
 				return true
 			}
@@ -897,87 +951,6 @@ func IsRegexPattern(input string) bool {
 
 	return false
 }
-
-// func (t *BaseToolManager) blockInFile(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-// 	args := request.GetArguments()
-// 	path := ""
-// 	if p, ok := args["path"]; ok {
-// 		path = fmt.Sprintf("%v", p)
-// 	}
-
-// 	upper_bound_ptn := []string{}
-// 	isRegex := false
-// 	if f, ok := args["start_block_string"]; ok {
-// 		v := f.(string)
-// 		if !isRegex {
-// 			isRegex = IsRegexPattern(v)
-// 		}
-// 		lines := strings.Split(v, "\n")
-// 		for _, l := range lines {
-// 			if !isRegex {
-// 				upper_bound_ptn = append(upper_bound_ptn, regexp.QuoteMeta(l))
-// 			} else {
-// 				upper_bound_ptn = append(upper_bound_ptn, l)
-// 			}
-// 		}
-// 	}
-// 	lower_bound_ptn := []string{}
-// 	if f, ok := args["end_block_string"]; ok {
-// 		v := f.(string)
-// 		lines := strings.Split(v, "\n")
-// 		for _, l := range lines {
-// 			if !isRegex {
-// 				lower_bound_ptn = append(lower_bound_ptn, regexp.QuoteMeta(l))
-// 			} else {
-// 				lower_bound_ptn = append(lower_bound_ptn, l)
-// 			}
-// 		}
-// 	}
-// 	if len(upper_bound_ptn[0]) < 5 {
-// 		return mcp.NewToolResultError("[ERROR] the upper_bound_ptn regex pattern is shorter than 5"), nil
-// 	}
-// 	marker_string := []string{}
-// 	if f, ok := args["marker_string"]; ok {
-// 		if v, ok1 := f.(string); ok1 && v != "" {
-// 			lines := strings.Split(v, "\n")
-// 			for _, l := range lines {
-// 				if !isRegex {
-// 					marker_string = append(marker_string, regexp.QuoteMeta(l))
-// 				} else {
-// 					marker_string = append(marker_string, l)
-// 				}
-// 			}
-// 		}
-// 	}
-// 	if len(marker_string[0]) < 5 && len(lower_bound_ptn[0]) < 5 {
-// 		return mcp.NewToolResultError("[ERROR] BOTH lower_bound_ptn and marker_string shorter than 5"), nil
-// 	}
-// 	replace := ""
-// 	if r, ok := args["replace"]; ok {
-// 		replace = fmt.Sprintf("%v", r)
-// 	}
-
-// 	cleanPath := filepath.Clean(path)
-// 	if res, err := t.checkPath(cleanPath); err != nil {
-// 		return res, err
-// 	}
-// 	filename := filepath.Base(cleanPath)
-// 	backupfile := filepath.Join(filepath.Dir(cleanPath), filename+".bak")
-// 	defer os.RemoveAll(backupfile)
-
-// 	output, start, _, _ := u.BlockInFile(cleanPath, upper_bound_ptn, lower_bound_ptn, marker_string, replace, false, true, 0)
-
-// 	if start == -1 {
-// 		if u.FileExistsV2(backupfile) == nil {
-// 			if err := u.Copy(backupfile, cleanPath); err != nil {
-// 				return mcp.NewToolResultError("[ERROR] Hit error but we can not restore backup file. Error: " + err.Error() + "\nOriginal error: " + output), nil
-// 			}
-// 		}
-// 		return mcp.NewToolResultText(output), nil
-// 	} else {
-// 		return mcp.NewToolResultText("OK REPLACED OLD BLOCK:\n" + output), nil
-// 	}
-// }
 
 func (t *BaseToolManager) replaceLinesInFile(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.GetArguments()
@@ -1020,9 +993,8 @@ func (t *BaseToolManager) replaceLinesInFile(_ context.Context, request mcp.Call
 	lines := strings.Split(string(data), "\n")
 	total := len(lines)
 
-	// Convert 1-based inclusive line numbers to 0-based slice indices.
 	start := startLine - 1
-	end := endLine // endLine == -1 means EOF; otherwise it's 1-based inclusive → slice end = endLine
+	end := endLine
 	if endLine == -1 {
 		end = total
 	}
