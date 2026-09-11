@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -25,12 +26,13 @@ type config struct {
 }
 
 var (
-	defaultAllowCmd  string
-	defaultAllowPath string
-	ForbiddenString  = []string{` ~/. `, ` $HOME `, ` ${HOME} `}
-	pathErrorMsg     string
-	PathPtn          *regexp.Regexp
-	unixFileTools    map[string]any = u.SliceToMap([]string{"cat", "find", "head", "ls", "cp", "mv", "rm", "chmod", "chown", "touch", "file", "stat", "ln", "realpath", "dirname", "basename", "cd"})
+	defaultAllowCmd     string
+	defaultAllowPath    string
+	ForbiddenString     = []string{` ~/. `, ` $HOME `, ` ${HOME} `}
+	pathErrorMsg        string
+	PathPtn             *regexp.Regexp
+	unixFileTools       map[string]any = u.SliceToMap([]string{"cat", "find", "head", "ls", "cp", "mv", "rm", "chmod", "chown", "touch", "file", "stat", "ln", "realpath", "dirname", "basename", "cd"})
+	gmailCredentialFile string         // json file taken from google developer console
 )
 
 func init() {
@@ -193,6 +195,7 @@ func parseArgs() config {
 	flag.StringVar(&cfg.basePath, "base-path", cfg.basePath, "URL base path prefix")
 	flag.StringVar(&cfg.workDir, "work-dir", ".", "Working dir")
 	flag.StringVar(&cfg.toolSet, "tools", "", "Extra tools to load in addition to base tools. Comma-separated. Possible values: postgres, octo, browser, godoc, all")
+	flag.StringVar(&gmailCredentialFile, "gmail-app-cred", "", `Gmail oauth2 credentials file. Create an OAuth client in Google Cloud Console, type "Desktop app," download the JSON → save as your credentialsPath. Then enable the Gmail API for that project. On the first run, do the browser-consent`)
 
 	flag.Usage = printUsage
 	flag.Parse()
@@ -201,15 +204,6 @@ func parseArgs() config {
 
 func printUsage() {
 	fmt.Fprintf(os.Stderr, `Usage: mcp-server [options]
-
-Options:
-  -t            Transport: "stdio" (default), "streamable"
-  -H            Host to listen on (default: 0.0.0.0)
-  -p            Port to listen on (default: 8080)
-  -base-path    URL base path prefix (default: "")
-  -tools        [all,postgres,octo,browser,godoc] Comma-separated list of extra
-                tool sets to load in addition to the base tools. Default: empty.
-  -h            Show this help
 
 Examples:
   # stdio (default — Claude Desktop / local MCP clients)
@@ -234,7 +228,10 @@ Environment variables (all accept Go regex patterns):
   BLOCKED_PATH_PTN       Optional denylist (useful when no allow pattern is set).
                          Default: ""
 
+Default options:
+
 `, runtime.GOOS, defaultAllowCmd, runtime.GOOS, defaultAllowPath)
+	flag.PrintDefaults()
 }
 
 // buildServer registers all tool sets onto an MCPServer instance.
@@ -286,6 +283,15 @@ func buildServer(cfg config) *server.MCPServer {
 
 	if strings.Contains(cfg.toolSet, "all") || strings.Contains(cfg.toolSet, "skills") {
 		registerSkillsTools(s, u.Must(NewSkillsProxy()))
+	}
+
+	if gmailCredentialFile != "" && (strings.Contains(cfg.toolSet, "all") || strings.Contains(cfg.toolSet, "gmail")) {
+		gmailMngt, err := NewGmailToolManager(context.Background(), gmailCredentialFile, "mcp-gmail-token")
+		if err == nil {
+			registerGmailTools(s, gmailMngt)
+		} else {
+			fmt.Fprintf(os.Stderr, "[ERROR] Can not initiate gmail mamanger - %s\n", err.Error())
+		}
 	}
 
 	println("[DEBUG] defaultAllowPath - ", defaultAllowPath)
