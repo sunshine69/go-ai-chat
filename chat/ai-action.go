@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -74,6 +75,13 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 				switch errMsg {
 				case "STREAM CUTOFF DETECTED", "AI HAS BECOME MENTAL":
 					remindAiFunc("continue. If completed replied with string 'Task completed'")
+					continue
+				case "AI STREAM STALLED":
+					// Mid-generation hang (no bytes for stallTimeout) — the connection
+					// has already been force-closed by streamOnce's watchdog. Nudge the
+					// model to resume from where it left off rather than restart.
+					fmt.Fprintln(os.Stderr, "\n> 🔁 [System Nudge]: Stream stalled mid-generation — reconnecting and resuming...")
+					remindAiFunc("Your previous response stalled mid-generation and the connection was cut. Resume exactly from where you left off — do not repeat what you already said and do not restart the task. If it was already complete, reply 'Task completed'.")
 					continue
 				case "AI HAS STUCK LOOP":
 					if repeatedPatternCount > config.MaxRepeatPattern {
@@ -275,11 +283,54 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 		resp.Body.Close()
 	}()
 
+	// --- Mid-stream stall watchdog ---
+	// Some backends (notably MoE / "expert-routed" models when the router
+	// misfires) stop emitting SSE bytes entirely mid-generation: no error,
+	// no [DONE], no TCP reset — scanner.Scan() just blocks forever.
+	// config.Timeout bounds the *whole* request and doesn't help here (a
+	// long legitimate generation shouldn't be killed just for being long).
+	// What we need is an *inactivity* timeout: if no bytes arrive for
+	// stallTimeout, treat the connection as hung, close it to unblock the
+	// scanner, and let askAI() send a resume nudge on a fresh request.
+	stallTimeout := config.StallTimeout
+	if stallTimeout <= 0 {
+		stallTimeout = 45 * time.Second
+	}
+	var lastActivity atomic.Int64
+	lastActivity.Store(time.Now().UnixNano())
+	var stalled atomic.Bool
+	stopWatchdog := make(chan struct{})
+	defer close(stopWatchdog)
+
+	go func() {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopWatchdog:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				last := time.Unix(0, lastActivity.Load())
+				if time.Since(last) >= stallTimeout {
+					stalled.Store(true)
+					fmt.Fprintf(os.Stderr, "\n> ⚠️  [Watchdog] No stream activity for %s — cancelling request and forcing recovery...\n", stallTimeout)
+					resp.Body.Close()
+					return
+				}
+			}
+		}
+	}()
+
 	debugHistory := make([]string, 10)
 	historyIdx := 0
 	var expectedSessionID string
 
 	for scanner.Scan() {
+		// Any successful read — even a keepalive/ping line — counts as activity.
+		lastActivity.Store(time.Now().UnixNano())
+
 		if ctx.Err() != nil {
 			break
 		}
@@ -482,6 +533,16 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 	} // scanner end
 
 	if err := scanner.Err(); err != nil && ctx.Err() == nil {
+		if stalled.Load() {
+			fmt.Fprintln(os.Stderr, "\n--- 🚨 STREAM STALLED (NO ACTIVITY) ---")
+			for i := 0; i < 10; i++ {
+				line := debugHistory[(historyIdx+i)%10]
+				if line != "" {
+					fmt.Fprintln(os.Stderr, line)
+				}
+			}
+			return fullContent.String(), thinkingContent.String(), nil, fmt.Errorf("AI STREAM STALLED")
+		}
 		log.Printf("[ERR] scanner error %s\n", err.Error())
 		return fullContent.String(), thinkingContent.String(), nil, fmt.Errorf("stream error: %v", err)
 	}

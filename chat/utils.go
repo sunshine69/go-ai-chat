@@ -483,6 +483,7 @@ func loadConfig() *Config {
 		DebugLevel:          os.Getenv("DEBUG_LEVEL"),
 		MaxTokens:           999999,
 		MaxRepeatPattern:    10,
+		StallTimeout:        u.Must(time.ParseDuration("45s")),
 	}
 
 	if timeoutStr := os.Getenv("TIMEOUT"); timeoutStr != "" {

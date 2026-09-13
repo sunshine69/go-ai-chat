@@ -26,6 +26,7 @@ type Config struct {
 	MaxTokens           int
 	MaxRepeatPattern    int
 	AutoNudgeDisabled   bool
+	StallTimeout        time.Duration
 }
 
 type Message struct {
