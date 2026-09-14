@@ -226,6 +226,9 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 	globalStats.StreamStarted()
 	defer globalStats.StreamFinished()
 
+	streamCtx, cancelStream := context.WithCancel(ctx)
+	defer cancelStream() // Clean up resources when function exits
+
 	reqBody := map[string]interface{}{
 		"model":      config.Model,
 		"max_tokens": config.MaxTokens,
@@ -245,7 +248,7 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 	jsonValue, _ := json.Marshal(reqBody)
 	client := &http.Client{Timeout: config.Timeout}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", config.BaseURL, bytes.NewBuffer(jsonValue))
+	req, err := http.NewRequestWithContext(streamCtx, "POST", config.BaseURL, bytes.NewBuffer(jsonValue))
 	if err != nil {
 		return "", "", nil, err
 	}
@@ -262,7 +265,7 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		return "", "", nil, fmt.Errorf("API Error: %s", string(body))
+		return HandleAPIErrorFromLlamaServer(resp.StatusCode, string(body))
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
@@ -277,11 +280,6 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 
 	// Accumulate tool calls across streaming chunks (indexed by tool call index)
 	toolCallAccum := map[int]*ToolCall{}
-
-	go func() {
-		<-ctx.Done()
-		resp.Body.Close()
-	}()
 
 	// --- Mid-stream stall watchdog ---
 	// Some backends (notably MoE / "expert-routed" models when the router
@@ -309,14 +307,14 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 			select {
 			case <-stopWatchdog:
 				return
-			case <-ctx.Done():
+			case <-streamCtx.Done():
 				return
 			case <-ticker.C:
 				last := time.Unix(0, lastActivity.Load())
 				if time.Since(last) >= stallTimeout {
 					stalled.Store(true)
 					fmt.Fprintf(os.Stderr, "\n> ⚠️  [Watchdog] No stream activity for %s — cancelling request and forcing recovery...\n", stallTimeout)
-					resp.Body.Close()
+					cancelStream()
 					return
 				}
 			}
@@ -331,7 +329,7 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 		// Any successful read — even a keepalive/ping line — counts as activity.
 		lastActivity.Store(time.Now().UnixNano())
 
-		if ctx.Err() != nil {
+		if streamCtx.Err() != nil {
 			break
 		}
 		if serverSignaledStop {
@@ -532,17 +530,18 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 		}
 	} // scanner end
 
-	if err := scanner.Err(); err != nil && ctx.Err() == nil {
-		if stalled.Load() {
-			fmt.Fprintln(os.Stderr, "\n--- 🚨 STREAM STALLED (NO ACTIVITY) ---")
-			for i := 0; i < 10; i++ {
-				line := debugHistory[(historyIdx+i)%10]
-				if line != "" {
-					fmt.Fprintln(os.Stderr, line)
-				}
-			}
-			return fullContent.String(), thinkingContent.String(), nil, fmt.Errorf("AI STREAM STALLED")
-		}
+	// 1. Explicitly check your atomic watchdog flag first
+	if stalled.Load() {
+		return fullContent.String(), thinkingContent.String(), nil, fmt.Errorf("AI STREAM STALLED")
+	}
+
+	// 2. Check if the parent context was canceled by the user/system
+	if ctx.Err() != nil {
+		return fullContent.String(), thinkingContent.String(), nil, ctx.Err()
+	}
+
+	// 3. Catch generic network errors (unrelated to your watchdog)
+	if err := scanner.Err(); err != nil {
 		log.Printf("[ERR] scanner error %s\n", err.Error())
 		return fullContent.String(), thinkingContent.String(), nil, fmt.Errorf("stream error: %v", err)
 	}
@@ -590,4 +589,11 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 		return fullContent.String(), thinkingContent.String(), toolCalls, fmt.Errorf("STREAM CUTOFF DETECTED")
 	}
 	return fullContent.String(), thinkingContent.String(), toolCalls, nil
+}
+
+// This func will handle and automate some actions when llama-server return messages
+func HandleAPIErrorFromLlamaServer(statusCode int, body string) (string, string, []ToolCall, error) {
+	/* {"error":{"code":400,"message":"request (132126 tokens) exceeds the available context size (132096 tokens), try increasing it","type":"exceed_context_size_error", n_prompt_tokens":132126,"n_ctx":132096}}
+	 */
+	return "", "", nil, fmt.Errorf("API Error: %s", body)
 }
