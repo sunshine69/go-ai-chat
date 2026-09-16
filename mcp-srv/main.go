@@ -298,6 +298,10 @@ func buildServer(cfg config) *server.MCPServer {
 		}
 	}
 
+	if strings.Contains(cfg.toolSet, "all") || strings.Contains(cfg.toolSet, "confluence") {
+		RegisterConfluenceTools(s)
+	}
+
 	println("[DEBUG] defaultAllowPath - ", defaultAllowPath)
 	baseTool := BaseToolManager{ // Noticed very very strange behaviour of env var corruptions when using tmux
 		AllowedTerminalCommandPattern: u.Getenv("ALLOWED_TERM_CMD_PTN", defaultAllowCmd),
