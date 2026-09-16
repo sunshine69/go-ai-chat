@@ -28,7 +28,7 @@ type config struct {
 var (
 	defaultAllowCmd     string
 	defaultAllowPath    string
-	ForbiddenString     = []string{` ~/. `, ` $HOME `, ` ${HOME} `}
+	ForbiddenString     = []string{` ~/. `, ` $HOME `, ` ${HOME} `, `sudo `}
 	pathErrorMsg        string
 	PathPtn             *regexp.Regexp
 	unixFileTools       map[string]any = u.SliceToMap([]string{"cat", "find", "head", "ls", "cp", "mv", "rm", "chmod", "chown", "touch", "file", "stat", "ln", "realpath", "dirname", "basename", "cd"})
@@ -282,7 +282,11 @@ func buildServer(cfg config) *server.MCPServer {
 	}
 
 	if strings.Contains(cfg.toolSet, "all") || strings.Contains(cfg.toolSet, "skills") {
-		registerSkillsTools(s, u.Must(NewSkillsProxy()))
+		if sk, err := NewSkillsProxy(); err == nil {
+			registerSkillsTools(s, sk)
+		} else {
+			log.Printf("[ERROR] can not NewSkillsProxy - %s\n", err.Error())
+		}
 	}
 
 	if gmailCredentialFile != "" && (strings.Contains(cfg.toolSet, "all") || strings.Contains(cfg.toolSet, "gmail")) {

@@ -351,10 +351,15 @@ func (t *BaseToolManager) execCommand(ctx context.Context, request mcp.CallToolR
 		sb.WriteString("(command completed with no output)\n")
 	}
 	if sb.Len() >= MAX_OUPUT_SIZE {
-		tempfile := u.Must(os.CreateTemp("", "mcp"))
-		_ = u.Must(tempfile.Write([]byte(sb.String())))
-		tempfile.Sync()
-		return mcp.NewToolResultText("Command output is saved to a file " + tempfile.Name() + "\nYou MUST use text tools to extract information. DON'T read full content. REMEMBER to remove it after use."), nil
+		if tempfile, err := os.CreateTemp("", "mcp"); err == nil {
+			if _, err := tempfile.Write([]byte(sb.String())); err != nil {
+				return nil, err
+			}
+			tempfile.Sync()
+			return mcp.NewToolResultText("Command output is saved to a file " + tempfile.Name() + "\nYou MUST use text tools to extract information. DON'T read full content. REMEMBER to remove it after use."), nil
+		} else {
+			return nil, fmt.Errorf("[ERROR] can not create tempfile")
+		}
 	} else {
 		return mcp.NewToolResultText(sb.String()), nil
 	}
@@ -437,10 +442,15 @@ func (t *BaseToolManager) runTerminalCommand(ctx context.Context, request mcp.Ca
 		sb.WriteString("(command completed with no output)\n")
 	}
 	if sb.Len() >= MAX_OUPUT_SIZE {
-		tempfile := u.Must(os.CreateTemp("", "mcp"))
-		_ = u.Must(tempfile.Write([]byte(sb.String())))
-		tempfile.Sync()
-		return mcp.NewToolResultText("Command output is saved to a file " + tempfile.Name() + "\nBecause t is too big thus use text tools to extract information. DON'T read full content. REMEMBER to remove it after use."), nil
+		if tempfile, err := os.CreateTemp("", "mcp"); err == nil {
+			if _, err := tempfile.Write([]byte(sb.String())); err != nil {
+				return nil, err
+			}
+			tempfile.Sync()
+			return mcp.NewToolResultText("Command output is saved to a file " + tempfile.Name() + "\nBecause t is too big thus use text tools to extract information. DON'T read full content. REMEMBER to remove it after use."), nil
+		} else {
+			return nil, err
+		}
 	} else {
 		return mcp.NewToolResultText(sb.String()), nil
 	}
@@ -624,10 +634,15 @@ func (t *BaseToolManager) fetchUrl(ctx context.Context, request mcp.CallToolRequ
 	}
 	docSize := len(markdownText)
 	if docSize > MAX_OUPUT_SIZE {
-		tempDir := u.Must(os.MkdirTemp("", "aig*"))
-		tempFile := filepath.Join(tempDir, "fetch-url-doc.md")
-		u.CheckErr(os.WriteFile(tempFile, []byte(markdownText), 0o644), "write doc file")
-		return mcp.NewToolResultText(fmt.Sprintf("Document saved to file; path '%s'. Size %d bytes. You can extract information from it using current available text extraction tools. Avoid reading the whole file with that size to avoid context overflow. Clean up the file after you no longer need it", tempFile, docSize)), nil
+		if tempDir, err := os.MkdirTemp("", "aig*"); err == nil {
+			tempFile := filepath.Join(tempDir, "fetch-url-doc.md")
+			if err := u.CheckErrNonFatal(os.WriteFile(tempFile, []byte(markdownText), 0o644), "write doc file"); err != nil {
+				return nil, err
+			}
+			return mcp.NewToolResultText(fmt.Sprintf("Document saved to file; path '%s'. Size %d bytes. You can extract information from it using current available text extraction tools. Avoid reading the whole file with that size to avoid context overflow. Clean up the file after you no longer need it", tempFile, docSize)), nil
+		} else {
+			return nil, err
+		}
 	}
 	return mcp.NewToolResultText(markdownText), nil
 }
