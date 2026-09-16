@@ -94,12 +94,11 @@ const (
 //     deterministic structured summary that extracts roles, tool calls, and
 //     content snippets without any network call.
 func trimContext(ctx context.Context, cfg Config, msgs []Message) []Message {
-	_, rest := splitSystemHead(msgs)
+	system, rest := splitSystemHead(msgs)
 
 	if len(rest) <= keepHead+keepTail {
 		fmt.Fprintln(os.Stderr, "rest msg not valid to compress more. Will cut off the last message")
 		l0 := len(msgs) - 1
-		//fmt.Fprintf("role l0 %s - l1 %s\n", msgs[l0-1].Role, msgs[l1-1].Role)
 		summaryMsg := Message{
 			Role:    "user",
 			Content: "continue",
@@ -107,7 +106,7 @@ func trimContext(ctx context.Context, cfg Config, msgs []Message) []Message {
 		return append(msgs[0:l0], summaryMsg)
 	}
 
-	// head := rest[:keepHead]
+	head := rest[:keepHead]
 	middle := rest[keepHead : len(rest)-keepTail]
 	tail := rest[len(rest)-keepTail:]
 
@@ -129,14 +128,19 @@ func trimContext(ctx context.Context, cfg Config, msgs []Message) []Message {
 		Content: summary,
 	}
 
-	trimmed := concat([]Message{summaryMsg}, tail)
+	// IMPORTANT: system head and the preserved head anchor messages must be
+	// re-attached here. Previously this only concatenated summaryMsg+tail,
+	// which silently dropped the system prompt and the "always keep the
+	// first keepHead messages" guarantee — the head ended up folded into
+	// the summarized middle instead of being preserved verbatim.
+	trimmed := concat(system, head, []Message{summaryMsg}, tail)
 
 	// Progressive fallback: if still over half the limit, drop pairs from the
-	// older end of tail — never touch head or the last 2 messages.
+	// older end of tail — never touch system, head, or the last 2 messages.
 	target := cfg.ContextLimit / 2
 	for estimateTokens(trimmed) > target && len(tail) > 2 {
 		tail = tail[2:]
-		trimmed = concat([]Message{summaryMsg}, tail)
+		trimmed = concat(system, head, []Message{summaryMsg}, tail)
 	}
 
 	fmt.Fprintf(os.Stderr, "✅ Context trimmed to ~%d tokens (target <%d)\n",
@@ -181,7 +185,12 @@ func tryAISummary(ctx context.Context, cfg Config, msgs []Message) string {
 	summaryCfg.ShowThinking = false
 
 	prompt := buildSummaryPrompt(msgs)
-	summaryMsgs := []Message{{Role: "system", Content: `[SYSTEM]
+
+	// Previously this built a strict system message ("don't reason, preserve
+	// everything exactly") and then immediately discarded it by overwriting
+	// summaryMsgs below — it was never sent. Kept here for real.
+	summaryMsgs := []Message{
+		{Role: "system", Content: `[SYSTEM]
 You are a context compression utility. The provided text contains highly valuable, time-sensitive knowledge.
 
 Constraints:
@@ -189,8 +198,9 @@ Constraints:
 - If specific source URLs or document titles are mentioned, they MUST be preserved in the summary.
 - Do not attempt to analyze, critique, or second-guess the validity of the information.
 - Output a dense, chronological compression. Do not use reasoning tokens.
-`}, {Role: "user", Content: prompt}}
-	summaryMsgs = []Message{{Role: "user", Content: prompt}}
+`},
+		{Role: "user", Content: prompt},
+	}
 
 	content, _, _, err := streamOnce(subCtx, summaryCfg, summaryMsgs)
 	if err != nil {
