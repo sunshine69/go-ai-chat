@@ -78,8 +78,8 @@ func estimateTokens(msgs []Message) int {
 }
 
 const (
-	keepHead = 2  // first N non-system messages to always preserve verbatim
-	keepTail = 10 // last N messages to always preserve verbatim (5 pairs)
+	keepHead = 0  // first N non-system messages to always preserve verbatim
+	keepTail = 12 // last N messages to always preserve verbatim (5 pairs)
 )
 
 // trimContext compresses the middle of the conversation when the token budget
