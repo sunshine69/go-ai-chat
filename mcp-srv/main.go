@@ -32,7 +32,7 @@ var (
 	pathErrorMsg        string
 	PathPtn             *regexp.Regexp
 	unixFileTools       = []string{"cat", "find", "head", "ls", "cp", "mv", "rm", "chmod", "chown", "touch", "file", "stat", "ln", "realpath", "dirname", "basename", "cd"}
-	gmailCredentialFile string         // json file taken from google developer console
+	gmailCredentialFile string // json file taken from google developer console
 )
 
 func init() {
@@ -145,22 +145,22 @@ func init() {
 		unixCmds :=
 			// --- C / C++ ---
 			`gcc|g\+\+|clang|clang\+\+|make|cmake|ninja|m4|bison|flex|` +
-			// --- Archive / transfer ---
-			`tar|zip|unzip|7z|curl|wget|zstd|` +
-			// --- macOS ---
-			`xcodebuild|xcrun|brew|open|pbcopy|` +
-			// --- File / text utils ---
-			strings.Join(unixFileTools, "|") + "|sed|awk|cut|tr|du|df|grep|tail|wc|diff|patch|sort|uniq|xargs|" +
-			// --- Network ---
-			`ssh|scp|rsync|nc|` +
-			// --- Archive / compression (unix-only formats) ---
-			`gzip|gunzip|bzip2|xz|zstd|lzma|` +
-			// --- Linux package managers ---
-			// `apt|apt-get|apt-cache|yum|dnf|apk|pacman|snap|` +
-			// --- Unix misc ---
-			`nohup|echo|env|which|date|pwd|uname|tput|xdg-open|xclip|openssl|` +
-			// --- gradlew wrapper (unix executable) ---
-			`\.\/gradlew|`
+				// --- Archive / transfer ---
+				`tar|zip|unzip|7z|curl|wget|zstd|` +
+				// --- macOS ---
+				`xcodebuild|xcrun|brew|open|pbcopy|` +
+				// --- File / text utils ---
+				strings.Join(unixFileTools, "|") + "|sed|awk|cut|tr|du|df|grep|tail|wc|diff|patch|sort|uniq|xargs|" +
+				// --- Network ---
+				`ssh|scp|rsync|nc|` +
+				// --- Archive / compression (unix-only formats) ---
+				`gzip|gunzip|bzip2|xz|zstd|lzma|` +
+				// --- Linux package managers ---
+				// `apt|apt-get|apt-cache|yum|dnf|apk|pacman|snap|` +
+				// --- Unix misc ---
+				`nohup|echo|env|which|date|pwd|uname|tput|xdg-open|xclip|openssl|` +
+				// --- gradlew wrapper (unix executable) ---
+				`\.\/gradlew|`
 
 		defaultAllowCmd = `^(` + sharedCmds + unixCmds + `)[\s]*.*$`
 
