@@ -31,7 +31,7 @@ var (
 	ForbiddenString     = []string{` ~/. `, ` $HOME `, ` ${HOME} `, `sudo `}
 	pathErrorMsg        string
 	PathPtn             *regexp.Regexp
-	unixFileTools       map[string]any = u.SliceToMap([]string{"cat", "find", "head", "ls", "cp", "mv", "rm", "chmod", "chown", "touch", "file", "stat", "ln", "realpath", "dirname", "basename", "cd"})
+	unixFileTools       = []string{"cat", "find", "head", "ls", "cp", "mv", "rm", "chmod", "chown", "touch", "file", "stat", "ln", "realpath", "dirname", "basename", "cd"}
 	gmailCredentialFile string         // json file taken from google developer console
 )
 
@@ -53,11 +53,11 @@ func init() {
 	// ---------------------------------------------------------------------------
 	sharedCmds := `` +
 		// --- Go toolchain gorun is mine ---
-		`nohup|go|gobind|gofmt|gomobile|govet|gorun|` +
+		`go|gobind|gofmt|gomobile|govet|gorun|` +
 		// --- Rust ---
 		`cargo|rustc|rustfmt|rustup|` +
 		// --- Java / JVM ---
-		`java|javac|javadoc|jar|mvn|mvnw|gradle|gradlew|ant|kotlin|kotlinc|scala|scalac|sbt|keytool|openssl|` +
+		`java|javac|javadoc|jar|mvn|mvnw|gradle|gradlew|ant|kotlin|kotlinc|scala|scalac|sbt|keytool|` +
 		// --- .NET (cross-platform subset) ---
 		`dotnet|mono|paket|fsi|` +
 		// --- Python ---
@@ -145,22 +145,22 @@ func init() {
 		unixCmds :=
 			// --- C / C++ ---
 			`gcc|g\+\+|clang|clang\+\+|make|cmake|ninja|m4|bison|flex|` +
-				// --- Archive / transfer ---
-				`tar|zip|unzip|7z|curl|wget|zstd|` +
-				// --- macOS ---
-				`xcodebuild|xcrun|brew|open|pbcopy|` +
-				// --- File / text utils ---
-				strings.Join(u.MapKeysToSlice(unixFileTools), "|") + "|sed|awk|cut|tr|du|df|grep|tail|wc|diff|patch|sort|uniq|xargs|" +
-				// --- Network ---
-				`ssh|scp|rsync|nc|` +
-				// --- Archive / compression (unix-only formats) ---
-				`gzip|gunzip|bzip2|xz|zstd|lzma|` +
-				// --- Linux package managers ---
-				// `apt|apt-get|apt-cache|yum|dnf|apk|pacman|snap|` +
-				// --- Unix misc ---
-				`echo|env|which|date|pwd|uname|tput|xdg-open|xclip|` +
-				// --- gradlew wrapper (unix executable) ---
-				`\.\/gradlew|`
+			// --- Archive / transfer ---
+			`tar|zip|unzip|7z|curl|wget|zstd|` +
+			// --- macOS ---
+			`xcodebuild|xcrun|brew|open|pbcopy|` +
+			// --- File / text utils ---
+			strings.Join(unixFileTools, "|") + "|sed|awk|cut|tr|du|df|grep|tail|wc|diff|patch|sort|uniq|xargs|" +
+			// --- Network ---
+			`ssh|scp|rsync|nc|` +
+			// --- Archive / compression (unix-only formats) ---
+			`gzip|gunzip|bzip2|xz|zstd|lzma|` +
+			// --- Linux package managers ---
+			// `apt|apt-get|apt-cache|yum|dnf|apk|pacman|snap|` +
+			// --- Unix misc ---
+			`nohup|echo|env|which|date|pwd|uname|tput|xdg-open|xclip|openssl|` +
+			// --- gradlew wrapper (unix executable) ---
+			`\.\/gradlew|`
 
 		defaultAllowCmd = `^(` + sharedCmds + unixCmds + `)[\s]*.*$`
 
