@@ -26,12 +26,12 @@ type config struct {
 }
 
 var (
-	defaultAllowCmd    string
-	defaultAllowPath   string
-	ForbiddenString    = []string{` ~/. `, ` $HOME `, ` ${HOME} `, `sudo `}
-	pathErrorMsg       string
-	PathPtn            *regexp.Regexp
-	execCommandPattern *regexp.Regexp
+	defaultAllowCmd  string
+	defaultAllowPath string
+	ForbiddenString  = []string{`~/.`, `$HOME`, `${HOME}`, `sudo`} // trailing spaces removed so bare tokens like ~/.ssh / sudo match
+	pathErrorMsg     string
+	PathPtn          *regexp.Regexp
+	execCmdPtnString string
 	// hardBlockArg0: base program names that are NEVER permitted as the executable
 	// via exec_command, even if allowlisted. These reintroduce a shell or cross a
 	// privilege/execution boundary, defeating the no-shell guarantee.
@@ -201,8 +201,8 @@ func init() {
 		pathErrorMsg = `[ERROR] denied access for path: '%s'. ONLY RELATIVE PATH TO THE CURRENT DIR AND ONE LEVEL UPPER ARE ALLOWED. EXCEPTIONS ARE /tmp and /var/tmp. That is ./XXX ../XXX XXX /tmp, /var/tmp should work, BUT NOT / and ../../`
 		PathPtn = regexp.MustCompile(`(?:^|\s)([\.\/][a-zA-Z0-9_\.\-\/]+)`)
 	}
-	execCmdPtnString := u.Getenv("EXEC_CMD_PTN", `(?i)^`+
-		`(?:go(?: +(?:build|vet|fmt|mod tidy|mod init)(?: +[^;|&<>"']*)*)?|`+
+	execCmdPtnString = u.Getenv("EXEC_CMD_PTN", `(?i)^`+
+		`(?:go(?: +(?:build|version|vet|fmt|mod tidy|mod init)(?: +[^;|&<>"']*)*)?|`+
 		`rustc(?: +-[^ ]+(?: +[^;|&<>"']*)*)?|`+
 		`cargo(?: +(?:build|fmt|check|clippy)(?: +[^;|&<>"']*)*)?|`+
 		`git(?: +(?:[a-zA-Z][^;|&<>"']*)+)?|`+
@@ -218,8 +218,7 @@ func init() {
 		`yq(?: +[^;|&<>"']*)*|`+
 		`grep(?: +[^;|&<>"']*)*|`+
 		`curl(?: +[^;|&<>"']*)*|`+
-		`wget(?: +[^;|&<>"']*)*)$`)
-	execCommandPattern = regexp.MustCompile(execCmdPtnString)
+		`wget(?: +[^;|&<>"']*)*)(?: +2>&1)?)$`)
 }
 
 func parseArgs() config {

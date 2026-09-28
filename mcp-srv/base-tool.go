@@ -175,7 +175,11 @@ func (t *BaseToolManager) checkPath(path string) (*mcp.CallToolResult, error) {
 			return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] denied access for path: '%s'. Blocked path pattern: '%s'", path, t.BlockedPathPattern)
 		}
 	}
-	CheckForbiddenString(path)
+	// Wire the forbidden-string guard into the return path — previously the
+	// result was discarded, so patterns like ~/.ssh / $HOME / sudo were never blocked.
+	if res, ferr := CheckForbiddenString(path); res != nil || ferr != nil {
+		return res, ferr
+	}
 	return nil, nil
 }
 
@@ -311,8 +315,9 @@ func (t *BaseToolManager) execCommand(ctx context.Context, request mcp.CallToolR
 
 	// 2) Highest gate: the FULL command string must match the allowlist pattern.
 	//    Any program not enumerated here is denied before any lookup happens.
+	execCommandPattern := regexp.MustCompile(execCmdPtnString)
 	if !execCommandPattern.MatchString(command) {
-		return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] denied access for command '%s': program not permitted by exec_command policy", command)
+		return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] denied access for command '%s': program not permitted by exec_command policy. Pattern allowed:\n%s\n", command, execCmdPtnString)
 	}
 
 	// 3) Reject any token carrying shell metacharacters. There is no shell, so these
@@ -439,7 +444,11 @@ func (t *BaseToolManager) runTerminalCommand(ctx context.Context, request mcp.Ca
 		}
 	}
 
-	CheckForbiddenString(command)
+	// Wire the forbidden-string guard into the return path so ~/.ssh / $HOME / sudo
+	// etc. are actually denied. Previously the result was discarded.
+	if res, ferr := CheckForbiddenString(command); res != nil || ferr != nil {
+		return res, ferr
+	}
 
 	if t.BlockedTerminalCommandPattern != "" {
 		if regexp.MustCompile(t.BlockedTerminalCommandPattern).MatchString(command) {
