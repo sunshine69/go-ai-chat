@@ -27,6 +27,7 @@ type Config struct {
 	MaxRepeatPattern    int
 	AutoNudgeDisabled   bool
 	StallTimeout        time.Duration
+	Temperature         float64 // model temperature; only set in the request when > 0 (runtime-only, never persisted)
 }
 
 type Message struct {

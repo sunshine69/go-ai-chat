@@ -751,6 +751,24 @@ func (t *BaseToolManager) httpRequest(ctx context.Context, request mcp.CallToolR
 	return mcp.NewToolResultText(fmt.Sprintf("Status: %d\nBody: %s", resp.StatusCode, string(respBody))), nil
 }
 
+func (t *BaseToolManager) registerTerminalTool(s *server.MCPServer) {
+	s.AddTool(mcp.NewTool("run_terminal_command",
+		mcp.WithDescription(`Runs a shell command and returns its stdout and stderr.
+
+ABSOLUTE PATH IN COMMAND WILL BE DENIED. USE RELATIVE PATH TO CURRENT DIRECTORY.
+To run a command in a specific directory, use the working_dir argument otherwise it is defaulted to current working dir. If set, WORKING_DIR need to be relative path or match the path PATTERN return back to you.
+
+  WRONG : command="cd /app && go build ./..."
+  CORRECT: command="go build ./..."  working_dir="./app"
+
+If the command does not return it will block you.
+
+If the output is too big it will be saved to a temp file and give you the file path. You SHOULD NOT read the whole file as it will overflow your context. You should use text tools to extract relevant information from it`),
+		mcp.WithString("command", mcp.Required(), mcp.Description("The shell command to execute. Must not use 'cd' — use working_dir instead.")),
+		mcp.WithString("working_dir", mcp.Description("Directory to run the command in. Use this instead of 'cd'. Must be a relative path from the current directory.")),
+	), guarded("run_terminal_command", t.runTerminalCommand))
+}
+
 func registerBaseTool(s *server.MCPServer, t *BaseToolManager) {
 	s.AddTool(mcp.NewTool("insert_text_to_file",
 		mcp.WithDescription(`Insert a chunk of text  to a file BEFORE a 1-based line number.
@@ -812,22 +830,6 @@ func registerBaseTool(s *server.MCPServer, t *BaseToolManager) {
 			mcp.Description("UTF-8 text content to write into the file."),
 		),
 	), guarded("create_new_file", t.createNewFile))
-
-	s.AddTool(mcp.NewTool("run_terminal_command",
-		mcp.WithDescription(`Runs a shell command and returns its stdout and stderr.
-
-ABSOLUTE PATH IN COMMAND WILL BE DENIED. USE RELATIVE PATH TO CURRENT DIRECTORY.
-To run a command in a specific directory, use the working_dir argument otherwise it is defaulted to current working dir. If set, WORKING_DIR need to be relative path or match the path PATTERN return back to you.
-
-  WRONG : command="cd /app && go build ./..."
-  CORRECT: command="go build ./..."  working_dir="./app"
-
-If the command does not return it will block you.
-
-If the output is too big it will be saved to a temp file and give you the file path. You SHOULD NOT read the whole file as it will overflow your context. You should use text tools to extract relevant information from it`),
-		mcp.WithString("command", mcp.Required(), mcp.Description("The shell command to execute. Must not use 'cd' — use working_dir instead.")),
-		mcp.WithString("working_dir", mcp.Description("Directory to run the command in. Use this instead of 'cd'. Must be a relative path from the current directory.")),
-	), guarded("run_terminal_command", t.runTerminalCommand))
 
 	s.AddTool(mcp.NewTool("exec_command",
 		mcp.WithDescription(`Exec a command and returns its stdout and stderr. Eg. run "/bin/ls ." will exec /bin/ls and first arg is .

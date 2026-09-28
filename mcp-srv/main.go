@@ -201,24 +201,25 @@ func init() {
 		pathErrorMsg = `[ERROR] denied access for path: '%s'. ONLY RELATIVE PATH TO THE CURRENT DIR AND ONE LEVEL UPPER ARE ALLOWED. EXCEPTIONS ARE /tmp and /var/tmp. That is ./XXX ../XXX XXX /tmp, /var/tmp should work, BUT NOT / and ../../`
 		PathPtn = regexp.MustCompile(`(?:^|\s)([\.\/][a-zA-Z0-9_\.\-\/]+)`)
 	}
-	execCommandPattern = regexp.MustCompile(`(?i)^` +
-		`(?:go(?:[ -](?:build|vet|fmt|run|test|install|tidy))?[ -](?:-[^ ]+(?: +[^;|&<>"']*)*)?|` +
-		`rustc(?: +-[^ ]+(?: +[^;|&<>"']*)*)?|` +
-		`cargo(?: +(?:build|run|test|fmt|check|clippy)(?: +[^;|&<>"']*)*)?|` +
-		`git(?: +(?:[a-zA-Z][^;|&<>"']*)+)?|` +
-		`python3(?: +[^;|&<>"']*)*|` +
-		`node(?: +[^;|&<>"']*)*|` +
-		`php(?: +[^;|&<>"']*)*|` +
-		`ruby(?: +[^;|&<>"']*)*|` +
-		`perl(?: +[^;|&<>"']*)*|` +
-		`make(?: +[^;|&<>"']*)*|` +
-		`cmake(?: +[^;|&<>"']*)*|` +
-		`ninja(?: +[^;|&<>"']*)*|` +
-		`jq(?: +[^;|&<>"']*)*|` +
-		`yq(?: +[^;|&<>"']*)*|` +
-		`grep(?: +[^;|&<>"']*)*|` +
-		`curl(?: +[^;|&<>"']*)*|` +
-		`wget(?: +[^;|&<>"']*)*$`)
+	execCmdPtnString := u.Getenv("EXEC_CMD_PTN", `(?i)^`+
+		`(?:go(?: +(?:build|vet|fmt|mod tidy|mod init)(?: +[^;|&<>"']*)*)?|`+
+		`rustc(?: +-[^ ]+(?: +[^;|&<>"']*)*)?|`+
+		`cargo(?: +(?:build|fmt|check|clippy)(?: +[^;|&<>"']*)*)?|`+
+		`git(?: +(?:[a-zA-Z][^;|&<>"']*)+)?|`+
+		// `python3(?: +[^;|&<>"']*)*|` +
+		// `node(?: +[^;|&<>"']*)*|` +
+		// `php(?: +[^;|&<>"']*)*|` +
+		// `ruby(?: +[^;|&<>"']*)*|` +
+		// `perl(?: +[^;|&<>"']*)*|` +
+		// `make(?: +[^;|&<>"']*)*|`+
+		// `cmake(?: +[^;|&<>"']*)*|`+
+		// `ninja(?: +[^;|&<>"']*)*|` +
+		`jq(?: +[^;|&<>"']*)*|`+
+		`yq(?: +[^;|&<>"']*)*|`+
+		`grep(?: +[^;|&<>"']*)*|`+
+		`curl(?: +[^;|&<>"']*)*|`+
+		`wget(?: +[^;|&<>"']*)*)$`)
+	execCommandPattern = regexp.MustCompile(execCmdPtnString)
 }
 
 func parseArgs() config {
@@ -353,6 +354,11 @@ func buildServer(cfg config) *server.MCPServer {
 	// Default tools to load
 	registerBaseTool(s, &baseTool)
 	registerTextTools(s, &TextToolManager{})
+
+	if strings.Contains(cfg.toolSet, "all") || strings.Contains(cfg.toolSet, "terminal") {
+		baseTool.registerTerminalTool(s)
+	}
+
 	return s
 }
 
