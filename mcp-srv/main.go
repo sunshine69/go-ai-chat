@@ -26,11 +26,33 @@ type config struct {
 }
 
 var (
-	defaultAllowCmd     string
-	defaultAllowPath    string
-	ForbiddenString     = []string{` ~/. `, ` $HOME `, ` ${HOME} `, `sudo `}
-	pathErrorMsg        string
-	PathPtn             *regexp.Regexp
+	defaultAllowCmd    string
+	defaultAllowPath   string
+	ForbiddenString    = []string{` ~/. `, ` $HOME `, ` ${HOME} `, `sudo `}
+	pathErrorMsg       string
+	PathPtn            *regexp.Regexp
+	execCommandPattern *regexp.Regexp
+	// hardBlockArg0: base program names that are NEVER permitted as the executable
+	// via exec_command, even if allowlisted. These reintroduce a shell or cross a
+	// privilege/execution boundary, defeating the no-shell guarantee.
+	hardBlockArg0 = map[string]bool{
+		"sh": true, "bash": true, "zsh": true, "dash": true, "ksh": true,
+		"fish": true, "csh": true, "tcsh": true,
+		"cmd": true, "cmd.exe": true, "powershell": true, "pwsh": true, "wsl": true,
+		"env": true, "xargs": true, "nohup": true, "setsid": true, "run": true,
+		"sudo": true, "su": true, "doas": true, "pkexec": true,
+	}
+	// execAllowed: deny-by-default allowlist of bare program names. exec_command
+	// requires the resolved program (after LookPath on PATH) to be present here.
+	// Policy knob: edit this set. Keep it tight to the dev tooling this server exists
+	// to run.
+	execAllowed = map[string]bool{
+		"go": true, "gofmt": true, "vet": true,
+		"cargo": true, "rustc": true, "rustfmt": true,
+		"python3": true, "node": true, "php": true, "ruby": true, "perl": true,
+		"git": true, "make": true, "cmake": true, "ninja": true,
+		"jq": true, "yq": true, "grep": true, "curl": true, "wget": true,
+	}
 	unixFileTools       = []string{"cat", "find", "head", "ls", "cp", "mv", "rm", "chmod", "chown", "touch", "file", "stat", "ln", "realpath", "dirname", "basename", "cd"}
 	gmailCredentialFile string // json file taken from google developer console
 )
@@ -179,6 +201,24 @@ func init() {
 		pathErrorMsg = `[ERROR] denied access for path: '%s'. ONLY RELATIVE PATH TO THE CURRENT DIR AND ONE LEVEL UPPER ARE ALLOWED. EXCEPTIONS ARE /tmp and /var/tmp. That is ./XXX ../XXX XXX /tmp, /var/tmp should work, BUT NOT / and ../../`
 		PathPtn = regexp.MustCompile(`(?:^|\s)([\.\/][a-zA-Z0-9_\.\-\/]+)`)
 	}
+	execCommandPattern = regexp.MustCompile(`(?i)^` +
+		`(?:go(?:[ -](?:build|vet|fmt|run|test|install|tidy))?[ -](?:-[^ ]+(?: +[^;|&<>"']*)*)?|` +
+		`rustc(?: +-[^ ]+(?: +[^;|&<>"']*)*)?|` +
+		`cargo(?: +(?:build|run|test|fmt|check|clippy)(?: +[^;|&<>"']*)*)?|` +
+		`git(?: +(?:[a-zA-Z][^;|&<>"']*)+)?|` +
+		`python3(?: +[^;|&<>"']*)*|` +
+		`node(?: +[^;|&<>"']*)*|` +
+		`php(?: +[^;|&<>"']*)*|` +
+		`ruby(?: +[^;|&<>"']*)*|` +
+		`perl(?: +[^;|&<>"']*)*|` +
+		`make(?: +[^;|&<>"']*)*|` +
+		`cmake(?: +[^;|&<>"']*)*|` +
+		`ninja(?: +[^;|&<>"']*)*|` +
+		`jq(?: +[^;|&<>"']*)*|` +
+		`yq(?: +[^;|&<>"']*)*|` +
+		`grep(?: +[^;|&<>"']*)*|` +
+		`curl(?: +[^;|&<>"']*)*|` +
+		`wget(?: +[^;|&<>"']*)*$`)
 }
 
 func parseArgs() config {

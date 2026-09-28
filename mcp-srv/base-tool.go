@@ -295,44 +295,83 @@ func (t *BaseToolManager) execCommand(ctx context.Context, request mcp.CallToolR
 	command := ""
 	if c, ok := args["command"]; ok {
 		command = c.(string)
-		if RequiresShell(command) {
-			return t.runTerminalCommand(ctx, request)
+	}
+	if strings.TrimSpace(command) == "" {
+		return mcp.NewToolResultText("[ERROR] empty command"), fmt.Errorf("[ERROR] empty command")
+	}
+
+	// ---- STRICT EXEC POLICY (deny-by-default, no shell, allowlisted program) ----
+	// 1) Tokenize WITHOUT a shell. shlex.Split performs NO expansion: ';' '|' '&'
+	//    '<' '>' '$' backtick all pass through as literal tokens and are never
+	//    interpreted, so operators can never cause command chaining.
+	argv, err := shlex.Split(command)
+	if err != nil || len(argv) == 0 {
+		return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] failed to parse command: %w", err)
+	}
+
+	// 2) Highest gate: the FULL command string must match the allowlist pattern.
+	//    Any program not enumerated here is denied before any lookup happens.
+	if !execCommandPattern.MatchString(command) {
+		return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] denied access for command '%s': program not permitted by exec_command policy", command)
+	}
+
+	// 3) Reject any token carrying shell metacharacters. There is no shell, so these
+	//    are inert, but rejecting them keeps the contract strict and blocks $(), ``, ${}.
+	for _, a := range argv {
+		if hasShellMeta(a) {
+			return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] denied access for command '%s': shell metacharacter in argument", command)
 		}
 	}
 
-	for _, cmd := range PathPtn.FindAllString(command, -1) {
-		if res, err := t.checkPath(strings.TrimSpace(cmd)); err != nil {
-			return res, err
-		}
+	// 4) Resolve argv[0]: no path component, on PATH, not a shell/indirection tool,
+	//    and explicitly on the program allowlist.
+	program := argv[0]
+	if program == "" {
+		return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] empty program")
 	}
-
-	CheckForbiddenString(command)
-
-	// Parse the second part - it is the path and check it.
-	cmdSlice, err := shlex.Split(command)
+	if strings.ContainsAny(program, `/\\`) {
+		return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] denied access for command '%s': only bare program names are allowed", command)
+	}
+	if hardBlockArg0[program] {
+		return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] denied access for command '%s': program '%s' is not permitted by exec_command policy", command, program)
+	}
+	abs, err := exec.LookPath(program)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse command syntax: %w", err)
+		return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] program '%s' not found on PATH: %w", program, err)
+	}
+	if !execAllowed[program] {
+		return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] denied access for command '%s': program '%s' is not permitted by exec_command policy", command, program)
 	}
 
+	// 5) Path-check every path-like argument (and the working dir).
 	workingDir := "./"
 	if wd, ok := args["working_dir"]; ok {
-		workingDir = fmt.Sprintf("%v", wd)
+		if w := strings.TrimSpace(fmt.Sprintf("%v", wd)); w != "" {
+			if res, perr := t.checkPath(w); perr != nil {
+				return res, perr
+			}
+			workingDir = filepath.Clean(w)
+		}
+	}
+	for _, a := range argv[1:] {
+		if strings.HasPrefix(a, ".") || strings.HasPrefix(a, "/") {
+			if res, perr := t.checkPath(a); perr != nil {
+				return res, perr
+			}
+		}
 	}
 
-	if res, err := t.checkPath(workingDir); err != nil {
-		return res, err
-	}
-
-	var cmd *exec.Cmd = exec.Command(cmdSlice[0], cmdSlice[1:]...)
-	if workingDir != "" {
-		cmd.Dir = filepath.Clean(workingDir)
-	}
+	// 6) Execute the resolved absolute path with a context/timeout. No shell.
+	execCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	runCmd := exec.CommandContext(execCtx, abs, argv[1:]...)
+	runCmd.Dir = workingDir
 
 	var stdout, stderr strings.Builder
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	runCmd.Stdout = &stdout
+	runCmd.Stderr = &stderr
 
-	runErr := cmd.Run()
+	runErr := runCmd.Run()
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("$ %s\n", command))
@@ -365,6 +404,20 @@ func (t *BaseToolManager) execCommand(ctx context.Context, request mcp.CallToolR
 	}
 }
 
+// hasShellMeta reports whether s contains any byte a shell would interpret for
+// redirection, chaining, or command substitution. exec_command runs programs
+// with NO shell (so such bytes are inert), but rejecting them keeps the contract
+// strict and documents intent.
+func hasShellMeta(s string) bool {
+	for _, r := range s {
+		if r == ';' || r == '|' || r == '&' || r == '<' || r == '>' ||
+			r == '$' || r == '`' || r == '\n' || r == '\r' ||
+			r == '*' || r == '?' || r == '~' {
+			return true
+		}
+	}
+	return false
+}
 func CheckForbiddenString(teststr string) (*mcp.CallToolResult, error) {
 	for _, forbiddenStr := range ForbiddenString {
 		if strings.Contains(teststr, forbiddenStr) {
