@@ -58,6 +58,7 @@ var (
 )
 
 func init() {
+	regexp.MustCompile(execCmdPtnString)
 	// The allow patterns act as a whitelist — anything not matching is denied,
 	// so a block pattern on top would be redundant. Block patterns are left empty
 	// by default; users can set BLOCKED_TERM_CMD_PTN / BLOCKED_PATH_PTN themselves
@@ -203,7 +204,6 @@ func init() {
 	}
 	execCmdPtnString = u.Getenv("EXEC_CMD_PTN", `(?i)^`+
 		`(?:go(?: +(?:build|version|vet|fmt|mod tidy|mod init)(?: +[^;|&<>"']*)*)?|`+
-		`(?:date)?|`+
 		`rustc(?: +-[^ ]+(?: +[^;|&<>"']*)*)?|`+
 		`cargo(?: +(?:build|fmt|check|clippy)(?: +[^;|&<>"']*)*)?|`+
 		`git(?: +(?:[a-zA-Z][^;|&<>"']*)+)?|`+
@@ -219,7 +219,7 @@ func init() {
 		`yq(?: +[^;|&<>"']*)*|`+
 		`grep(?: +[^;|&<>"']*)*|`+
 		`curl(?: +[^;|&<>"']*)*|`+
-		`wget(?: +[^;|&<>"']*)*)(?: +2>&1)?)$`)
+		`wget(?: +[^;|&<>"']*)*)$`)
 }
 
 func parseArgs() config {
