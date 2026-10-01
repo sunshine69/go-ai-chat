@@ -204,7 +204,7 @@ func init() {
 	}
 	execCmdPtnString = u.Getenv("EXEC_CMD_PTN", `(?i)^`+
 		`(?:go(?: +(?:build|version|vet|fmt|mod tidy|mod init)(?: +[^;|&<>"']*)*)?|`+
-		`(?:npm(?: +(?:run|install)(?: +[^;|&<>"']*)*)?|`+
+		`npm(?: +(?:install|run)(?: +[^;|&<>"']*)*)?|`+
 		`rustc(?: +-[^ ]+(?: +[^;|&<>"']*)*)?|`+
 		`cargo(?: +(?:build|fmt|check|clippy)(?: +[^;|&<>"']*)*)?|`+
 		`git(?: +(?:[a-zA-Z][^;|&<>"']*)+)?|`+
