@@ -344,9 +344,6 @@ func (t *BaseToolManager) execCommand(ctx context.Context, request mcp.CallToolR
 	if err != nil {
 		return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] program '%s' not found on PATH: %w", program, err)
 	}
-	if !execAllowed[program] {
-		return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] denied access for command '%s': program '%s' is not permitted by exec_command policy", command, program)
-	}
 
 	// 5) Path-check every path-like argument (and the working dir).
 	workingDir := "./"

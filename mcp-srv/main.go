@@ -42,17 +42,6 @@ var (
 		"env": true, "xargs": true, "nohup": true, "setsid": true, "run": true,
 		"sudo": true, "su": true, "doas": true, "pkexec": true,
 	}
-	// execAllowed: deny-by-default allowlist of bare program names. exec_command
-	// requires the resolved program (after LookPath on PATH) to be present here.
-	// Policy knob: edit this set. Keep it tight to the dev tooling this server exists
-	// to run.
-	execAllowed = map[string]bool{
-		"go": true, "gofmt": true, "vet": true,
-		"cargo": true, "rustc": true, "rustfmt": true,
-		"python3": true, "node": true, "php": true, "ruby": true, "perl": true,
-		"git": true, "make": true, "cmake": true, "ninja": true,
-		"jq": true, "yq": true, "grep": true, "curl": true, "wget": true,
-	}
 	unixFileTools       = []string{"cat", "find", "head", "ls", "cp", "mv", "rm", "chmod", "chown", "touch", "file", "stat", "ln", "realpath", "dirname", "basename", "cd"}
 	gmailCredentialFile string // json file taken from google developer console
 )
