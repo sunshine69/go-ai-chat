@@ -1037,18 +1037,28 @@ func handleCommand(text string, history *[]Message) {
 
 	case "/debug":
 		if arg == "" {
-			fmt.Fprintln(os.Stderr, "Usage: /debug <0|1|2>")
+			fmt.Fprintln(os.Stderr, "Usage: /debug <0|1|2|on|off>")
 			return
 		}
 		switch arg {
 		case "0", "off":
 			config.Debug = false
+			config.DebugLevel = ""
+		case "on":
+			config.Debug = true
+			config.DebugLevel = "1"
 		default:
 			config.Debug = true
 			config.DebugLevel = strings.TrimSpace(arg)
 		}
-		if config.Debug && debugFile == nil {
+		if config.Debug && debugFile == nil && config.DebugLevel >= "2" {
 			debugFile, _ = os.OpenFile("aig_stream_debug.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+		}
+		saveConfig()
+		if config.Debug {
+			fmt.Fprintf(os.Stderr, "✅ Debug enabled (level: %s)\n", config.DebugLevel)
+		} else {
+			fmt.Fprintln(os.Stderr, "✅ Debug disabled")
 		}
 
 	case "/system", "/sys":

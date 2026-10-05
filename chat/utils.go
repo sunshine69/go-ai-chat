@@ -342,8 +342,17 @@ func saveConfig() {
 		envVars["SUMMARY_MODEL_TIMEOUT"] = config.SummaryModelTimeout
 		changed = true
 	}
-	if config.DebugLevel != "" {
-		envVars["DEBUG_LEVEL"] = config.DebugLevel
+	if config.Debug {
+		envVars["DEBUG"] = "on"
+		if config.DebugLevel != "" {
+			envVars["DEBUG_LEVEL"] = config.DebugLevel
+		}
+		changed = true
+	} else if _, exists := envVars["DEBUG"]; exists {
+		// Debug was previously persisted — clear it so it stays off.
+		delete(envVars, "DEBUG")
+		delete(envVars, "DEBUG_LEVEL")
+		changed = true
 	}
 	if config.ShowThinking {
 		envVars["SHOW_THINKING"] = "on"
@@ -482,6 +491,7 @@ func loadConfig() *Config {
 		MCPPermissions:      make(map[string]string),
 		ShowThinking:        os.Getenv("SHOW_THINKING") == "on",
 		BlockedTools:        os.Getenv("BLOCKED_TOOLS"),
+		Debug:               os.Getenv("DEBUG") == "on",
 		DebugLevel:          os.Getenv("DEBUG_LEVEL"),
 		MaxTokens:           999999,
 		MaxRepeatPattern:    10,
