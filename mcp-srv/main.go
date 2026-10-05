@@ -15,6 +15,15 @@ import (
 	u "github.com/sunshine69/golang-tools/utils"
 )
 
+var (
+	version   string // Will hold the version number
+	buildTime string // Will hold the build time
+)
+
+func printVersionBuildInfo() {
+	fmt.Printf("Version: %s\nBuild time: %s\n", version, buildTime)
+}
+
 // CLI flag parsing
 type config struct {
 	transport string // "stdio" | "sse" | "streamable"
@@ -194,6 +203,7 @@ func init() {
 	execCmdPtnString = u.Getenv("EXEC_CMD_PTN", `(?i)^`+
 		`(?:go(?: +(?:build|version|vet|fmt|mod tidy|mod init)(?: +[^;|&<>"']*)*)?|`+
 		`npm(?: +(?:install|run)(?: +[^;|&<>"']*)*)?|`+
+		`terraform(?: +(?:init|plan|apply|destroy)(?: +[^;|&<>"']*)*)?|`+
 		`rustc(?: +-[^ ]+(?: +[^;|&<>"']*)*)?|`+
 		`cargo(?: +(?:build|fmt|check|clippy)(?: +[^;|&<>"']*)*)?|`+
 		`git(?: +(?:[a-zA-Z][^;|&<>"']*)+)?|`+
@@ -353,6 +363,11 @@ func buildServer(cfg config) *server.MCPServer {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "version" {
+		printVersionBuildInfo()
+		os.Exit(0)
+	}
+
 	cfg := parseArgs()
 	s := buildServer(cfg)
 

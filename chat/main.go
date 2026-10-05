@@ -93,7 +93,20 @@ func buildUserMessage(text string, inlineParts []ContentPart) any {
 
 var debugFile *os.File
 
+var (
+	version   string // Will hold the version number
+	buildTime string // Will hold the build time
+)
+
+func printVersionBuildInfo() {
+	fmt.Printf("Version: %s\nBuild time: %s\n", version, buildTime)
+}
+
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "version" {
+		printVersionBuildInfo()
+		os.Exit(0)
+	}
 	_ = godotenv.Load()
 	config = loadConfig()
 	if config.Debug && debugFile == nil && config.DebugLevel >= "2" {
