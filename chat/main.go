@@ -129,7 +129,7 @@ func main() {
 
 	StartStatsServer(statServerPort)
 
-	latestPath := getLatestContextPath(config.Model)
+	latestPath := getLatestContextPath()
 	if latestPath != "" {
 		if err := loadHistory(latestPath, &history); err == nil {
 			currentContextPath = latestPath
@@ -228,7 +228,7 @@ func handleNonInteractive(config *Config) (runmode string) {
 			}()
 
 			if currentContextPath == "" {
-				newContextName := generateContextName(config.Model, question)
+				newContextName := generateContextName(question)
 				currentContextPath = filepath.Join(homeDir, ".aig", newContextName)
 			}
 
@@ -364,7 +364,7 @@ func runREPLWithShell(history *[]Message, shell *readline.Shell, histFile string
 		userMsg := buildUserMessage(cleanText, inlineContent)
 
 		if currentContextPath == "" {
-			newContextName := generateContextName(config.Model, cleanText)
+			newContextName := generateContextName(cleanText)
 			currentContextPath = filepath.Join(homeDir, ".aig", newContextName)
 		}
 
@@ -913,7 +913,7 @@ func handleCommand(text string, history *[]Message) {
 				firstUserMsg = "untitled"
 			}
 
-			oldName := generateContextName(config.Model, firstUserMsg)
+			oldName := generateContextName(firstUserMsg)
 			if err := saveHistory(); err != nil {
 				fmt.Fprintf(os.Stderr, "⚠️  Could not save current session: %v\n", err)
 			} else {
@@ -925,7 +925,7 @@ func handleCommand(text string, history *[]Message) {
 		pendingFileContent = nil
 
 		if arg != "" {
-			newName := generateContextName(config.Model, arg)
+			newName := generateContextName(arg)
 			currentContextPath = filepath.Join(homeDir, ".aig", newName)
 			fmt.Fprintf(os.Stderr, "✅ New context started with custom name: %s\n", newName)
 		} else {
@@ -940,7 +940,7 @@ func handleCommand(text string, history *[]Message) {
 		fmt.Fprintln(os.Stderr, "  /edit <index>,                - Open EDITOR to edit user message using existing conversation index")
 		fmt.Fprintln(os.Stderr, "  /s <hist_index:filename>      - Save the history index to a file")
 		fmt.Fprintln(os.Stderr, "  /history or /h                - Show current chat history")
-		fmt.Fprintln(os.Stderr, "  /list, /l                     - List contexts for current model")
+		fmt.Fprintln(os.Stderr, "  /list, /l                     - List all contexts")
 		fmt.Fprintln(os.Stderr, "  /add <file>,/a                - Stage file for next message (user role)")
 		fmt.Fprintln(os.Stderr, "  /addsystem <file>,/as         - Stage file for system message (system role)")
 		fmt.Fprintln(os.Stderr, "  /r <cmd>                      - Run shell command and show output")
@@ -953,7 +953,7 @@ func handleCommand(text string, history *[]Message) {
 		fmt.Fprintln(os.Stderr, "  /exit or /q                   - Exit REPL")
 		fmt.Fprintln(os.Stderr, "  /use <name>                   - Switch to an existing context")
 		fmt.Fprintln(os.Stderr, "  /del <name>                   - Delete specific context")
-		fmt.Fprintln(os.Stderr, "  /del all                      - Delete all contexts for current model")
+		fmt.Fprintln(os.Stderr, "  /del all                      - Delete all contexts")
 		fmt.Fprintln(os.Stderr, "  /debug <0|1|2>                - Enable/Disable debug and set debug level")
 		fmt.Fprintln(os.Stderr, "  /show <thing>                 - Show details (e.g., /show context <name>)")
 		fmt.Fprintln(os.Stderr, "  /showthink <on|off>           - Show thinking process. Default is off")
@@ -993,7 +993,7 @@ func handleCommand(text string, history *[]Message) {
 		fmt.Fprintf(os.Stderr, "✅ Switched to context: %s\n", arg)
 
 	case "/list", "/l":
-		fmt.Fprintf(os.Stderr, "📜 Contexts for model [%s]:\n", config.Model)
+		fmt.Fprintln(os.Stderr, "📜 Contexts:")
 		files, _ := os.ReadDir(filepath.Join(homeDir, ".aig"))
 		found := false
 		for _, f := range files {
@@ -1016,8 +1016,8 @@ func handleCommand(text string, history *[]Message) {
 			files, _ := os.ReadDir(filepath.Join(homeDir, ".aig"))
 			count := 0
 			for _, f := range files {
-				if !f.IsDir() && strings.HasSuffix(f.Name(), "_"+config.Model+".json") {
-					os.Remove(filepath.Join(filepath.Join(homeDir, ".aig"), f.Name()))
+				if !f.IsDir() && strings.HasSuffix(f.Name(), ".json") {
+					os.Remove(filepath.Join(homeDir, ".aig", f.Name()))
 					count++
 				}
 			}
@@ -1247,11 +1247,24 @@ func handleCommand(text string, history *[]Message) {
 		homeDir = absPath
 		_ = os.MkdirAll(homeDir, 0755)
 		fmt.Fprintln(os.Stderr, "Re-load config")
-		currentContextPath = getLatestContextPath(config.Model)
 		config = loadConfig()
+		currentContextPath = getLatestContextPath()
 		fmt.Fprintf(os.Stderr, u.JsonDump(config, ""))
 		historyLoaded = false
 		*history = []Message{}
+
+		// Load the latest context from the new config directory, if one exists.
+		// Without this, currentContextPath is set but the history stays empty,
+		// so saveHistory() overwrites the previous context with an empty one.
+		if currentContextPath != "" {
+			if err := loadHistory(currentContextPath, history); err == nil {
+				historyLoaded = true
+				fmt.Fprintf(os.Stderr, "🔄 Resumed context: %s\n", filepath.Base(currentContextPath))
+			} else {
+				fmt.Fprintf(os.Stderr, "Warning: Could not load context: %v\n", err)
+				currentContextPath = ""
+			}
+		}
 
 		fmt.Fprintf(os.Stderr, "✅ Config directory switched to: %s\n", homeDir)
 	case "/maxtoken":
@@ -1379,7 +1392,7 @@ func runREPLFallback(history *[]Message) {
 		userMsg := buildUserMessage(cleanText, inlineContent)
 
 		if currentContextPath == "" {
-			newContextName := generateContextName(config.Model, cleanText)
+			newContextName := generateContextName(cleanText)
 			currentContextPath = filepath.Join(homeDir, ".aig", newContextName)
 		}
 

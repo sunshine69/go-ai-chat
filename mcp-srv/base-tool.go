@@ -367,6 +367,20 @@ func (t *BaseToolManager) execCommand(ctx context.Context, request mcp.CallToolR
 	execCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	runCmd := exec.CommandContext(execCtx, abs, argv[1:]...)
+	envString := args["environments"]
+	if envString != nil {
+		envMap := make(map[string]string)
+		if err := json.Unmarshal([]byte(fmt.Sprintf("%v", envString)), &envMap); err != nil {
+			return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] failed to parse environments: %w", err)
+		}
+		runCmd.Env = append(runCmd.Env, func() []string {
+			env := os.Environ()
+			for k, v := range envMap {
+				env = append(env, fmt.Sprintf("%s=%s", k, v))
+			}
+			return env
+		}()...)
+	}
 	runCmd.Dir = workingDir
 
 	var stdout, stderr strings.Builder
@@ -838,13 +852,14 @@ func registerBaseTool(s *server.MCPServer, t *BaseToolManager) {
 	), guarded("create_new_file", t.createNewFile))
 
 	s.AddTool(mcp.NewTool("exec_command",
-		mcp.WithDescription(`Exec a command and returns its stdout and stderr. Eg. run "/bin/ls ." will exec /bin/ls and first arg is .
+		mcp.WithDescription(`Exec a command and returns its stdout and stderr. Eg. run "go version" will exec go command with frist arg version.
 
-Used it when you are not sure if SHELL is available or you want to exec command directly, otherwise use run_terminal_command instead.
+Used it when you are not sure if SHELL is available or you want to exec command directly, otherwise use run_terminal_command instead if available.
 
 If the output is too big it will be saved to a temp file and give you the file path. You SHOULD NOT read the whole file as it will overflow your context. You should use text tools to extract relevant information from it`),
 		mcp.WithString("command", mcp.Required(), mcp.Description("The command path to execute.")),
 		mcp.WithString("working_dir", mcp.Description("Directory to run the command in.")),
+		mcp.WithString("environments", mcp.Description("Environment variables for the command in the json format eg. {\"ENV_VAR_NAME\":\"Value\"}")),
 	), guarded("exec_command", t.execCommand))
 
 	s.AddTool(mcp.NewTool("file_glob_search",

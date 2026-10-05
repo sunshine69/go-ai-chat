@@ -163,15 +163,15 @@ func sanitizeString(s string) string {
 	return string(sanitized)
 }
 
-// 2. Refactored to use the helper and take a 'base' string
-func generateContextName(model string, base string) string {
-	cleanModel := strings.ReplaceAll(model, " ", "_")
+// generateContextName builds a context file name from a base string.
+// Format: <timestamp>_<safeBase>.json  (e.g. 20250101-120000_hello_world.json)
+func generateContextName(base string) string {
 	safeBase := sanitizeString(base)
 	if len(safeBase) > 30 {
 		safeBase = safeBase[:30]
 	}
 	timestamp := time.Now().Format("20060102-150405")
-	return fmt.Sprintf("%s_%s_%s.json", timestamp, safeBase, cleanModel)
+	return fmt.Sprintf("%s_%s.json", timestamp, safeBase)
 }
 
 func saveHistory() error {
@@ -190,7 +190,9 @@ func saveHistory() error {
 	return os.WriteFile(currentContextPath, data, 0600)
 }
 
-func getLatestContextPath(model string) string {
+// getLatestContextPath returns the path to the most recent context file
+// (by embedded timestamp) in the .aig directory, regardless of model.
+func getLatestContextPath() string {
 	dir := filepath.Join(homeDir, ".aig")
 	files, err := os.ReadDir(dir)
 	if err != nil {
@@ -199,7 +201,7 @@ func getLatestContextPath(model string) string {
 	var latestPath string
 	var latestTime int64
 	for _, f := range files {
-		if f.IsDir() || !strings.HasSuffix(f.Name(), "_"+model+".json") {
+		if f.IsDir() || !strings.HasSuffix(f.Name(), ".json") {
 			continue
 		}
 		parts := strings.Split(f.Name(), "_")
