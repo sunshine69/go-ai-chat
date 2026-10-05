@@ -202,11 +202,11 @@ func init() {
 	}
 	execCmdPtnString = u.Getenv("EXEC_CMD_PTN", `(?i)^`+
 		`(?:go(?: +(?:build|version|vet|fmt|mod tidy|mod init)(?: +[^;|&<>"']*)*)?|`+
-		`npm(?: +(?:install|run)(?: +[^;|&<>"']*)*)?|`+
-		`terraform(?: +(?:init|plan|apply|destroy)(?: +[^;|&<>"']*)*)?|`+
+		`npm(?: +(?:version|install|run)(?: +[^;|&<>"']*)*)?|`+
+		`terraform(?: +(?:version|init|plan|apply|destroy)(?: +[^;|&<>"']*)*)?|`+
 		`rustc(?: +-[^ ]+(?: +[^;|&<>"']*)*)?|`+
 		`cargo(?: +(?:build|fmt|check|clippy)(?: +[^;|&<>"']*)*)?|`+
-		`git(?: +(?:[a-zA-Z][^;|&<>"']*)+)?|`+
+		`git(?: +(?:[^;|&<>"']|'[^']*')+)?|`+
 		// `python3(?: +[^;|&<>"']*)*|` +
 		// `node(?: +[^;|&<>"']*)*|` +
 		// `php(?: +[^;|&<>"']*)*|` +
