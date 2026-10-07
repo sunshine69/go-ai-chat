@@ -980,17 +980,23 @@ func handleCommand(text string, history *[]Message) {
 			fmt.Fprintln(os.Stderr, "Usage: /use <context-file-path> Load the context file path to current context. It will persist until you run /new.")
 			return
 		}
-		path := strings.ReplaceAll(arg, " ", "_")
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "Error: context '%s' not found.\n", arg)
+		// Join all remaining parts to support paths with spaces
+		fullArg := strings.Join(parts[1:], " ")
+		expandedPath, err := expandHomeDir(fullArg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "⚠️  Could not resolve path '%s': %v\n", fullArg, err)
 			return
 		}
-		if err := loadHistory(path, history); err != nil {
+		if _, err := os.Stat(expandedPath); os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "Error: context '%s' not found.\n", fullArg)
+			return
+		}
+		if err := loadHistory(expandedPath, history); err != nil {
 			fmt.Fprintf(os.Stderr, "Error loading context: %v\n", err)
 			return
 		}
-		currentContextPath = path
-		fmt.Fprintf(os.Stderr, "✅ Switched to context: %s\n", arg)
+		currentContextPath = expandedPath
+		fmt.Fprintf(os.Stderr, "✅ Switched to context: %s\n", fullArg)
 
 	case "/list", "/l":
 		fmt.Fprintln(os.Stderr, "📜 Contexts:")
