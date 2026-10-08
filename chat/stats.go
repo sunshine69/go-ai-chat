@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -102,6 +103,133 @@ func (s *Stats) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"randomSentenceCount":      randomSentenceCount,
 		"randomSentence":           randomSentence,
 	})
+}
+
+// ---------------------------------------------------------------------------
+// SessionStats — per-period stats for the /stat, /reset start and /n commands.
+// A "period" starts at program start (or the last /n or /reset start) and
+// ends when the user runs /n or /reset start, which print the collected data
+// and begin a fresh period.
+// ---------------------------------------------------------------------------
+
+type SessionStats struct {
+	mu sync.Mutex
+
+	StartTime time.Time // when the current period began
+
+	ThinkingMs    int64     // total model thinking (reasoning) time
+	AnswerMs      int64     // total model answer time
+	Tokens        int64     // total generated tokens (thinking + answer)
+	ToolCalls     int64     // total tool calls executed
+	ToolSuccess   int64     // tool calls that returned a usable result
+	ToolFailure   int64     // tool calls that failed (error / no MCP / denied)
+	TurnDurations []float64 // per-model-turn tokens/sec samples
+}
+
+var sessionStats = &SessionStats{StartTime: time.Now()}
+
+// NewSessionPeriod resets all counters and starts a fresh period now.
+// The old period's data is returned so it can be printed before resetting.
+func (s *SessionStats) NewSessionPeriod() *SessionStats {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	old := &SessionStats{
+		StartTime:     s.StartTime,
+		ThinkingMs:    s.ThinkingMs,
+		AnswerMs:      s.AnswerMs,
+		Tokens:        s.Tokens,
+		ToolCalls:     s.ToolCalls,
+		ToolSuccess:   s.ToolSuccess,
+		ToolFailure:   s.ToolFailure,
+		TurnDurations: append([]float64(nil), s.TurnDurations...),
+	}
+	s.ThinkingMs = 0
+	s.AnswerMs = 0
+	s.Tokens = 0
+	s.ToolCalls = 0
+	s.ToolSuccess = 0
+	s.ToolFailure = 0
+	s.TurnDurations = nil
+	s.StartTime = time.Now()
+	return old
+}
+
+// RecordTurn finalizes one model turn: adds its thinking/answer time and
+// generated tokens, and records its tokens/sec rate for min/avg/max.
+func (s *SessionStats) RecordTurn(tokens, thinkingMs, answerMs int64) {
+	s.mu.Lock()
+	s.ThinkingMs += thinkingMs
+	s.AnswerMs += answerMs
+	s.Tokens += tokens
+	if totalSec := float64(thinkingMs+answerMs) / 1000.0; totalSec > 0 && tokens > 0 {
+		s.TurnDurations = append(s.TurnDurations, float64(tokens)/totalSec)
+	}
+	s.mu.Unlock()
+}
+
+// RecordToolCall records one executed tool call and whether it succeeded.
+func (s *SessionStats) RecordToolCall(success bool) {
+	s.mu.Lock()
+	s.ToolCalls++
+	if success {
+		s.ToolSuccess++
+	} else {
+		s.ToolFailure++
+	}
+	s.mu.Unlock()
+}
+
+// Snapshot returns a copy of the current period for safe printing.
+func (s *SessionStats) Snapshot() *SessionStats {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return &SessionStats{
+		StartTime:     s.StartTime,
+		ThinkingMs:    s.ThinkingMs,
+		AnswerMs:      s.AnswerMs,
+		Tokens:        s.Tokens,
+		ToolCalls:     s.ToolCalls,
+		ToolSuccess:   s.ToolSuccess,
+		ToolFailure:   s.ToolFailure,
+		TurnDurations: append([]float64(nil), s.TurnDurations...),
+	}
+}
+
+// printSessionStats renders the given period snapshot to stderr.
+func printSessionStats(s *SessionStats) {
+	totalMs := s.ThinkingMs + s.AnswerMs
+	var rate float64
+	if s.ToolCalls > 0 {
+		rate = float64(s.ToolSuccess) / float64(s.ToolCalls) * 100
+	}
+
+	var min, max, sum float64
+	if len(s.TurnDurations) > 0 {
+		min, max = s.TurnDurations[0], s.TurnDurations[0]
+		for _, d := range s.TurnDurations {
+			sum += d
+			if d < min {
+				min = d
+			}
+			if d > max {
+				max = d
+			}
+		}
+	}
+
+	fmt.Fprintln(os.Stderr, "📊 Stats since "+s.StartTime.Format("2006-01-02 15:04:05")+" ("+time.Since(s.StartTime).Round(time.Second).String()+" ago):")
+	fmt.Fprintf(os.Stderr, "   💭 Total model thinking time: %s\n", (time.Duration(s.ThinkingMs) * time.Millisecond).Round(time.Second))
+	fmt.Fprintf(os.Stderr, "   💬 Total model answer time:   %s\n", (time.Duration(s.AnswerMs) * time.Millisecond).Round(time.Second))
+	fmt.Fprintf(os.Stderr, "   ⏱️  Total model time:          %s\n", (time.Duration(totalMs) * time.Millisecond).Round(time.Second))
+	fmt.Fprintf(os.Stderr, "   🔢 Total tokens generated:    %d\n", s.Tokens)
+	fmt.Fprintf(os.Stderr, "   🔧 Tool calls:                %d (%d success, %d failed — %.0f%% success rate)\n",
+		s.ToolCalls, s.ToolSuccess, s.ToolFailure, rate)
+	if len(s.TurnDurations) > 0 {
+		avg := sum / float64(len(s.TurnDurations))
+		fmt.Fprintf(os.Stderr, "   🚀 Tok/sec (per turn):        min %.1f | avg %.1f | max %.1f\n", min, avg, max)
+	} else {
+		fmt.Fprintln(os.Stderr, "   🚀 Tok/sec (per turn):        n/a (no completed turns yet)")
+	}
 }
 
 func StartStatsServer(port int) {

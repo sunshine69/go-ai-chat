@@ -207,6 +207,10 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 				}
 				fmt.Fprintln(os.Stderr, "\n✅ Calling tool: done")
 			}
+			// Record the outcome for /stat — every failure path above sets the
+			// "error: ..." prefix on toolResult.
+			sessionStats.RecordToolCall(!strings.HasPrefix(toolResult, "error:"))
+
 			// Always append the tool result (including permission-denied errors) so the
 			// model receives a result for every tool call it made.
 			workingMsgs = append(workingMsgs, Message{
@@ -277,6 +281,34 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 	var thinkingStarted = false
 	var headerPrinted = false
 	var serverSignaledStop = false
+
+	// Per-turn tracking for /stat — the elapsed time between arriving chunks
+	// is attributed to thinking or answer generation depending on which kind
+	// of chunk arrived next.
+	var turnThinkingMs int64
+	var turnAnswerMs int64
+	var turnTokens int64
+	var turnLastChunkAt time.Time
+	var turnHasChunk bool
+	recordChunk := func(kind string, n int) {
+		now := time.Now()
+		if turnHasChunk {
+			elapsed := int64(now.Sub(turnLastChunkAt) / time.Millisecond)
+			if kind == "thinking" {
+				turnThinkingMs += elapsed
+			} else {
+				turnAnswerMs += elapsed
+			}
+		}
+		turnTokens += int64(n)
+		turnLastChunkAt = now
+		turnHasChunk = true
+	}
+	defer func() {
+		if turnHasChunk {
+			sessionStats.RecordTurn(turnTokens, turnThinkingMs, turnAnswerMs)
+		}
+	}()
 
 	// Accumulate tool calls across streaming chunks (indexed by tool call index)
 	toolCallAccum := map[int]*ToolCall{}
@@ -444,6 +476,7 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 
 			tokenCount := len(strings.Fields(rc))
 			globalStats.TokenArrived(tokenCount)
+			recordChunk("thinking", tokenCount)
 
 			if aiThoughtBecomeMentalPtn.MatchString(rc) {
 				if !config.AutoNudgeDisabled {
@@ -476,6 +509,7 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 		if delta.Content != "" {
 			tokenCount := len(strings.Fields(delta.Content))
 			globalStats.TokenArrived(tokenCount)
+			recordChunk("answer", tokenCount)
 
 			if !headerPrinted {
 				log.Print("\n> 📝 Response:\n")

@@ -898,6 +898,12 @@ func handleCommand(text string, history *[]Message) {
 		fmt.Fprintln(os.Stderr, "Changed directory. You have to run restart mcp like /mcp mcp.exe")
 
 	case "/new", "/n":
+		// Print the stats of the period that just ended and start a fresh one.
+		if snap := sessionStats.Snapshot(); snap.Tokens > 0 || snap.ToolCalls > 0 {
+			printSessionStats(snap)
+		}
+		sessionStats.NewSessionPeriod()
+
 		if len(*history) > 0 {
 			firstUserMsg := ""
 			for _, m := range *history {
@@ -935,7 +941,9 @@ func handleCommand(text string, history *[]Message) {
 
 	case "/help":
 		fmt.Fprintln(os.Stderr, "Commands:")
-		fmt.Fprintln(os.Stderr, "  /new , /n                     - Clear conversation history")
+		fmt.Fprintln(os.Stderr, "  /new , /n                     - Clear conversation history (prints stats since last start, then resets)")
+		fmt.Fprintln(os.Stderr, "  /stat                           - Print stats since the current start time")
+		fmt.Fprintln(os.Stderr, "  /reset start                  - Print stats and reset the start time (keeps the session)")
 		fmt.Fprintln(os.Stderr, "  /edit,                        - Open EDITOR to edit user message")
 		fmt.Fprintln(os.Stderr, "  /edit <index>,                - Open EDITOR to edit user message using existing conversation index")
 		fmt.Fprintln(os.Stderr, "  /s <hist_index:filename>      - Save the history index to a file")
@@ -1212,6 +1220,20 @@ func handleCommand(text string, history *[]Message) {
 		} else {
 			fmt.Fprintln(os.Stderr, "MCP: not connected")
 		}
+
+	case "/stat":
+		printSessionStats(sessionStats.Snapshot())
+
+	case "/reset":
+		if arg != "start" {
+			fmt.Fprintln(os.Stderr, "Usage: /reset start — print stats and restart the stats period (no new session)")
+			return
+		}
+		if snap := sessionStats.Snapshot(); snap.Tokens > 0 || snap.ToolCalls > 0 {
+			printSessionStats(snap)
+		}
+		sessionStats.NewSessionPeriod()
+		fmt.Fprintln(os.Stderr, "✅ Stats period reset — a new start time has been recorded.")
 
 	case "/show":
 		if arg == "" {
