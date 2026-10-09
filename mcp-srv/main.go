@@ -201,12 +201,12 @@ func init() {
 		PathPtn = regexp.MustCompile(`(?:^|\s)([\.\/][a-zA-Z0-9_\.\-\/]+)`)
 	}
 	execCmdPtnString = u.Getenv("EXEC_CMD_PTN", `(?i)^`+
-		`(?:go(?: +(?:build|version|vet|env|fix|get|install|list|tool|fmt|mod tidy|doc|mod init)(?: +[^;|&<>"']*)*)?|`+
-		`npm(?: +(?:version|install|run)(?: +[^;|&<>"']*)*)?|`+
-		`terraform(?: +(?:version|init|plan|apply|destroy)(?: +[^;|&<>"']*)*)?|`+
+		`(?:go(?: +(?:build|version|vet|env|fix|get|install|list|tool|fmt|mod tidy|doc|mod init)(?: +[^;|&<>]*)*)?|`+
+		`npm(?: +(?:version|install|run)(?: +[^;|&<>]*)*)?|`+
+		`terraform(?: +(?:version|init|plan|apply|destroy)(?: +[^;|&<>]*)*)?|`+
 		`rustc(?: +-[^ ]+(?: +[^;|&<>"']*)*)?|`+
 		`cargo(?: +(?:version|build|fmt|check|clean|doc|new|init|add|remove|test|bench|update|search|install|uninstall|help|clippy)(?: +[^;|&<>"']*)*)?|`+
-		`git(?: +(?:[^;|&<>"']|'[^']*')+)?|`+
+		`git(?: +(?:[^;|&<>]|'[^']*')+)?|`+
 		// `python3(?: +[^;|&<>"']*)*|` +
 		// `node(?: +[^;|&<>"']*)*|` +
 		// `php(?: +[^;|&<>"']*)*|` +
@@ -215,11 +215,11 @@ func init() {
 		// `make(?: +[^;|&<>"']*)*|`+
 		// `cmake(?: +[^;|&<>"']*)*|`+
 		// `ninja(?: +[^;|&<>"']*)*|` +
-		`jq(?: +[^;|&<>"']*)*|`+
-		`yq(?: +[^;|&<>"']*)*|`+
-		`grep(?: +[^;|&<>"']*)*|`+
-		`curl(?: +[^;|&<>"']*)*|`+
-		`wget(?: +[^;|&<>"']*)*)$`)
+		`jq(?: +[^;|&<>]*)*|`+
+		`yq(?: +[^;|&<>]*)*|`+
+		`grep(?: +[^;|&<>]*)*|`+
+		`curl(?: +[^;|&<>]*)*|`+
+		`wget(?: +[^;|&<>]*)*)$`)
 }
 
 func parseArgs() config {
