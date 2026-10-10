@@ -789,6 +789,19 @@ If the output is too big it will be saved to a temp file and give you the file p
 	), guarded("run_terminal_command", t.runTerminalCommand))
 }
 
+func registerExecTool(s *server.MCPServer, t *BaseToolManager) {
+	s.AddTool(mcp.NewTool("exec_command",
+		mcp.WithDescription(`Exec a command and returns its stdout and stderr. Eg. run "go version" will exec go command with frist arg version.
+
+Used it when you are not sure if SHELL is available or you want to exec command directly, otherwise use run_terminal_command instead if available.
+
+If the output is too big it will be saved to a temp file and give you the file path. You SHOULD NOT read the whole file as it will overflow your context. You should use text tools to extract relevant information from it`),
+		mcp.WithString("command", mcp.Required(), mcp.Description("The command path to execute.")),
+		mcp.WithString("working_dir", mcp.Description("Directory to run the command in.")),
+		mcp.WithString("environments", mcp.Description("Environment variables for the command in the json format eg. {\"ENV_VAR_NAME\":\"Value\"}")),
+	), guarded("exec_command", t.execCommand))
+}
+
 func registerBaseTool(s *server.MCPServer, t *BaseToolManager) {
 	s.AddTool(mcp.NewTool("insert_text_to_file",
 		mcp.WithDescription(`Insert a chunk of text  to a file BEFORE a 1-based line number.
@@ -850,17 +863,6 @@ func registerBaseTool(s *server.MCPServer, t *BaseToolManager) {
 			mcp.Description("UTF-8 text content to write into the file."),
 		),
 	), guarded("create_new_file", t.createNewFile))
-
-	s.AddTool(mcp.NewTool("exec_command",
-		mcp.WithDescription(`Exec a command and returns its stdout and stderr. Eg. run "go version" will exec go command with frist arg version.
-
-Used it when you are not sure if SHELL is available or you want to exec command directly, otherwise use run_terminal_command instead if available.
-
-If the output is too big it will be saved to a temp file and give you the file path. You SHOULD NOT read the whole file as it will overflow your context. You should use text tools to extract relevant information from it`),
-		mcp.WithString("command", mcp.Required(), mcp.Description("The command path to execute.")),
-		mcp.WithString("working_dir", mcp.Description("Directory to run the command in.")),
-		mcp.WithString("environments", mcp.Description("Environment variables for the command in the json format eg. {\"ENV_VAR_NAME\":\"Value\"}")),
-	), guarded("exec_command", t.execCommand))
 
 	s.AddTool(mcp.NewTool("file_glob_search",
 		mcp.WithDescription("Searches for files matching a glob pattern under a root directory and returns their paths."),

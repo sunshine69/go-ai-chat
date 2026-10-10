@@ -357,6 +357,8 @@ func buildServer(cfg config) *server.MCPServer {
 
 	if strings.Contains(cfg.toolSet, "all") || strings.Contains(cfg.toolSet, "terminal") {
 		baseTool.registerTerminalTool(s)
+	} else {
+		registerExecTool(s, &baseTool)
 	}
 
 	return s
