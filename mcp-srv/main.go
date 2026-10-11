@@ -37,7 +37,7 @@ type config struct {
 var (
 	defaultAllowCmd  string
 	defaultAllowPath string
-	ForbiddenString  = []string{`~/.`, `$HOME`, `${HOME}`, `sudo`} // trailing spaces removed so bare tokens like ~/.ssh / sudo match
+	ForbiddenString  = []string{`~/.`, `$HOME`, `${HOME}`, `sudo`, `find /`} // trailing spaces removed so bare tokens like ~/.ssh / sudo match
 	pathErrorMsg     string
 	PathPtn          *regexp.Regexp
 	execCmdPtnString string
