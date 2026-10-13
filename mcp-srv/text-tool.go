@@ -128,7 +128,9 @@ func formatBlock(lines []string, startLine int, showNums bool) string {
 // handleGrep searches for lines matching a Go regex.
 // Line numbers of match blocks are ALWAYS included in the output header so the
 // AI can issue a follow-up text_lines call without re-running grep.
-func (t *TextToolManager) handleGrep(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (t *TextToolManager) handleGrep(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	wdir := getWorkdirContext(ctx)
+	
 	file := req.GetString("file", "")
 	pattern := req.GetString("pattern", "")
 	before := req.GetInt("before", 0)
@@ -146,7 +148,8 @@ func (t *TextToolManager) handleGrep(_ context.Context, req mcp.CallToolRequest)
 		return errResult(fmt.Errorf("invalid regex %q: %w", pattern, err)), nil
 	}
 
-	lines, err := readLines(file)
+	fullPath := joinPath(wdir, file)
+	lines, err := readLines(fullPath)
 	if err != nil {
 		return errResult(err), nil
 	}
@@ -245,7 +248,9 @@ func (t *TextToolManager) handleGrep(_ context.Context, req mcp.CallToolRequest)
 
 // handleHead returns the first n lines (default 10).
 // Negative n: all lines except the last |n| (GNU head -n -N behaviour).
-func (t *TextToolManager) handleHead(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (t *TextToolManager) handleHead(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	wdir := getWorkdirContext(ctx)
+	
 	file := req.GetString("file", "")
 	n := req.GetInt("lines", 10)
 	showNums := req.GetBool("line_number", false)
@@ -253,7 +258,8 @@ func (t *TextToolManager) handleHead(_ context.Context, req mcp.CallToolRequest)
 	if file == "" {
 		return errResult(fmt.Errorf("file is required")), nil
 	}
-	lines, err := readLines(file)
+	fullPath := joinPath(wdir, file)
+	lines, err := readLines(fullPath)
 	if err != nil {
 		return errResult(err), nil
 	}
@@ -271,7 +277,9 @@ func (t *TextToolManager) handleHead(_ context.Context, req mcp.CallToolRequest)
 
 // handleTail returns the last n lines (default 10).
 // Negative n: skip the first |n| lines.
-func (t *TextToolManager) handleTail(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (t *TextToolManager) handleTail(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	wdir := getWorkdirContext(ctx)
+	
 	file := req.GetString("file", "")
 	n := req.GetInt("lines", 10)
 	showNums := req.GetBool("line_number", false)
@@ -279,7 +287,8 @@ func (t *TextToolManager) handleTail(_ context.Context, req mcp.CallToolRequest)
 	if file == "" {
 		return errResult(fmt.Errorf("file is required")), nil
 	}
-	lines, err := readLines(file)
+	fullPath := joinPath(wdir, file)
+	lines, err := readLines(fullPath)
 	if err != nil {
 		return errResult(err), nil
 	}
@@ -297,7 +306,9 @@ func (t *TextToolManager) handleTail(_ context.Context, req mcp.CallToolRequest)
 
 // handleLines extracts lines [from, to] (1-based, inclusive).
 // This is the primary follow-up tool after text_grep returns a line number.
-func (t *TextToolManager) handleLines(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (t *TextToolManager) handleLines(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	wdir := getWorkdirContext(ctx)
+	
 	file := req.GetString("file", "")
 	from := req.GetInt("from", 1)
 	to := req.GetInt("to", -1) // -1 = EOF
@@ -306,7 +317,8 @@ func (t *TextToolManager) handleLines(_ context.Context, req mcp.CallToolRequest
 	if file == "" {
 		return errResult(fmt.Errorf("file is required")), nil
 	}
-	lines, err := readLines(file)
+	fullPath := joinPath(wdir, file)
+	lines, err := readLines(fullPath)
 	if err != nil {
 		return errResult(err), nil
 	}
@@ -328,7 +340,9 @@ func (t *TextToolManager) handleLines(_ context.Context, req mcp.CallToolRequest
 // It finds the first heading containing the search string (case-insensitive),
 // then returns all lines up to (but not including) the next heading at the same
 // or higher level.
-func (t *TextToolManager) handleSection(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (t *TextToolManager) handleSection(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	wdir := getWorkdirContext(ctx)
+	
 	file := req.GetString("file", "")
 	heading := req.GetString("heading", "")
 	includeSubsections := req.GetBool("include_subsections", true)
@@ -338,7 +352,8 @@ func (t *TextToolManager) handleSection(_ context.Context, req mcp.CallToolReque
 		return errResult(fmt.Errorf("file and heading are required")), nil
 	}
 
-	lines, err := readLines(file)
+	fullPath := joinPath(wdir, file)
+	lines, err := readLines(fullPath)
 	if err != nil {
 		return errResult(err), nil
 	}
@@ -418,7 +433,9 @@ func (t *TextToolManager) handleSection(_ context.Context, req mcp.CallToolReque
 // handleTOC scans the file and returns every markdown heading with its level,
 // 1-based line number, and indented text — giving the AI a complete map of the
 // document in a single cheap call before deciding which section to fetch.
-func (t *TextToolManager) handleTOC(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (t *TextToolManager) handleTOC(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	wdir := getWorkdirContext(ctx)
+	
 	file := req.GetString("file", "")
 	maxDepth := req.GetInt("max_depth", 0)
 
@@ -426,7 +443,8 @@ func (t *TextToolManager) handleTOC(_ context.Context, req mcp.CallToolRequest) 
 		return errResult(fmt.Errorf("file is required")), nil
 	}
 
-	lines, err := readLines(file)
+	fullPath := joinPath(wdir, file)
+	lines, err := readLines(fullPath)
 	if err != nil {
 		return errResult(err), nil
 	}
@@ -469,16 +487,19 @@ func (t *TextToolManager) handleTOC(_ context.Context, req mcp.CallToolRequest) 
 
 // handleWc counts lines, words, and bytes.
 // Should be the AI's first call on an unknown file to decide the read strategy.
-func (t *TextToolManager) handleWc(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (t *TextToolManager) handleWc(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	wdir := getWorkdirContext(ctx)
+	
 	file := req.GetString("file", "")
 	if file == "" {
 		return errResult(fmt.Errorf("file is required")), nil
 	}
-	info, err := os.Stat(file)
+	fullPath := joinPath(wdir, file)
+	info, err := os.Stat(fullPath)
 	if err != nil {
 		return errResult(fmt.Errorf("cannot stat file: %w", err)), nil
 	}
-	lines, err := readLines(file)
+	lines, err := readLines(fullPath)
 	if err != nil {
 		return errResult(err), nil
 	}
@@ -493,7 +514,9 @@ func (t *TextToolManager) handleWc(_ context.Context, req mcp.CallToolRequest) (
 
 // handleCat dumps the file, hard-capped at max_lines (default 200, 0 = unlimited).
 // For large files the AI should prefer text_grep / text_section / text_lines.
-func (t *TextToolManager) handleCat(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (t *TextToolManager) handleCat(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	wdir := getWorkdirContext(ctx)
+	
 	file := req.GetString("file", "")
 	showNums := req.GetBool("line_number", false)
 	maxLines := req.GetInt("max_lines", 200)
@@ -501,7 +524,8 @@ func (t *TextToolManager) handleCat(_ context.Context, req mcp.CallToolRequest) 
 	if file == "" {
 		return errResult(fmt.Errorf("file is required")), nil
 	}
-	lines, err := readLines(file)
+	fullPath := joinPath(wdir, file)
+	lines, err := readLines(fullPath)
 	if err != nil {
 		return errResult(err), nil
 	}
@@ -560,7 +584,9 @@ func (t *TextToolManager) handleCat(_ context.Context, req mcp.CallToolRequest) 
 // The tool never guesses: any command that doesn't cleanly match one of the
 // forms above is rejected with an error listing the supported forms, rather
 // than silently doing something unexpected to the file.
-func (t *TextToolManager) handleSed(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (t *TextToolManager) handleSed(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	wdir := getWorkdirContext(ctx)
+	
 	file := req.GetString("file", "")
 	command := req.GetString("command", "")
 	dryRun := req.GetBool("dry_run", false)
@@ -569,7 +595,8 @@ func (t *TextToolManager) handleSed(_ context.Context, req mcp.CallToolRequest) 
 		return errResult(fmt.Errorf("file and command are required")), nil
 	}
 
-	lines, err := readLines(file)
+	fullPath := joinPath(wdir, file)
+	lines, err := readLines(fullPath)
 	if err != nil {
 		return errResult(err), nil
 	}

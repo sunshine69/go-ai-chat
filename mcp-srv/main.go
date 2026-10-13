@@ -276,6 +276,8 @@ Default options:
 }
 
 // buildServer registers all tool sets onto an MCPServer instance.
+// buildServer registers all tool sets onto an MCPServer instance.
+// For stdio mode, we chdir to the base workdir.
 func buildServer(cfg config) *server.MCPServer {
 	u.CheckErr(os.Chdir(cfg.workDir), "Can not chdir to work-dir "+cfg.workDir)
 	s := server.NewMCPServer(
@@ -382,32 +384,82 @@ func main() {
 
 	case "streamable", "streamablehttp":
 		addr := fmt.Sprintf("%s:%d", cfg.host, cfg.port)
-		endpoint := cfg.basePath + "/mcp"
+		
+		// Create WorkdirManager for multi-workdir support
+		wm := NewWorkdirManager(cfg.workDir)
+		
+		// Build the server with all tools registered
+		// This server will be used for all workdirs
+		baseServer := buildServer(cfg)
+		
+		// Create a single streamable HTTP server instance
+		streamServer := server.NewStreamableHTTPServer(baseServer)
+		
+		// Handle /mcp/{workdir} routes
+		http.HandleFunc(fmt.Sprintf("%s/mcp/", cfg.basePath), func(w http.ResponseWriter, r *http.Request) {
+			// Extract workdir from path
+			path := r.URL.Path
+			
+			// Check if path starts with /mcp/
+			if strings.HasPrefix(path, "/mcp/") {
+				// Extract workdir from /mcp/{workdir}
+				workdirPath := strings.TrimPrefix(path, "/mcp/")
+				parts := strings.Split(workdirPath, "/")
+				workdir := parts[0]
+				
+				// Get or create session for this workdir
+				session, err := wm.GetOrCreateSession(workdir)
+				if err != nil {
+					// Workdir is already occupied or error occurred
+					w.WriteHeader(http.StatusConflict)
+					w.Write([]byte(err.Error()))
+					return
+				}
+				
+				// Inject workdir context into request
+				wdirCtx := WorkdirContext{Dir: session.Fullpath}
+				r = r.WithContext(context.WithValue(r.Context(), "workdir", wdirCtx))
+			}
+			
+			// Let the streamable server handle the request
+			streamServer.ServeHTTP(w, r)
+		})
 
-		streamServer := server.NewStreamableHTTPServer(s,
-			server.WithEndpointPath(endpoint),
-		)
-
-		// Wrap with CORS middleware so browser-based clients (e.g. llama-server
-		// web UI) can connect without a proxy.
+		// Wrap with CORS middleware
 		corsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, DELETE")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Mcp-Session-Id, Last-Event-ID, Mcp-Protocol-Version")
 			w.Header().Set("Access-Control-Expose-Headers", "Mcp-Session-Id")
 
-			// Respond to preflight and stop — if we fall through, the inner handler
-			// writes its own response and the headers are already locked.
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
 				return
 			}
 
+			// Handle the request
+			path := r.URL.Path
+			if strings.HasPrefix(path, "/mcp/") {
+				workdirPath := strings.TrimPrefix(path, "/mcp/")
+				parts := strings.Split(workdirPath, "/")
+				workdir := parts[0]
+				
+				session, err := wm.GetOrCreateSession(workdir)
+				if err != nil {
+					w.WriteHeader(http.StatusConflict)
+					w.Write([]byte(err.Error()))
+					return
+				}
+				
+				wdirCtx := WorkdirContext{Dir: session.Fullpath}
+				r = r.WithContext(context.WithValue(r.Context(), "workdir", wdirCtx))
+			}
+			
 			streamServer.ServeHTTP(w, r)
 		})
 
-		log.Printf("Starting MCP server (Streamable HTTP + CORS) on http://%s%s", addr, endpoint)
-		log.Printf("  Endpoint: POST http://%s%s", addr, endpoint)
+		log.Printf("Starting MCP server (Streamable HTTP + CORS) on http://%s/mcp/{workdir}", addr)
+		log.Printf("  Workdir base: %s", cfg.workDir)
 		if err := http.ListenAndServe(addr, corsHandler); err != nil {
 			log.Fatalf("Streamable HTTP server error: %v", err)
 		}
@@ -418,3 +470,6 @@ func main() {
 		os.Exit(1)
 	}
 }
+
+// Note: handleMCPRequest is no longer needed as the workdir context is injected
+// in the http.HandleFunc handlers before calling streamServer.ServeHTTP

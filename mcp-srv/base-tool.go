@@ -184,6 +184,8 @@ func (t *BaseToolManager) checkPath(path string) (*mcp.CallToolResult, error) {
 }
 
 func (t *BaseToolManager) listDirectory(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	wdir := getWorkdirContext(ctx)
+	
 	args := request.GetArguments()
 	path := ""
 	if p, ok := args["path"]; ok {
@@ -193,7 +195,8 @@ func (t *BaseToolManager) listDirectory(ctx context.Context, request mcp.CallToo
 	if res, err := t.checkPath(cleanPath); err != nil {
 		return res, err
 	}
-	entries, err := os.ReadDir(cleanPath)
+	fullPath := joinPath(wdir, cleanPath)
+	entries, err := os.ReadDir(fullPath)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -213,6 +216,8 @@ func (t *BaseToolManager) listDirectory(ctx context.Context, request mcp.CallToo
 }
 
 func (t *BaseToolManager) createDirectory(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	wdir := getWorkdirContext(ctx)
+	
 	args := request.GetArguments()
 	path := ""
 	if p, ok := args["path"]; ok {
@@ -222,13 +227,16 @@ func (t *BaseToolManager) createDirectory(ctx context.Context, request mcp.CallT
 	if res, err := t.checkPath(cleanPath); err != nil {
 		return res, err
 	}
-	if err := os.MkdirAll(cleanPath, 0o755); err != nil {
+	fullPath := joinPath(wdir, cleanPath)
+	if err := os.MkdirAll(fullPath, 0o755); err != nil {
 		return mcp.NewToolResultText("[ERROR] " + err.Error()), err
 	}
 	return mcp.NewToolResultText("[OK]"), nil
 }
 
 func (t *BaseToolManager) removeDirectory(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	wdir := getWorkdirContext(ctx)
+	
 	args := request.GetArguments()
 	path := ""
 	if p, ok := args["path"]; ok {
@@ -238,9 +246,10 @@ func (t *BaseToolManager) removeDirectory(ctx context.Context, request mcp.CallT
 	if res, err := t.checkPath(cleanPath); err != nil {
 		return res, err
 	}
+	fullPath := joinPath(wdir, cleanPath)
 	count := 0
 	if strings.ContainsAny(cleanPath, `*?[]`) {
-		matches, err := filepath.Glob(cleanPath)
+		matches, err := filepath.Glob(fullPath)
 		if err != nil {
 			return mcp.NewToolResultText("[ERROR] " + err.Error()), err
 		}
@@ -251,7 +260,7 @@ func (t *BaseToolManager) removeDirectory(ctx context.Context, request mcp.CallT
 			}
 		}
 	} else {
-		if err := os.RemoveAll(cleanPath); err != nil {
+		if err := os.RemoveAll(fullPath); err != nil {
 			return mcp.NewToolResultText("[ERROR] " + err.Error()), err
 		}
 	}
@@ -259,6 +268,8 @@ func (t *BaseToolManager) removeDirectory(ctx context.Context, request mcp.CallT
 }
 
 func (t *BaseToolManager) createNewFile(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	wdir := getWorkdirContext(ctx)
+	
 	args := request.GetArguments()
 	path := ""
 	if p, ok := args["path"]; ok {
@@ -273,15 +284,13 @@ func (t *BaseToolManager) createNewFile(ctx context.Context, request mcp.CallToo
 	if res, err := t.checkPath(cleanPath); err != nil {
 		return res, err
 	}
-	if res, err := t.checkPath(cleanPath); err != nil {
-		return res, err
-	}
-	if err := os.MkdirAll(filepath.Dir(cleanPath), 0755); err != nil {
+	fullPath := joinPath(wdir, cleanPath)
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
 	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
-	f, err := os.OpenFile(cleanPath, flags, 0644)
+	f, err := os.OpenFile(fullPath, flags, 0644)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -295,6 +304,8 @@ func (t *BaseToolManager) createNewFile(ctx context.Context, request mcp.CallToo
 }
 
 func (t *BaseToolManager) execCommand(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	wdir := getWorkdirContext(ctx)
+	
 	args := request.GetArguments()
 	command := ""
 	if c, ok := args["command"]; ok {
@@ -346,13 +357,13 @@ func (t *BaseToolManager) execCommand(ctx context.Context, request mcp.CallToolR
 	}
 
 	// 5) Path-check every path-like argument (and the working dir).
-	workingDir := "./"
+	workingDir := wdir.Dir
 	if wd, ok := args["working_dir"]; ok {
 		if w := strings.TrimSpace(fmt.Sprintf("%v", wd)); w != "" {
 			if res, perr := t.checkPath(w); perr != nil {
 				return res, perr
 			}
-			workingDir = filepath.Clean(w)
+			workingDir = filepath.Clean(joinPath(wdir, w))
 		}
 	}
 	for _, a := range argv[1:] {
@@ -444,6 +455,8 @@ func CheckForbiddenString(teststr string) (*mcp.CallToolResult, error) {
 }
 
 func (t *BaseToolManager) runTerminalCommand(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	wdir := getWorkdirContext(ctx)
+	
 	args := request.GetArguments()
 	command := ""
 	if c, ok := args["command"]; ok {
@@ -473,9 +486,9 @@ func (t *BaseToolManager) runTerminalCommand(ctx context.Context, request mcp.Ca
 		}
 	}
 
-	workingDir := "./"
+	workingDir := wdir.Dir
 	if wd, ok := args["working_dir"]; ok {
-		workingDir = fmt.Sprintf("%v", wd)
+		workingDir = filepath.Clean(joinPath(wdir, fmt.Sprintf("%v", wd)))
 	}
 
 	if res, err := t.checkPath(workingDir); err != nil {
@@ -530,6 +543,8 @@ func (t *BaseToolManager) runTerminalCommand(ctx context.Context, request mcp.Ca
 }
 
 func (t *BaseToolManager) fileGlobSearch(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	wdir := getWorkdirContext(ctx)
+	
 	args := request.GetArguments()
 	root := ""
 	if r, ok := args["root"]; ok {
@@ -555,6 +570,7 @@ func (t *BaseToolManager) fileGlobSearch(ctx context.Context, request mcp.CallTo
 	if res, err := t.checkPath(cleanRoot); err != nil {
 		return res, err
 	}
+	fullRoot := joinPath(wdir, cleanRoot)
 	namePattern := pattern
 	recursive := false
 	if strings.HasPrefix(pattern, "**/") {
@@ -563,7 +579,7 @@ func (t *BaseToolManager) fileGlobSearch(ctx context.Context, request mcp.CallTo
 	}
 
 	var matches []string
-	err := filepath.WalkDir(cleanRoot, func(path string, d os.DirEntry, err error) error {
+	err := filepath.WalkDir(fullRoot, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
 		}
@@ -605,6 +621,8 @@ func (t *BaseToolManager) fileGlobSearch(ctx context.Context, request mcp.CallTo
 }
 
 func (t *BaseToolManager) findReplaceInFile(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	wdir := getWorkdirContext(ctx)
+	
 	args := request.GetArguments()
 	path := ""
 	if p, ok := args["path"]; ok {
@@ -635,7 +653,8 @@ func (t *BaseToolManager) findReplaceInFile(ctx context.Context, request mcp.Cal
 	if res, err := t.checkPath(cleanPath); err != nil {
 		return res, err
 	}
-	data, err := os.ReadFile(cleanPath)
+	fullPath := joinPath(wdir, cleanPath)
+	data, err := os.ReadFile(fullPath)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -836,6 +855,8 @@ func registerBaseTool(s *server.MCPServer, t *BaseToolManager) {
 		mcp.WithDescription("Reads the content of a file from the local filesystem."),
 		mcp.WithString("path", mcp.Required(), mcp.Description("The path to the file you want to read.")),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		wdir := getWorkdirContext(ctx)
+		
 		args := request.GetArguments()
 		path := ""
 		if p, ok := args["path"]; ok {
@@ -844,7 +865,8 @@ func registerBaseTool(s *server.MCPServer, t *BaseToolManager) {
 		if res, err := t.checkPath(path); err != nil {
 			return res, err
 		}
-		content, err := readFileContent(path)
+		fullPath := joinPath(wdir, path)
+		content, err := readFileContent(fullPath)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -973,7 +995,9 @@ func InsertTextBlock(filePath string, lineNumber int, textBlock string, position
 	return writer.Flush()
 }
 
-func (t BaseToolManager) insertTextBlockToFile(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (t BaseToolManager) insertTextBlockToFile(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	wdir := getWorkdirContext(ctx)
+	
 	args := request.GetArguments()
 	path := ""
 	if p, ok := args["path"]; ok {
@@ -1004,8 +1028,9 @@ func (t BaseToolManager) insertTextBlockToFile(_ context.Context, request mcp.Ca
 	if res, err := t.checkPath(cleanPath); err != nil {
 		return res, err
 	}
+	fullPath := joinPath(wdir, cleanPath)
 
-	if err := InsertTextBlock(cleanPath, startLine, replace, "before"); err != nil {
+	if err := InsertTextBlock(fullPath, startLine, replace, "before"); err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 	return mcp.NewToolResultText("[OK]"), nil
@@ -1137,4 +1162,24 @@ func (t *BaseToolManager) replaceLinesInFile(_ context.Context, request mcp.Call
 		}
 		return fmt.Sprintf("%d", endLine)
 	}(), cleanPath)), nil
+}
+
+// getWorkdirContext extracts the WorkdirContext from the request context.
+// If not found, returns a default context using the current directory.
+func getWorkdirContext(ctx context.Context) WorkdirContext {
+	wdir, ok := ctx.Value("workdir").(WorkdirContext)
+	if !ok {
+		// Fallback to current directory
+		cwd, _ := os.Getwd()
+		return WorkdirContext{Dir: cwd}
+	}
+	return wdir
+}
+
+// joinPath joins a workdir context path with a relative path.
+func joinPath(wdir WorkdirContext, rel string) string {
+	if rel == "" {
+		return wdir.Dir
+	}
+	return filepath.Join(wdir.Dir, rel)
 }
