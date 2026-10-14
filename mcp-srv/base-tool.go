@@ -1183,9 +1183,16 @@ func getWorkdirContext(ctx context.Context) WorkdirContext {
 }
 
 // joinPath joins a workdir context path with a relative path.
+// If rel is already an absolute path (e.g. /tmp/… from fetch_url, http_request,
+// exec_command, run_terminal_command), it is passed through cleaned rather than
+// prepended to the session dir — filepath.Join would otherwise produce a
+// non-existent nested path like <session>/tmp/…
 func joinPath(wdir WorkdirContext, rel string) string {
 	if rel == "" {
 		return wdir.Dir
+	}
+	if filepath.IsAbs(rel) {
+		return filepath.Clean(rel)
 	}
 	return filepath.Join(wdir.Dir, rel)
 }
