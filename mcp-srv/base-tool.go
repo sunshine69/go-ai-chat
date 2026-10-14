@@ -488,11 +488,17 @@ func (t *BaseToolManager) runTerminalCommand(ctx context.Context, request mcp.Ca
 
 	workingDir := wdir.Dir
 	if wd, ok := args["working_dir"]; ok {
-		workingDir = filepath.Clean(joinPath(wdir, fmt.Sprintf("%v", wd)))
-	}
-
-	if res, err := t.checkPath(workingDir); err != nil {
-		return res, err
+		if w := strings.TrimSpace(fmt.Sprintf("%v", wd)); w != "" {
+			// Validate the user-supplied (relative) working dir BEFORE it is
+			// joined with the trusted session dir. joinPath produces an
+			// ABSOLUTE path, and checkPath only allows relative / tmp paths,
+			// so re-running checkPath on the joined result would always
+			// reject it. This mirrors execCommand's handling.
+			if res, perr := t.checkPath(w); perr != nil {
+				return res, perr
+			}
+			workingDir = filepath.Clean(joinPath(wdir, w))
+		}
 	}
 
 	var cmd *exec.Cmd
