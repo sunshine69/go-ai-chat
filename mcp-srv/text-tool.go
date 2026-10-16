@@ -882,7 +882,7 @@ func (t *TextToolManager) handleSed(ctx context.Context, req mcp.CallToolRequest
 	// a safety net should run with dry_run=true first, or keep their own backup
 	// (e.g. via version control) — this tool intentionally does not create one,
 	// to keep behaviour predictable and match `sed -i` semantics.
-	f, err := os.Create(file)
+	f, err := os.Create(fullPath)
 	if err != nil {
 		return errResult(fmt.Errorf("cannot write file %q: %w", file, err)), nil
 	}
