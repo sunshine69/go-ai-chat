@@ -705,7 +705,7 @@ func (t *BaseToolManager) findReplaceInFile(ctx context.Context, request mcp.Cal
 		return mcp.NewToolResultText(fmt.Sprintf("Pattern not found in %s — file unchanged.", cleanPath)), nil
 	}
 
-	if err := os.WriteFile(cleanPath, []byte(updated), 0644); err != nil {
+	if err := os.WriteFile(fullPath, []byte(updated), 0644); err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
