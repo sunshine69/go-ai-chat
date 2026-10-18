@@ -229,7 +229,13 @@ func (t *GmailToolManager) handleDownloadAttachment(ctx context.Context, req mcp
 		return mcp.NewToolResultError("both message_id and attachment_id are required (get them from gmail_read_message)"), nil
 	}
 	filename := req.GetString("filename", attachmentID)
-	outputDir := req.GetString("output_dir", ".")
+	outputDirRel := req.GetString("output_dir", ".")
+
+	// Resolve outputDir against the session workdir so relative paths
+	// (e.g. "./gmail") land inside the per-session directory, not the
+	// process CWD. Absolute paths are passed through unchanged.
+	wdir := getWorkdirContext(ctx)
+	outputDir := joinPath(wdir, outputDirRel)
 
 	att, err := t.svc.Users.Messages.Attachments.Get("me", messageID, attachmentID).Context(ctx).Do()
 	if err != nil {
