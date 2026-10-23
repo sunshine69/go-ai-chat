@@ -493,24 +493,15 @@ func runREPLWithShell(history *[]Message, shell *readline.Shell, histFile string
 // ---------------------------------------------------------------------------
 // File management
 // ---------------------------------------------------------------------------
-
-func getHistoryFilePath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ".aihistory.json"
-	}
-	return filepath.Join(home, ".aihistory.json")
-}
-
 func loadSystemMsg(modelname string) *Message {
-	promptfile := filepath.Join(homeDir, modelname+".system")
-	if u.FileExistsV2(promptfile) == nil {
-		fmt.Fprintln(os.Stderr, "Loading system message for "+modelname)
-		if data, err := os.ReadFile(promptfile); err == nil {
-			return &Message{Role: "system", Content: string(data)}
+	for _, dir := range []string{homeDir, "."} {
+		promptfile := filepath.Join(dir, modelname+".system")
+		if u.FileExistsV2(promptfile) == nil {
+			fmt.Fprintln(os.Stderr, "Loading system message for "+modelname)
+			if data, err := os.ReadFile(promptfile); err == nil {
+				return &Message{Role: "system", Content: string(data)}
+			}
 		}
-	} else {
-		fmt.Fprintln(os.Stderr, "[INFO] system file for this model "+promptfile+" not available")
 	}
 	return &Message{Role: "system", Content: ""}
 }
@@ -960,6 +951,7 @@ func handleCommand(text string, history *[]Message) {
 		fmt.Fprintln(os.Stderr, "  /timeout or /t <dur>          - Set request timeout (e.g., 30s, 5m, 1h)")
 		fmt.Fprintln(os.Stderr, "  /exit or /q                   - Exit REPL")
 		fmt.Fprintln(os.Stderr, "  /use <name>                   - Switch to an existing context")
+		fmt.Fprintln(os.Stderr, "  /save <name|path>             - Save the current context to a file")
 		fmt.Fprintln(os.Stderr, "  /del <name>                   - Delete specific context")
 		fmt.Fprintln(os.Stderr, "  /del all                      - Delete all contexts")
 		fmt.Fprintln(os.Stderr, "  /debug <0|1|2>                - Enable/Disable debug and set debug level")
@@ -983,17 +975,38 @@ func handleCommand(text string, history *[]Message) {
 		fmt.Fprintln(os.Stderr, "  Include file://<path> anywhere in your message to attach a file inline.")
 		fmt.Fprintln(os.Stderr, "  Example: Summarise this file:/home/user/notes.txt please")
 
-	case "/use":
+	case "/save":
 		if arg == "" {
-			fmt.Fprintln(os.Stderr, "Usage: /use <context-file-path> Load the context file path to current context. It will persist until you run /new.")
+			fmt.Fprintln(os.Stderr, "Usage: /save <context-file-name> Save the current context to a file. If it is a string then regard it as file name in the .aig directory.")
 			return
 		}
-		// Join all remaining parts to support paths with spaces
-		fullArg := strings.Join(parts[1:], " ")
+		fullArg := parts[1]
 		expandedPath, err := expandHomeDir(fullArg)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "⚠️  Could not resolve path '%s': %v\n", fullArg, err)
 			return
+		}
+		if !strings.Contains(expandedPath, string(os.PathSeparator)) {
+			expandedPath = filepath.Join(homeDir, ".aig", expandedPath)
+		}
+		if err := saveHistoryToFile(*history, -1, expandedPath); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ Failed to save: %v\n", err)
+			return
+		}
+		fmt.Fprintf(os.Stderr, "✅ Saved current context to: %s\n", fullArg)
+	case "/use":
+		if arg == "" {
+			fmt.Fprintln(os.Stderr, "Usage: /use <context-file-name/path> Load the context file name|path to current context. It will persist until you run /new. If it is a string then regard it as file name in the .aig directory. If it is a path then it will load the context from that path. If the file does not exist it will return an error")
+			return
+		}
+		fullArg := parts[1]
+		expandedPath, err := expandHomeDir(fullArg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "⚠️  Could not resolve path '%s': %v\n", fullArg, err)
+			return
+		}
+		if !strings.Contains(expandedPath, string(os.PathSeparator)) {
+			expandedPath = filepath.Join(homeDir, ".aig", expandedPath)
 		}
 		if _, err := os.Stat(expandedPath); os.IsNotExist(err) {
 			fmt.Fprintf(os.Stderr, "Error: context '%s' not found.\n", fullArg)
@@ -1287,7 +1300,7 @@ func handleCommand(text string, history *[]Message) {
 		fmt.Fprintln(os.Stderr, "Re-load config")
 		config = loadConfig()
 		currentContextPath = getLatestContextPath()
-		fmt.Fprintf(os.Stderr, u.JsonDump(config, ""))
+		fmt.Fprintln(os.Stderr, u.JsonDump(config, ""))
 		historyLoaded = false
 		*history = []Message{}
 

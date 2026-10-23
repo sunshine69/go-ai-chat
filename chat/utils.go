@@ -133,9 +133,13 @@ var (
 )
 
 func saveHistoryToFile(history []Message, index int, filename string) error {
-	if index <= 0 || index > len(history) {
+	if index >= len(history) {
 		return fmt.Errorf("history empty or index is not > len of history")
 	}
+	if index == -1 {
+		return os.WriteFile(filename, u.JsonDumpByte(history, ""), 0o644)
+	}
+
 	msg := history[index-1]
 	switch v := msg.Content.(type) {
 	case string:
