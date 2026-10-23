@@ -494,7 +494,15 @@ func runREPLWithShell(history *[]Message, shell *readline.Shell, histFile string
 // File management
 // ---------------------------------------------------------------------------
 func loadSystemMsg(modelname string) *Message {
-	for _, dir := range []string{homeDir, "."} {
+	currentDir, err := os.Getwd()
+	if err != nil {
+		currentDir = "."
+	}
+	userHomeDir, err := os.UserHomeDir()
+	if err != nil {
+		userHomeDir = "."
+	}
+	for _, dir := range []string{currentDir, homeDir, userHomeDir} {
 		promptfile := filepath.Join(dir, modelname+".system")
 		if u.FileExistsV2(promptfile) == nil {
 			fmt.Fprintln(os.Stderr, "Loading system message for "+modelname)
