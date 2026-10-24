@@ -103,14 +103,14 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 		// after doing a bunch of thinking, it's being lazy. Wake it up!
 
 		// sentences, _ := getSentencesAtPosition(content, "-2,-1")
-		if len(toolCalls) == 0 && !strings.Contains(content, "Task completed") && strings.Contains(content, "</think>") {
+		if !config.AutoNudgeDisabled && len(toolCalls) == 0 && !strings.Contains(content, "Task completed") && strings.Contains(content, "</think>") {
 			fmt.Fprintln(os.Stderr, "\n> ⚡ [System Nudge]: LOOP - Forcing execution in 5 secs...")
 			time.Sleep(5 * time.Second)
 			remindAiFunc("You need to STOP and CHANGE thought to get out of loop. START action.")
 			continue
 		}
 		// Thinking loop
-		if randomSentenceCount > config.MaxRepeatPattern {
+		if !config.AutoNudgeDisabled && randomSentenceCount > config.MaxRepeatPattern {
 			randomSentence = ""
 			randomSentenceCount = 0
 			fmt.Fprintf(os.Stderr, "\n> ⚡ [System Nudge]: Repeated one sentence %s. Forcing execution in 5 secs...\n", randomSentence)
@@ -120,7 +120,7 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 		}
 
 		// content too short (less than 3 lines ~ 300) is also a sign of drop
-		if ctx.Err() == nil && !strings.Contains(content, "Task completed") && !strings.Contains(content, "has been successfully") && len(toolCalls) == 0 && (len(content) < 600 && thinking != "") {
+		if !config.AutoNudgeDisabled && ctx.Err() == nil && !strings.Contains(content, "Task completed") && !strings.Contains(content, "has been successfully") && len(toolCalls) == 0 && (len(content) < 600 && thinking != "") {
 			fmt.Fprintln(os.Stderr, "\n> ⚡ [System Nudge]: SLEEP after planning. Forcing execution in 5 secs...")
 			time.Sleep(5 * time.Second)
 			remindAiFunc("Continue. If completed replied with string 'Task completed'")
@@ -166,7 +166,7 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 			case "ask":
 				fmt.Fprintf(os.Stderr, "\n⚠️  Tool '%s' requires permission.\n", tc.Function.Name)
 				fmt.Fprintf(os.Stderr, "   Arguments:\n%s\n", argsDisplay) // Print arguments BEFORE asking
-				fmt.Fprintf(os.Stderr, "   Allow? [y/N]: ")
+				fmt.Fprintf(os.Stderr, "   Allow? [y/N/auto]: ")
 
 				var response string
 				// Use Scanln to wait for user input
@@ -174,6 +174,11 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 				if strings.ToLower(response) != "y" {
 					fmt.Fprintf(os.Stderr, "❌ User denied permission for '%s'.\n", tc.Function.Name)
 					allowed = false
+				}
+				if response == "auto" {
+					fmt.Fprintf(os.Stderr, "✅ User granted permission for all future calls to '%s'.\n", tc.Function.Name)
+					// Update the config to allow this tool in future calls
+					config.MCPPermissions[tc.Function.Name] = "auto"
 				}
 			}
 

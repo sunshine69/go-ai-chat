@@ -1342,7 +1342,7 @@ func handleCommand(text string, history *[]Message) {
 		}
 	case "/autonudgedisabled":
 		if arg == "" {
-			fmt.Fprintln(os.Stderr, "Usage: /maxtoken <int>")
+			fmt.Fprintln(os.Stderr, "Usage: /autonudgedisabled <on|off>")
 		}
 		switch arg {
 		case "on":
