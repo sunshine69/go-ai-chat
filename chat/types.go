@@ -28,6 +28,9 @@ type Config struct {
 	AutoNudgeDisabled   bool
 	StallTimeout        time.Duration
 	Temperature         float64 // model temperature; only set in the request when > 0 (runtime-only, never persisted)
+	TopP                float64 // model top_p; only set in the request when > 0 (runtime-only, never persisted)
+	TopK                int     // model top_k; only set in the request when > 0 (runtime-only, never persisted)
+	MinP                float64 // model min_p; only set in the request when > 0 (runtime-only, never persisted)
 }
 
 type Message struct {

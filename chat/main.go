@@ -240,7 +240,7 @@ func handleNonInteractive(config *Config) (runmode string) {
 			cancel()
 
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "\n❌ Error: %v\n", err)
+				fmt.Fprintf(os.Stderr, "\n❌ End Turn Error: %v\n", err)
 				return
 			}
 			history = append(l_history, Message{
@@ -972,6 +972,10 @@ func handleCommand(text string, history *[]Message) {
 		fmt.Fprintln(os.Stderr, "  /mcp refresh                  - Refresh MCP tool list")
 		fmt.Fprintln(os.Stderr, "  /mcpfunc <func> <perm>        - Set permission for tools func, auto|denied|ask")
 		fmt.Fprintln(os.Stderr, "  /ctx <N>|off                  - Set context token limit (auto-trim when exceeded)")
+		fmt.Fprintln(os.Stderr, "  /temp <float>                 - Set temperature for the model (0.0-1.0). 0 will use default from server")
+		fmt.Fprintln(os.Stderr, "  /top-p <float>                - Set top-p for the model (0.0-1.0). 0 will use default from server")
+		fmt.Fprintln(os.Stderr, "  /top-k <int>                  - Set top-k	for the model (0.0-1.0). 0 will use default from server")
+		fmt.Fprintln(os.Stderr, "  /min-p <float>                - Set min-p for the model (0.0-1.0). 0 will use default from server")
 		fmt.Fprintln(os.Stderr, "  /maxtoken <N>                 - Set max tokens in payload.")
 		fmt.Fprintln(os.Stderr, "  /trimctx <idx|range>          - Remove messages at index or range (e.g. 3-5, -1--3)")
 		fmt.Fprintln(os.Stderr, "  /autonudgedisabled <on|off>   - Disable the auto nudge feature")
@@ -1218,12 +1222,64 @@ func handleCommand(text string, history *[]Message) {
 			fmt.Fprintln(os.Stderr, "Usage: /url <url>")
 			return
 		}
+		if !strings.HasSuffix(arg, "chat/completions") {
+			arg = strings.TrimSuffix(arg, "/") + "/chat/completions"
+		}
 		config.BaseURL = arg
 		fmt.Fprintf(os.Stderr, "URL switched to: %s\n", arg)
 
+	// These params only for session, not saved to config file
+	case "/temp":
+		if arg == "" {
+			fmt.Fprintln(os.Stderr, "Usage: /temp <float> (e.g., 0.7). 0 means use server default. Current value: ", config.Temperature)
+			return
+		}
+		if temp, err := strconv.ParseFloat(arg, 64); err != nil {
+			fmt.Fprintf(os.Stderr, "Can not parse float: %s\n", err.Error())
+			return
+		} else {
+			config.Temperature = temp
+			fmt.Fprintf(os.Stderr, "Temperature set to: %f\n", config.Temperature)
+		}
+	case "/top-p":
+		if arg == "" {
+			fmt.Fprintln(os.Stderr, "Usage: /top-p <float> (e.g., 0.9). 0 means use server default. Current value: ", config.TopP)
+			return
+		}
+		if topP, err := strconv.ParseFloat(arg, 64); err != nil {
+			fmt.Fprintf(os.Stderr, "Can not parse float: %s\n", err.Error())
+			return
+		} else {
+			config.TopP = topP
+			fmt.Fprintf(os.Stderr, "Top-p set to: %f\n", config.TopP)
+		}
+	case "/top-k":
+		if arg == "" {
+			fmt.Fprintln(os.Stderr, "Usage: /top-k <int> (e.g., 50). 0 means use server default. Current value: ", config.TopK)
+			return
+		}
+		if topK, err := strconv.Atoi(arg); err != nil {
+			fmt.Fprintf(os.Stderr, "Can not parse int: %s\n", err.Error())
+			return
+		} else {
+			config.TopK = topK
+			fmt.Fprintf(os.Stderr, "Top-k set to: %d\n", config.TopK)
+		}
+	case "/min-p":
+		if arg == "" {
+			fmt.Fprintln(os.Stderr, "Usage: /min-p <float> (e.g., 0.1). 0 means use server default. Current value: ", config.MinP)
+			return
+		}
+		if minP, err := strconv.ParseFloat(arg, 64); err != nil {
+			fmt.Fprintf(os.Stderr, "Can not parse float: %s\n", err.Error())
+			return
+		} else {
+			config.MinP = minP
+			fmt.Fprintf(os.Stderr, "Min-p set to: %f\n", config.MinP)
+		}
 	case "/timeout", "/t":
 		if arg == "" {
-			fmt.Fprintln(os.Stderr, "Usage: /timeout <duration> (e.g., 30s, 5m, 1h)")
+			fmt.Fprintln(os.Stderr, "Usage: /timeout <duration> (e.g., 30s, 5m, 1h). Current value: ", config.Timeout)
 			return
 		}
 		d, err := time.ParseDuration(arg)
@@ -1233,6 +1289,7 @@ func handleCommand(text string, history *[]Message) {
 		}
 		config.Timeout = d
 		fmt.Fprintf(os.Stderr, "Timeout set to: %v\n", d)
+		// end session values
 
 	case "/p":
 		fmt.Fprintf(os.Stderr, "Current config: %s\n", u.JsonDump(config, ""))
@@ -1343,6 +1400,7 @@ func handleCommand(text string, history *[]Message) {
 	case "/autonudgedisabled":
 		if arg == "" {
 			fmt.Fprintln(os.Stderr, "Usage: /autonudgedisabled <on|off>")
+			return
 		}
 		switch arg {
 		case "on":
@@ -1352,6 +1410,7 @@ func handleCommand(text string, history *[]Message) {
 			fmt.Fprintln(os.Stderr, "Enable autonudge")
 			config.AutoNudgeDisabled = false
 		}
+		saveConfig()
 
 	case "/unload":
 		if arg == "" {

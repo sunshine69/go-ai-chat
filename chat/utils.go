@@ -369,6 +369,17 @@ func saveConfig() {
 	if config.ContextLimit > 0 {
 		envVars["CONTEXT_LIMIT"] = strconv.Itoa(config.ContextLimit)
 		changed = true
+	} else if _, exists := envVars["CONTEXT_LIMIT"]; exists {
+		// /ctx off — clear it so it stays off after restart.
+		delete(envVars, "CONTEXT_LIMIT")
+		changed = true
+	}
+	if config.AutoNudgeDisabled {
+		envVars["AUTONUDGE_DISABLED"] = "on"
+		changed = true
+	} else if _, exists := envVars["AUTONUDGE_DISABLED"]; exists {
+		delete(envVars, "AUTONUDGE_DISABLED")
+		changed = true
 	}
 	if config.SummaryModel != "" {
 		envVars["SUMMARY_MODEL"] = config.SummaryModel
@@ -499,6 +510,7 @@ func loadConfig() *Config {
 		DebugLevel:          os.Getenv("DEBUG_LEVEL"),
 		MaxTokens:           999999,
 		MaxRepeatPattern:    10,
+		AutoNudgeDisabled:   os.Getenv("AUTONUDGE_DISABLED") == "on",
 		StallTimeout:        u.Must(time.ParseDuration("45s")),
 	}
 
@@ -510,10 +522,9 @@ func loadConfig() *Config {
 		}
 	}
 
-	ctxOversizeStr := u.Getenv("CTX_OVERSIZE", "2")
-	if _ov, err := strconv.ParseFloat(ctxOversizeStr, 32); err == nil {
-		fmt.Fprintf(os.Stderr, "[INFO] cxt oversize multiply factor: %f\n", _ov)
-		c.CtxOverSizeAllowed = int(_ov * float64(c.ContextLimit))
+	ctxOversizeFactor := 2.0
+	if f, err := strconv.ParseFloat(u.Getenv("CTX_OVERSIZE", "2"), 32); err == nil {
+		ctxOversizeFactor = f
 	}
 
 	if c.BaseURL == "" {
@@ -562,6 +573,14 @@ func loadConfig() *Config {
 				}
 			}
 		}
+	}
+
+	// CtxOverSizeAllowed is derived from ContextLimit — it must be computed
+	// AFTER the .aigdotenv load above. Previously it was computed before,
+	// so it was always 0 and the "burst within one turn" allowance never worked.
+	if c.ContextLimit > 0 {
+		c.CtxOverSizeAllowed = int(ctxOversizeFactor * float64(c.ContextLimit))
+		fmt.Fprintf(os.Stderr, "[INFO] ctx oversize factor: %f -> %d tokens\n", ctxOversizeFactor, c.CtxOverSizeAllowed)
 	}
 
 	return &c

@@ -96,27 +96,40 @@ const (
 func trimContext(ctx context.Context, cfg Config, msgs []Message) []Message {
 	system, rest := splitSystemHead(msgs)
 
-	if len(rest) <= keepHead+keepTail {
-		fmt.Fprintln(os.Stderr, "rest msg not valid to compress more. Will cut off the last message")
-		l0 := len(msgs) - 1
-		summaryMsg := Message{
-			Role:    "user",
-			Content: "continue",
+	// Target size to reach. If no explicit limit is configured (reactive
+	// trim after a truncation), aim for ~60% of the current size.
+	target := cfg.ContextLimit / 2
+	if target <= 0 {
+		target = estimateTokens(msgs) * 3 / 5
+	}
+
+	dropOldest := func() []Message {
+		// Nothing left to compress — drop the OLDEST non-system messages
+		// to make room. Never the newest one: that is the user's current
+		// request and dropping it loses the task itself.
+		trimmed := concat(system, rest)
+		for estimateTokens(trimmed) > target && len(trimmed) > len(system)+1 {
+			trimmed = append(trimmed[:len(system)], trimmed[len(system)+1:]...)
 		}
-		return append(msgs[0:l0], summaryMsg)
+		return trimmed
+	}
+
+	if len(rest) <= keepHead+keepTail {
+		fmt.Fprintln(os.Stderr, "not enough messages to compress — dropping oldest messages to make room")
+		return dropOldest()
 	}
 
 	head := rest[:keepHead]
 	middle := rest[keepHead : len(rest)-keepTail]
 	tail := rest[len(rest)-keepTail:]
+	// Never let the preserved tail start with a tool result whose matching
+	// assistant tool_call message lands in the summarised middle — that
+	// would be an orphan tool message and the API rejects the payload.
+	tail = dropLeadingToolMsgs(tail)
 
 	if len(middle) == 0 {
-		fmt.Fprintln(os.Stderr, "no middle messages to remove. Will cut off the last message")
-		summaryMsg := Message{
-			Role:    "user",
-			Content: "continue",
-		}
-		return append(msgs[0:len(msgs)-1], summaryMsg)
+		fmt.Fprintln(os.Stderr, "no middle messages to compress — dropping oldest messages to make room")
+		return dropOldest()
 	}
 
 	fmt.Fprintf(os.Stderr, "✂️  Context too long (~%d tokens) — compressing %d middle messages…\n",
@@ -135,11 +148,11 @@ func trimContext(ctx context.Context, cfg Config, msgs []Message) []Message {
 	// the summarized middle instead of being preserved verbatim.
 	trimmed := concat(system, head, []Message{summaryMsg}, tail)
 
-	// Progressive fallback: if still over half the limit, drop pairs from the
+	// Progressive fallback: if still over target, drop pairs from the
 	// older end of tail — never touch system, head, or the last 2 messages.
-	target := cfg.ContextLimit / 2
 	for estimateTokens(trimmed) > target && len(tail) > 2 {
 		tail = tail[2:]
+		tail = dropLeadingToolMsgs(tail)
 		trimmed = concat(system, head, []Message{summaryMsg}, tail)
 	}
 
@@ -202,10 +215,10 @@ Constraints:
 		{Role: "user", Content: prompt},
 	}
 
-	content, _, _, err := streamOnce(subCtx, summaryCfg, summaryMsgs)
+	content, _, _, err := streamOnce(subCtx, summaryCfg, summaryMsgs, true)
 	if err != nil {
 		summaryCfg.BaseURL = cfg.BaseURL // fall back
-		content, _, _, err = streamOnce(subCtx, summaryCfg, summaryMsgs)
+		content, _, _, err = streamOnce(subCtx, summaryCfg, summaryMsgs, true)
 	}
 	if err != nil || strings.TrimSpace(content) == "" {
 		if subCtx.Err() == context.DeadlineExceeded {

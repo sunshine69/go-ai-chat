@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -14,6 +15,32 @@ import (
 	"sync/atomic"
 	"time"
 )
+
+// Sentinel errors for context overflow. askAI reacts to these by trimming
+// the context and retrying the request.
+var (
+	errContextExceeded = errors.New("CONTEXT SIZE EXCEEDED") // backend rejected the prompt as too big
+	errOutputTruncated = errors.New("OUTPUT TRUNCATED")      // backend ran out of context mid-generation
+)
+
+// lastRequestWasTruncated feeds the proactive reactive-trim check at the top
+// of the askAI loop for the ContextLimit == 0 case.
+var lastRequestWasTruncated bool
+
+// dropLeadingToolMsgs drops leading tool-result messages whose matching
+// assistant tool_call message was not preserved (e.g. it was summarised
+// away). Orphan tool messages make the API reject the whole payload.
+func dropLeadingToolMsgs(msgs []Message) []Message {
+	i := 0
+	for i < len(msgs) && msgs[i].Role == "tool" {
+		i++
+	}
+	if i == 0 {
+		return msgs
+	}
+	fmt.Fprintf(os.Stderr, "⚠️  Dropping %d orphan tool-result message(s) at the head of the kept context\n", i)
+	return msgs[i:]
+}
 
 // askAI — streams the response; if MCP is active, injects tools and handles
 // tool_calls returned by the model in a loop until the model gives a final answer.
@@ -25,7 +52,9 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 	var accumulatedThinking strings.Builder
 	foundAndExecToolCall := false
 	repeatedPatternCount = 0
-
+	truncationRetries := 0
+	// Looping tools calls within 1 turn: if the model returns a tool_call, we execute it and feed the result back to the model until it returns a final answer (no tool calls).
+	// We also detect and handle various failure modes (stall, cutoff, thinking loops) and nudge the model to continue or change its approach by crafting a user message that tells it to continue or change its thinking.
 	for {
 		currentEstToken := estimateTokens(workingMsgs)
 		// If we found tools call we dont check the context to avoid losing information
@@ -36,12 +65,20 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 				workingMsgs = trimContext(ctx, config, workingMsgs)
 				fmt.Fprintln(os.Stderr, "done")
 			}
+		} else if config.ContextLimit == 0 && len(workingMsgs) > 0 && lastRequestWasTruncated {
+			// Reactive trim: the previous request ran out of context (server
+			// truncation or exceed_context_size error) even though no explicit
+			// limit is configured. Trim once to make room before retrying.
+			lastRequestWasTruncated = false
+			fmt.Fprintln(os.Stderr, "📊 Context overflow detected (no /ctx limit set) — trimming context ... ")
+			workingMsgs = trimContext(ctx, config, workingMsgs)
+			fmt.Fprintln(os.Stderr, "done")
 		}
 		// Timestamp each AI model turn so the user can see how long each
 		// round-trip took (thinking → response → tool execution → response).
 		log.Printf("━━━ AI turn start ━━━")
 
-		content, thinking, toolCalls, err := streamOnce(ctx, config, workingMsgs)
+		content, thinking, toolCalls, err := streamOnce(ctx, config, workingMsgs, false)
 
 		// If streamOnce failed with a recoverable error (nudge-loop, cutoff…)
 		// we still want a final timestamp on the last turn it produced.
@@ -71,7 +108,25 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 		}
 		if err != nil {
 			errMsg := err.Error()
-			if ctx.Err() == nil {
+			needTrimCtx := (errors.Is(err, errContextExceeded) || errors.Is(err, errOutputTruncated))
+			if ctx.Err() == nil || needTrimCtx {
+				// Context overflow: the request was too big for the backend.
+				// Trim and retry — up to 2 times, and only while we haven't
+				// accumulated a final answer yet.
+				if needTrimCtx && truncationRetries < 2 && accumulatedContent.Len() == 0 {
+					truncationRetries++
+					lastRequestWasTruncated = true
+					// Drop the partial turn content — it will be regenerated.
+					accumulatedContent.Reset()
+					accumulatedThinking.Reset()
+					if config.ContextLimit > 0 {
+						fmt.Fprintf(os.Stderr, "📊 Context overflow detected — trimming (retry %d/2)...\n", truncationRetries)
+					} else {
+						fmt.Fprintf(os.Stderr, "📊 Context overflow detected — trimming (retry %d/2, no /ctx limit set)\n", truncationRetries)
+					}
+					workingMsgs = trimContext(ctx, config, workingMsgs)
+					continue
+				}
 				switch errMsg {
 				case "STREAM CUTOFF DETECTED", "AI HAS BECOME MENTAL":
 					remindAiFunc("continue. If completed replied with string 'Task completed'")
@@ -230,8 +285,11 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 }
 
 // streamOnce does one SSE request, printing text, prepare tools for one turn and returns
-// (content, thinking, toolCalls, error). Tool call if detected and parsed ok will end the turn
-func streamOnce(ctx context.Context, config Config, msgs []Message) (string, string, []ToolCall, error) {
+// (content, thinking, toolCalls, error). Tool call if detected and parsed ok will end the turn.
+// quiet suppresses console output and MCP tool injection — used by the
+// context-compression sub-call so a summary cannot hijack the tool loop or
+// spam the user's terminal mid-conversation.
+func streamOnce(ctx context.Context, config Config, msgs []Message, quiet bool) (string, string, []ToolCall, error) {
 	globalStats.StreamStarted()
 	defer globalStats.StreamFinished()
 
@@ -245,8 +303,24 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 		"stream":     true,
 	}
 
-	// Inject MCP tools if connected
-	if activeMCP != nil && len(activeMCP.Tools()) > 0 {
+	if config.Temperature > 0 {
+		reqBody["temperature"] = config.Temperature
+	}
+	if config.TopP > 0 {
+		reqBody["top_p"] = config.TopP
+	}
+	if config.TopK > 0 {
+		reqBody["top_k"] = config.TopK
+	}
+	if config.MinP > 0 {
+		reqBody["min_p"] = config.MinP
+	}
+
+	// Inject MCP tools if connected.
+	// QUIET calls (e.g. the context-compression sub-call) must not get
+	// tools: a summarisation answer that turns into a tool call has nowhere
+	// to go and would silently fail the summary.
+	if !quiet && activeMCP != nil && len(activeMCP.Tools()) > 0 {
 		visibleTools := parseAndFilterToolsRegex(activeMCP.Tools(), config.BlockedTools)
 		if len(visibleTools) > 0 {
 			reqBody["tools"] = ToOpenAITools(visibleTools)
@@ -274,7 +348,12 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		return HandleAPIErrorFromLlamaServer(resp.StatusCode, string(body))
+		content, thinking, toolCalls, err := HandleAPIErrorFromLlamaServer(resp.StatusCode, string(body))
+		// Mark context overflow distinctly so askAI can trim and retry.
+		if err != nil && (strings.Contains(err.Error(), "exceed_context_size") || strings.Contains(err.Error(), "exceeds the available context size")) {
+			return content, thinking, toolCalls, fmt.Errorf("%w: %s", errContextExceeded, err.Error())
+		}
+		return content, thinking, toolCalls, err
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
@@ -286,6 +365,7 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 	var thinkingStarted = false
 	var headerPrinted = false
 	var serverSignaledStop = false
+	var serverOutputTruncated = false // server hit its output/context cap (finish_reason "length")
 
 	// Per-turn tracking for /stat — the elapsed time between arriving chunks
 	// is attributed to thinking or answer generation depending on which kind
@@ -414,6 +494,12 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 				if len(toolCallAccum) > 0 {
 					serverSignaledStop = true
 				}
+			case "length":
+				// Backend hit its max output / remaining context cap — the
+				// response was cut off mid-generation. Flag it so the caller
+				// can trim the context and retry instead of accepting a
+				// truncated answer as final.
+				serverOutputTruncated = true
 			}
 		}
 
@@ -423,37 +509,39 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 			thinkingContent.WriteString(rc)
 			rawTextBuffer.WriteString(rc)
 
-			for _, s := range sentencesWhenAILoop {
-				if strings.Contains(fullContent.String(), s) {
-					countSentencesWhenAILoop++
-					if !config.AutoNudgeDisabled && countSentencesWhenAILoop > 10 {
-						countSentencesWhenAILoop = 0
-						return fullContent.String(), thinkingContent.String(), []ToolCall{}, fmt.Errorf("AI HAS STUCK LOOP")
+			if !quiet { // loop detection only for real conversation turns, not summary sub-calls
+				for _, s := range sentencesWhenAILoop {
+					if strings.Contains(fullContent.String(), s) {
+						countSentencesWhenAILoop++
+						if !config.AutoNudgeDisabled && countSentencesWhenAILoop > 10 {
+							countSentencesWhenAILoop = 0
+							return fullContent.String(), thinkingContent.String(), []ToolCall{}, fmt.Errorf("AI HAS STUCK LOOP")
+						}
 					}
 				}
-			}
-			if len(fullContent.String()) > 600 { // Only collect if this is is large enough to form a paragraph
-				if aiRestResponsePtn.MatchString(fullContent.String()) {
-					repeatedPatternCount++
-				}
-				if randomSentence == "" { // looks like first sentence in a para. is most repeated
-					randomSentences, _ := getSentencesAtPosition(fullContent.String(), "0")
-					if len(randomSentences) > 0 {
-						randomSentence = randomSentences[0]
+				if len(fullContent.String()) > 600 { // Only collect if this is is large enough to form a paragraph
+					if aiRestResponsePtn.MatchString(fullContent.String()) {
+						repeatedPatternCount++
 					}
-				} else {
-					if strings.Contains(fullContent.String(), randomSentence) {
-						randomSentenceCount++
+					if randomSentence == "" { // looks like first sentence in a para. is most repeated
+						randomSentences, _ := getSentencesAtPosition(fullContent.String(), "0")
+						if len(randomSentences) > 0 {
+							randomSentence = randomSentences[0]
+						}
+					} else {
+						if strings.Contains(fullContent.String(), randomSentence) {
+							randomSentenceCount++
+						}
 					}
-				}
-				if repeatedPatternCount > config.MaxRepeatPattern {
-					if !config.AutoNudgeDisabled {
-						return fullContent.String(), thinkingContent.String(), []ToolCall{}, fmt.Errorf("AI HAS STUCK LOOP")
+					if repeatedPatternCount > config.MaxRepeatPattern {
+						if !config.AutoNudgeDisabled {
+							return fullContent.String(), thinkingContent.String(), []ToolCall{}, fmt.Errorf("AI HAS STUCK LOOP")
+						}
 					}
-				}
-				if randomSentenceCount > config.MaxRepeatPattern {
-					if !config.AutoNudgeDisabled {
-						return fullContent.String(), thinkingContent.String(), []ToolCall{}, fmt.Errorf("AI HAS STUCK LOOP")
+					if randomSentenceCount > config.MaxRepeatPattern {
+						if !config.AutoNudgeDisabled {
+							return fullContent.String(), thinkingContent.String(), []ToolCall{}, fmt.Errorf("AI HAS STUCK LOOP")
+						}
 					}
 				}
 			}
@@ -483,21 +571,23 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 			globalStats.TokenArrived(tokenCount)
 			recordChunk("thinking", tokenCount)
 
-			if aiThoughtBecomeMentalPtn.MatchString(rc) {
+			if !quiet && aiThoughtBecomeMentalPtn.MatchString(rc) {
 				if !config.AutoNudgeDisabled {
 					return fullContent.String(), thinkingContent.String(), []ToolCall{}, fmt.Errorf("AI HAS BECOME MENTAL")
 				}
 			}
-			if config.ShowThinking {
-				if !thinkingStarted {
-					log.Print("\n> 🤔 Thinking...\n")
+			if !quiet {
+				if config.ShowThinking {
+					if !thinkingStarted {
+						log.Print("\n> 🤔 Thinking...\n")
+						thinkingStarted = true
+					}
+					fmt.Fprint(os.Stdout, rc)
+					os.Stdout.Sync()
+				} else if !thinkingStarted {
+					log.Print("\n> 🤔 Thinking hidden, run /showthink on to enable\n")
 					thinkingStarted = true
 				}
-				fmt.Fprint(os.Stdout, rc)
-				os.Stdout.Sync()
-			} else if !thinkingStarted {
-				log.Print("\n> 🤔 Thinking hidden, run /showthink on to enable\n")
-				thinkingStarted = true
 			}
 			continue
 		}
@@ -516,19 +606,23 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 			globalStats.TokenArrived(tokenCount)
 			recordChunk("answer", tokenCount)
 
-			if !headerPrinted {
-				log.Print("\n> 📝 Response:\n")
-				headerPrinted = true
+			if !quiet {
+				if !headerPrinted {
+					log.Print("\n> 📝 Response:\n")
+					headerPrinted = true
+				}
+				fmt.Fprint(os.Stdout, delta.Content)
+				os.Stdout.Sync()
 			}
 			fullContent.WriteString(delta.Content)
-			fmt.Fprint(os.Stdout, delta.Content)
-			os.Stdout.Sync()
 
-			if aiRestResponsePtn.MatchString(delta.Content) {
-				repeatedPatternCount++
-			}
-			if repeatedPatternCount > config.MaxRepeatPattern {
-				break
+			if !quiet {
+				if aiRestResponsePtn.MatchString(delta.Content) {
+					repeatedPatternCount++
+				}
+				if repeatedPatternCount > config.MaxRepeatPattern {
+					break
+				}
 			}
 			continue
 		}
@@ -626,6 +720,13 @@ func streamOnce(ctx context.Context, config Config, msgs []Message) (string, str
 			}
 		}
 		return fullContent.String(), thinkingContent.String(), toolCalls, fmt.Errorf("STREAM CUTOFF DETECTED")
+	}
+	// The server cut the output short (context nearly full): report it as a
+	// distinct error so askAI trims the context and retries, instead of
+	// accepting a half-finished answer as the final one.
+	if serverOutputTruncated && len(toolCalls) == 0 {
+		fmt.Fprintln(os.Stderr, "\n> 📊 [Watchdog] Output truncated by backend (context nearly full) — flagging for context trim")
+		return fullContent.String(), thinkingContent.String(), toolCalls, errOutputTruncated
 	}
 	return fullContent.String(), thinkingContent.String(), toolCalls, nil
 }
