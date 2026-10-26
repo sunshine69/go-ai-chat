@@ -115,11 +115,12 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 				// Trim and retry — up to 2 times, and only while we haven't
 				// accumulated a final answer yet.
 				fmt.Fprintf(os.Stderr, "\n> ⚠️  [DEBUG] Get inside. ctx.Err: %v\n", ctx.Err())
-				switch errMsg {
-				case "OUTPUT TRUNCATED", "CONTEXT SIZE EXCEEDED":
+				if needTrimCtx {
 					fmt.Fprintln(os.Stderr, "\n> 🔁 [System Nudge]: Stream stalled mid-generation due to context nearly full — reconnecting and resuming...")
 					remindAiFunc("Your context size is nearly full causing instability. Carefull when reading large files or thinking for too long. Need more action. Continue.")
 					continue
+				}
+				switch errMsg {
 				case "STREAM CUTOFF DETECTED", "AI HAS BECOME MENTAL":
 					remindAiFunc("continue. If completed replied with string 'Task completed'")
 					continue
@@ -137,6 +138,7 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 					}
 					continue
 				default:
+					fmt.Fprintf(os.Stderr, "\n> 🔁 [WARN] Does it match any of the case. errMsg: '%s'\n", errMsg)
 					finalizeTurn()
 					return accumulatedContent.String() + content, accumulatedThinking.String() + thinking, workingMsgs, err
 				}
