@@ -55,23 +55,18 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 	// Looping tools calls within 1 turn: if the model returns a tool_call, we execute it and feed the result back to the model until it returns a final answer (no tool calls).
 	// We also detect and handle various failure modes (stall, cutoff, thinking loops) and nudge the model to continue or change its approach by crafting a user message that tells it to continue or change its thinking.
 	for {
+		var _trimContext = func() {
+			fmt.Fprintf(os.Stderr, "📊 Context size: ~%d tokens (limit: %d). Start triming context ... ", estimateTokens(workingMsgs), config.ContextLimit)
+			workingMsgs = trimContext(ctx, config, workingMsgs)
+			fmt.Fprintln(os.Stderr, "done")
+		}
 		currentEstToken := estimateTokens(workingMsgs)
 		// If we found tools call we dont check the context to avoid losing information
 		// but it still needs to be smaller than ctxOverSizeAllowed.
 		if config.ContextLimit > 0 && (!foundAndExecToolCall || currentEstToken >= config.CtxOverSizeAllowed) {
 			if currentEstToken >= config.ContextLimit {
-				fmt.Fprintf(os.Stderr, "📊 Context size: ~%d tokens (limit: %d). Start triming context ... ", estimateTokens(workingMsgs), config.ContextLimit)
-				workingMsgs = trimContext(ctx, config, workingMsgs)
-				fmt.Fprintln(os.Stderr, "done")
+				_trimContext()
 			}
-		} else if config.ContextLimit == 0 && len(workingMsgs) > 0 && lastRequestWasTruncated {
-			// Reactive trim: the previous request ran out of context (server
-			// truncation or exceed_context_size error) even though no explicit
-			// limit is configured. Trim once to make room before retrying.
-			lastRequestWasTruncated = false
-			fmt.Fprintln(os.Stderr, "📊 Context overflow detected (no /ctx limit set) — trimming context ... ")
-			workingMsgs = trimContext(ctx, config, workingMsgs)
-			fmt.Fprintln(os.Stderr, "done")
 		}
 		// Timestamp each AI model turn so the user can see how long each
 		// round-trip took (thinking → response → tool execution → response).
@@ -117,6 +112,7 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 				fmt.Fprintf(os.Stderr, "\n> ⚠️  [DEBUG] Get inside. ctx.Err: %v\n", ctx.Err())
 				if needTrimCtx {
 					fmt.Fprintln(os.Stderr, "\n> 🔁 [System Nudge]: Stream stalled mid-generation due to context nearly full — reconnecting and resuming...")
+					_trimContext()
 					remindAiFunc("Your context size is nearly full causing instability. Carefull when reading large files or thinking for too long. Need more action. Continue.")
 					continue
 				}
