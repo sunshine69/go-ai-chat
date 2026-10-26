@@ -109,6 +109,8 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 		if err != nil {
 			errMsg := err.Error()
 			needTrimCtx := (errors.Is(err, errContextExceeded) || errors.Is(err, errOutputTruncated))
+			fmt.Fprintf(os.Stderr, "\n> ⚠️  [DEBUG] Stream error: %s - Need trim context: %t\n", errMsg, needTrimCtx)
+			needTrimCtx = needTrimCtx || (strings.Contains(errMsg, "exceed_context_size") || strings.Contains(errMsg, "exceeds the available context size"))
 			if ctx.Err() == nil || needTrimCtx {
 				// Context overflow: the request was too big for the backend.
 				// Trim and retry — up to 2 times, and only while we haven't
@@ -148,6 +150,8 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 					finalizeTurn()
 					return accumulatedContent.String() + content, accumulatedThinking.String() + thinking, workingMsgs, err
 				}
+			} else {
+				fmt.Fprintf(os.Stderr, "\n> ⚠️  [DEBUG] Context canceled by user/system: %v\n", ctx.Err())
 			}
 			finalizeTurn()
 			return accumulatedContent.String() + content, accumulatedThinking.String() + thinking, workingMsgs, err
