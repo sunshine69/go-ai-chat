@@ -52,7 +52,6 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 	var accumulatedThinking strings.Builder
 	foundAndExecToolCall := false
 	repeatedPatternCount = 0
-	truncationRetries := 0
 	// Looping tools calls within 1 turn: if the model returns a tool_call, we execute it and feed the result back to the model until it returns a final answer (no tool calls).
 	// We also detect and handle various failure modes (stall, cutoff, thinking loops) and nudge the model to continue or change its approach by crafting a user message that tells it to continue or change its thinking.
 	for {
@@ -110,26 +109,17 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 			errMsg := err.Error()
 			needTrimCtx := (errors.Is(err, errContextExceeded) || errors.Is(err, errOutputTruncated))
 			fmt.Fprintf(os.Stderr, "\n> ⚠️  [DEBUG] Stream error: %s - Need trim context: %t\n", errMsg, needTrimCtx)
-			needTrimCtx = needTrimCtx || (strings.Contains(errMsg, "exceed_context_size") || strings.Contains(errMsg, "exceeds the available context size"))
+			// needTrimCtx = needTrimCtx || (strings.Contains(errMsg, "exceed_context_size") || strings.Contains(errMsg, "exceeds the available context size"))
 			if ctx.Err() == nil || needTrimCtx {
 				// Context overflow: the request was too big for the backend.
 				// Trim and retry — up to 2 times, and only while we haven't
 				// accumulated a final answer yet.
-				if needTrimCtx && truncationRetries < 2 && accumulatedContent.Len() == 0 {
-					truncationRetries++
-					lastRequestWasTruncated = true
-					// Drop the partial turn content — it will be regenerated.
-					accumulatedContent.Reset()
-					accumulatedThinking.Reset()
-					if config.ContextLimit > 0 {
-						fmt.Fprintf(os.Stderr, "📊 Context overflow detected — trimming (retry %d/2)...\n", truncationRetries)
-					} else {
-						fmt.Fprintf(os.Stderr, "📊 Context overflow detected — trimming (retry %d/2, no /ctx limit set)\n", truncationRetries)
-					}
-					workingMsgs = trimContext(ctx, config, workingMsgs)
-					continue
-				}
+				fmt.Fprintf(os.Stderr, "\n> ⚠️  [DEBUG] Get inside. ctx.Err: %v\n", ctx.Err())
 				switch errMsg {
+				case "OUTPUT TRUNCATED", "CONTEXT SIZE EXCEEDED":
+					fmt.Fprintln(os.Stderr, "\n> 🔁 [System Nudge]: Stream stalled mid-generation due to context nearly full — reconnecting and resuming...")
+					remindAiFunc("Your context size is nearly full causing instability. Carefull when reading large files or thinking for too long. Need more action. Continue.")
+					continue
 				case "STREAM CUTOFF DETECTED", "AI HAS BECOME MENTAL":
 					remindAiFunc("continue. If completed replied with string 'Task completed'")
 					continue
@@ -158,9 +148,8 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 		}
 		collectContentAndThink()
 		// --- 🛌 THE LAZY MODEL AUTO-NUDGE TRAP HAHA ---
-		// If it chose to "stop" naturally, but left you with ZERO tools and ZERO text
+		// If it chose to "stop" naturally, but left you with ZERO tools and ZERO text. No error return
 		// after doing a bunch of thinking, it's being lazy. Wake it up!
-
 		// sentences, _ := getSentencesAtPosition(content, "-2,-1")
 		if !config.AutoNudgeDisabled && len(toolCalls) == 0 && !strings.Contains(content, "Task completed") && strings.Contains(content, "</think>") {
 			fmt.Fprintln(os.Stderr, "\n> ⚡ [System Nudge]: LOOP - Forcing execution in 5 secs...")
