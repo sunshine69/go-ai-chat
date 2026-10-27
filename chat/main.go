@@ -108,6 +108,12 @@ func main() {
 		os.Exit(0)
 	}
 	_ = godotenv.Load()
+
+	// -jwt-secret is the shared MCP auth secret, and has to be read before any
+	// MCP connection exists because that connection is what mints the token.
+	// Stripped out of os.Args first so the /command parsing below is unaffected.
+	jwtSecret = takeFlag("jwt-secret")
+
 	config = loadConfig()
 	if config.Debug && debugFile == nil && config.DebugLevel >= "2" {
 		debugFile, _ = os.OpenFile("aig_stream_debug.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)

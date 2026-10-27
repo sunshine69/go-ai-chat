@@ -236,6 +236,7 @@ func parseArgs() config {
 	flag.StringVar(&cfg.basePath, "base-path", cfg.basePath, "URL base path prefix")
 	flag.StringVar(&cfg.workDir, "work-dir", ".", "Working dir")
 	flag.StringVar(&cfg.toolSet, "tools", "", "Extra tools to load in addition to base tools. Comma-separated. Possible values: postgres, octo, browser, godoc, all")
+	flag.StringVar(&jwtSecret, "jwt-secret", "", `Shared HMAC secret (HS256), must match the chat client's -jwt-secret. When set, the streamable transport requires every request to carry Authorization: Bearer <jwt>, and the token's 'sub' claim becomes the model name in the network audit log. Stdio transport is never authenticated.`)
 	flag.StringVar(&gmailCredentialFile, "gmail-app-cred", "", `Gmail oauth2 credentials file. Create an OAuth client in Google Cloud Console, type "Desktop app," download the JSON → save as your credentialsPath. Then enable the Gmail API for that project. On the first run, do the browser-consent`)
 
 	flag.Usage = printUsage
@@ -269,6 +270,14 @@ Environment variables (all accept Go regex patterns):
   BLOCKED_PATH_PTN       Optional denylist (useful when no allow pattern is set).
                          Default: ""
 
+
+  AIG_MODEL            Model name recorded in the network audit log written to stderr
+                         for fetch_url, http_request, run_terminal_command and exec_command,
+                         as <UTC-time>|<model>|<session-id>|<tool>|<args-json>.
+                         MCP carries no model name on the wire, so the name comes from
+                         the 'sub' claim of the -jwt-secret token when one authenticates
+                         the request, and from this variable otherwise.
+                         Default: "unknownmodel"
 Default options:
 
 `, runtime.GOOS, defaultAllowCmd, runtime.GOOS, defaultAllowPath)
@@ -458,9 +467,22 @@ func main() {
 			streamServer.ServeHTTP(w, r)
 		})
 
+		// -jwt-secret makes every JSON-RPC request on this listener prove itself
+		// with Authorization: Bearer <jwt>. Wrapped outside CORS so the preflight
+		// (browsers strip Authorization from OPTIONS) still gets its normal
+		// 204 and only the real request is required to authenticate.
+		// stdio transport is deliberately left unauthenticated: no header there.
+		listenHandler := http.Handler(corsHandler)
+		if jwtSecret != "" {
+			listenHandler = jwtGuard(corsHandler)
+			log.Printf("  Auth: JWT (HS256) required; 'sub' = audit-log model name")
+		} else {
+			log.Printf("  Auth: off (no -jwt-secret)")
+		}
+
 		log.Printf("Starting MCP server (Streamable HTTP + CORS) on http://%s/mcp/{workdir}", addr)
 		log.Printf("  Workdir base: %s", cfg.workDir)
-		if err := http.ListenAndServe(addr, corsHandler); err != nil {
+		if err := http.ListenAndServe(addr, listenHandler); err != nil {
 			log.Fatalf("Streamable HTTP server error: %v", err)
 		}
 

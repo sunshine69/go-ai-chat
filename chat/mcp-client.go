@@ -103,6 +103,10 @@ type MCPClient struct {
 	postURL          string // the endpoint URL for POSTing requests in SSE/streamable mode
 	httpClient       *http.Client
 	sessionID        string // Mcp-Session-Id for streamable HTTP sessions
+	// bearerToken is the JWT this connection authenticates with, minted once at
+	// connect time (see jwtTokenFor). Empty means no auth — the pre-JWT behaviour.
+	// Only the HTTP transports send it; stdio and TCP have no header to put it on.
+	bearerToken string
 }
 
 // pipeReadWriter wraps an exec.Cmd's stdin/stdout into a single ReadWriteCloser
@@ -145,6 +149,16 @@ func ConnectStreamableHTTP(url string) (*MCPClient, error) {
 		conn: &sseReadWriteCloser{ReadCloser: io.NopCloser(strings.NewReader(""))},
 	}
 
+	// Minted here, not at startup, so a later `/m <model>` is reflected by a
+	// reconnect and the server's audit log names the model actually in use.
+	if jwtSecret != "" {
+		token, err := jwtTokenFor(config.Model)
+		if err != nil {
+			return nil, fmt.Errorf("jwt: %w", err)
+		}
+		c.bearerToken = token
+	}
+
 	if err := c.initialize(); err != nil {
 		return nil, err
 	}
@@ -165,7 +179,17 @@ func (c *MCPClient) send(req jsonRPCRequest) error {
 		if c.postURL == "" {
 			return fmt.Errorf("SSE postURL not initialized")
 		}
-		resp, err := c.httpClient.Post(c.postURL, "application/json", bytes.NewBuffer(data))
+		// http.Post cannot set headers, hence the explicit request — needed for
+		// the Authorization header. Shadows nothing: the json-rpc payload is
+		// `data`, the HTTP envelope is `httpReq`.
+		httpReq, err := http.NewRequest("POST", c.postURL, bytes.NewBuffer(data))
+		if err != nil {
+			return err
+		}
+		if c.bearerToken != "" {
+			httpReq.Header.Set("Authorization", "Bearer "+c.bearerToken)
+		}
+		resp, err := c.httpClient.Do(httpReq)
 		if err != nil {
 			return err
 		}
@@ -205,6 +229,9 @@ func (c *MCPClient) callStreamableHTTP(method string, params interface{}) (*json
 	httpReq.Header.Set("Mcp-Protocol-Version", "2025-03-26")
 	if c.sessionID != "" {
 		httpReq.Header.Set("Mcp-Session-Id", c.sessionID)
+	}
+	if c.bearerToken != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.bearerToken)
 	}
 
 	resp, err := c.httpClient.Do(httpReq)
@@ -657,6 +684,22 @@ func ConnectStdio(parts []string) (*MCPClient, error) {
 	}
 	cmd := exec.Command(parts[0], parts[1:]...)
 	cmd.Stderr = os.Stderr
+	// AIG_MODEL is the model name the MCP server records in its network audit
+	// log (mcp-srv/base-tool.go); there is no model name on the MCP wire, so
+	// the launching client supplies it. A reconnect after `/m <model>` respawns
+	// the server, and the new process inherits the model that is now in use.
+	if config != nil && config.Model != "" {
+		// Rebuilt rather than appended: AIG_MODEL may already be in the environment
+		// (it can come from .env), and a duplicate entry there is ambiguous.
+		env := make([]string, 0, len(os.Environ())+1)
+		for _, kv := range os.Environ() {
+			if !strings.HasPrefix(kv, "AIG_MODEL=") {
+				env = append(env, kv)
+			}
+		}
+		env = append(env, "AIG_MODEL="+config.Model)
+		cmd.Env = env
+	}
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

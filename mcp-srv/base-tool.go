@@ -135,6 +135,64 @@ func (lg *LoopGuard) record(sig string, result *mcp.CallToolResult) {
 	rec.lastSeen = time.Now()
 }
 
+// ---------------------------------------------------------------------------
+// Network-call audit log
+//
+// Logs every request that touches the network: the two HTTP tools (fetch_url,
+// http_request) and the two command launchers (run_terminal_command,
+// exec_command), since a permitted command may reach the network (curl, wget,
+// go get, npm/pip install, ssh, git ...).
+//
+// One single-line, pipe-delimited record per call, written to STDERR:
+//
+//   <UTC-time>|<model>|<session-id>|<tool-name>|<args-json>
+//
+// MCP never tells us which model issued a tool call (nothing on the wire,
+// nothing in stdio mode), so the model comes from the 'sub' claim of the JWT
+// that authenticated this request when -jwt-secret is set, else from the AIG_MODEL
+// env var, else "unknownmodel".
+//
+// Logging happens BEFORE the handler runs, so calls later denied by policy are
+// still recorded — which is what an audit trail needs.
+// ---------------------------------------------------------------------------
+
+// netLogArgLimit stops a huge payload (e.g. a big http_request body) from
+// flooding the log. json.Marshal escapes newlines, so a record stays one line.
+const netLogArgLimit = 600
+
+var networkLogModel = u.Getenv("AIG_MODEL", "unknownmodel")
+
+// netLogArgs renders the arguments as compact JSON — json.Marshal sorts map keys,
+// so the same call always logs identically — falling back to Go's %v if marshaling
+// fails, and truncating to netLogArgLimit characters.
+func netLogArgs(args map[string]interface{}) string {
+	b, err := json.Marshal(args)
+	s := ""
+	if err != nil {
+		s = fmt.Sprintf("%v", args)
+	} else {
+		s = string(b)
+	}
+	if len(s) > netLogArgLimit {
+		return s[:netLogArgLimit] + "...[truncated]"
+	}
+	return s
+}
+
+// logNetworkCall writes the audit record for one tool call.
+// sessionID is the MCP session id; "-" only if no session is in context.
+func logNetworkCall(ctx context.Context, toolName string, args map[string]interface{}) {
+	sessionID := "-"
+	if cs := server.ClientSessionFromContext(ctx); cs != nil {
+		sessionID = cs.SessionID()
+	}
+	// stderr, never stdout: with the stdio transport stdout carries the
+	// JSON-RPC frames, so anything printed there corrupts the protocol.
+	fmt.Fprintf(os.Stderr, "%s|%s|%s|%s|%s\n",
+		time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		logModel(ctx), sessionID, toolName, netLogArgs(args))
+}
+
 // defaultLoopGuard is process-wide since a given MCP server process is
 // effectively one active session's worth of tool traffic.
 var defaultLoopGuard = NewLoopGuard()
@@ -185,7 +243,7 @@ func (t *BaseToolManager) checkPath(path string) (*mcp.CallToolResult, error) {
 
 func (t *BaseToolManager) listDirectory(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	wdir := getWorkdirContext(ctx)
-	
+
 	args := request.GetArguments()
 	path := ""
 	if p, ok := args["path"]; ok {
@@ -217,7 +275,7 @@ func (t *BaseToolManager) listDirectory(ctx context.Context, request mcp.CallToo
 
 func (t *BaseToolManager) createDirectory(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	wdir := getWorkdirContext(ctx)
-	
+
 	args := request.GetArguments()
 	path := ""
 	if p, ok := args["path"]; ok {
@@ -236,7 +294,7 @@ func (t *BaseToolManager) createDirectory(ctx context.Context, request mcp.CallT
 
 func (t *BaseToolManager) removeDirectory(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	wdir := getWorkdirContext(ctx)
-	
+
 	args := request.GetArguments()
 	path := ""
 	if p, ok := args["path"]; ok {
@@ -269,7 +327,7 @@ func (t *BaseToolManager) removeDirectory(ctx context.Context, request mcp.CallT
 
 func (t *BaseToolManager) createNewFile(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	wdir := getWorkdirContext(ctx)
-	
+
 	args := request.GetArguments()
 	path := ""
 	if p, ok := args["path"]; ok {
@@ -305,8 +363,9 @@ func (t *BaseToolManager) createNewFile(ctx context.Context, request mcp.CallToo
 
 func (t *BaseToolManager) execCommand(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	wdir := getWorkdirContext(ctx)
-	
+
 	args := request.GetArguments()
+	logNetworkCall(ctx, "exec_command", args)
 	command := ""
 	if c, ok := args["command"]; ok {
 		command = c.(string)
@@ -456,8 +515,9 @@ func CheckForbiddenString(teststr string) (*mcp.CallToolResult, error) {
 
 func (t *BaseToolManager) runTerminalCommand(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	wdir := getWorkdirContext(ctx)
-	
+
 	args := request.GetArguments()
+	logNetworkCall(ctx, "run_terminal_command", args)
 	command := ""
 	if c, ok := args["command"]; ok {
 		command = fmt.Sprintf("%v", c)
@@ -550,7 +610,7 @@ func (t *BaseToolManager) runTerminalCommand(ctx context.Context, request mcp.Ca
 
 func (t *BaseToolManager) fileGlobSearch(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	wdir := getWorkdirContext(ctx)
-	
+
 	args := request.GetArguments()
 	root := ""
 	if r, ok := args["root"]; ok {
@@ -628,7 +688,7 @@ func (t *BaseToolManager) fileGlobSearch(ctx context.Context, request mcp.CallTo
 
 func (t *BaseToolManager) findReplaceInFile(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	wdir := getWorkdirContext(ctx)
-	
+
 	args := request.GetArguments()
 	path := ""
 	if p, ok := args["path"]; ok {
@@ -717,6 +777,7 @@ func (t *BaseToolManager) findReplaceInFile(ctx context.Context, request mcp.Cal
 }
 
 func (t *BaseToolManager) fetchUrl(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	logNetworkCall(ctx, "fetch_url", request.GetArguments())
 	args := request.GetArguments()
 	url := ""
 	if u, ok := args["url"]; ok {
@@ -746,6 +807,7 @@ func (t *BaseToolManager) fetchUrl(ctx context.Context, request mcp.CallToolRequ
 }
 
 func (t *BaseToolManager) httpRequest(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	logNetworkCall(ctx, "http_request", request.GetArguments())
 	args := request.GetArguments()
 	method := args["method"].(string)
 	url := args["url"].(string)
@@ -862,7 +924,7 @@ func registerBaseTool(s *server.MCPServer, t *BaseToolManager) {
 		mcp.WithString("path", mcp.Required(), mcp.Description("The path to the file you want to read.")),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		wdir := getWorkdirContext(ctx)
-		
+
 		args := request.GetArguments()
 		path := ""
 		if p, ok := args["path"]; ok {
@@ -1003,7 +1065,7 @@ func InsertTextBlock(filePath string, lineNumber int, textBlock string, position
 
 func (t BaseToolManager) insertTextBlockToFile(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	wdir := getWorkdirContext(ctx)
-	
+
 	args := request.GetArguments()
 	path := ""
 	if p, ok := args["path"]; ok {
