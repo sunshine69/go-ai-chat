@@ -216,6 +216,13 @@ func pkgURL(path, version string) string {
 // ── Playwright convenience wrappers ───────────────────────────────────────────
 
 func navigate(pw *PlaywrightProxy, url string) error {
+	// url is composed from the tool's pkgPath / version arguments, so a crafted
+	// package path can shape it. pkg.go.dev's base keeps the host pinned, but the
+	// firewall is cheap and the browser's sockets bypass our HTTP transport, so
+	// gate the target here too: one policy, every path to the network.
+	if err := checkTransportURL(url); err != nil {
+		return fmt.Errorf("navigate blocked: %v", err)
+	}
 	_, err := pw.CallTool("browser_navigate", map[string]any{"url": url})
 	return err
 }

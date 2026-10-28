@@ -92,6 +92,17 @@ func registerPlaywrightTools(s *server.MCPServer, pw *PlaywrightProxy) error {
 		}
 		tool := mcp.NewToolWithRawSchema(toolName, t.Description, schema)
 		s.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			// The Playwright browser is an upstream process: its sockets do not go
+			// through our HTTP transport, so the firewall has to gate the url
+			// ARGUMENT before the browser is told to visit it. Same ALLOWED_URL_PTN,
+			// same audit line, same [ERROR] shape as every other network tool.
+			var args = req.GetArguments()
+			if target, ok := args["url"].(string); ok && target != "" {
+				if res, ferr := checkURLArgument(ctx, target); ferr != nil {
+					return res, ferr
+				}
+			}
+
 			result, err := pw.CallTool(toolName, req.GetArguments())
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil

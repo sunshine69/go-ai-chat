@@ -362,6 +362,17 @@ func buildServer(cfg config) *server.MCPServer {
 		BlockedPathPattern:            u.Getenv("BLOCKED_PATH_PTN", ""),
 	}
 	println("[DEBUG] baseTool - ", u.JsonDump(baseTool, ""))
+
+	// Network firewall: read the URL policy and print the effective one, exactly
+	// like ALLOWED_TERM_CMD_PTN is printed above. DENY BY DEFAULT with no
+	// configuration: an unset ALLOWED_URL_PTN means the built-in allowlist of
+	// documentation / package-registry / source-hosting domains is in force, so
+	// the doc tools and `go`/`cargo`/`npm`/`pip`/`git` keep working while arbitrary
+	// hosts (and cloud-metadata endpoints) are refused. ALLOWED_URL_PTN replaces
+	// that list, ALLOWED_URL_ADD extends it, ALLOWED_URL_OPEN=1 is the explicit
+	// opt out into report-only. See network-firewall.go for the full contract.
+	println(configureNetworkFirewall())
+
 	// Default tools to load
 	registerBaseTool(s, &baseTool)
 	registerTextTools(s, &TextToolManager{})

@@ -110,12 +110,17 @@ func NewConfluenceAPI() (*ConfluenceAPI, error) {
 		log.Printf("[Confluence] WARNING: CONFLUENCE_BASE_URL is not set — falling back to placeholder URL, requests will fail")
 	}
 
+	// The client is firewall-guarded: CONFLUENCE_BASE_URL is operator-configured,
+	// but redirects out of it are re-checked against ALLOWED_URL_PTN on every hop,
+	// so a 302 pointing at 169.254.169.254 or an off-allowlist host is refused.
+	var client = guardedClient()
+
 	return &ConfluenceAPI{
 		BaseURL:    baseURL,
 		APIKey:     apiKey,
 		Username:   username,
 		AuthMode:   authMode,
-		HTTPClient: &http.Client{},
+		HTTPClient: &client,
 	}, nil
 }
 

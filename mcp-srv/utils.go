@@ -86,8 +86,14 @@ func readFileContent(targetPath string) (string, error) {
 	return string(content), nil
 }
 
-func fetchAndConvert(url string) (string, error) {
-	client := &http.Client{}
+// fetchAndConvert fetches a page and converts its HTML to markdown.
+//
+// The client is a parameter, not a local, on purpose: the only client the server
+// should ever hand out is guardedClient() (network-firewall.go), which re-checks
+// the allowlist on every redirect hop and refuses an environment proxy. Keeping it
+// a parameter makes that dependency visible at the call site instead of letting
+// this helper quietly reach for a raw &http.Client{} again.
+func fetchAndConvert(url string, client http.Client) (string, error) {
 	httpReq, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return "", fmt.Errorf("invalid URL: %w", err)

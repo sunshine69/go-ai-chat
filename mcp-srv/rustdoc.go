@@ -59,7 +59,10 @@ const (
 	cratesIOUserAgent = "mcp-rustdoc-tool/1.0 (contact: sunshine69 on GitHub)"
 )
 
-var rustHTTPClient = &http.Client{Timeout: rustHTTPTimeout}
+// Guarded by the network firewall: docs.rs, crates.io and any redirect they issue
+// are re-checked against ALLOWED_URL_PTN on every hop. A plain &http.Client{} here
+// would be a second, ungated path to the network.
+var rustHTTPClient = guardedClientWithTimeout(rustHTTPTimeout)
 
 // ── registration ──────────────────────────────────────────────────────────────
 

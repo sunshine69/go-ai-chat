@@ -5,13 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -26,19 +24,15 @@ type OctopusManager struct {
 }
 
 func NewOctopusManager() *OctopusManager {
+	// No client-level Timeout — http.Client.Timeout covers the whole body read and
+	// kills large package downloads; connect/header timeouts come from the transport.
+	// guardedClientNoTimeout carries the network firewall, so every hop out of
+	// OCTO_URL is re-checked against ALLOWED_URL_PTN.
+	var client = guardedClientNoTimeout()
 	return &OctopusManager{
-		baseURL: strings.TrimRight(os.Getenv("OCTO_URL"), "/"),
-		apiKey:  os.Getenv("OCTO_API_KEY"),
-		// No global Timeout — it covers the entire body read and kills large downloads.
-		// Dialer + ResponseHeaderTimeout guard connect/headers only.
-		httpClient: &http.Client{
-			Transport: &http.Transport{
-				DialContext: (&net.Dialer{
-					Timeout: 30 * time.Second,
-				}).DialContext,
-				ResponseHeaderTimeout: 30 * time.Second,
-			},
-		},
+		baseURL:    strings.TrimRight(os.Getenv("OCTO_URL"), "/"),
+		apiKey:     os.Getenv("OCTO_API_KEY"),
+		httpClient: &client,
 	}
 }
 
