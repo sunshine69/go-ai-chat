@@ -539,12 +539,12 @@ func (t *BaseToolManager) execCommand(ctx context.Context, request mcp.CallToolR
 	if sb.Len() >= MAX_OUPUT_SIZE {
 		if tempfile, err := os.CreateTemp("", "mcp"); err == nil {
 			if _, err := tempfile.Write([]byte(sb.String())); err != nil {
-				return nil, err
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 			tempfile.Sync()
 			return mcp.NewToolResultText("Command output is saved to a file " + tempfile.Name() + "\nYou MUST use text tools to extract information. DON'T read full content. REMEMBER to remove it after use."), nil
 		} else {
-			return nil, fmt.Errorf("[ERROR] can not create tempfile")
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to create temporary file: %v", err)), nil
 		}
 	} else {
 		return mcp.NewToolResultText(sb.String()), nil
@@ -667,12 +667,12 @@ func (t *BaseToolManager) runTerminalCommand(ctx context.Context, request mcp.Ca
 	if sb.Len() >= MAX_OUPUT_SIZE {
 		if tempfile, err := os.CreateTemp("", "mcp"); err == nil {
 			if _, err := tempfile.Write([]byte(sb.String())); err != nil {
-				return nil, err
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 			tempfile.Sync()
 			return mcp.NewToolResultText("Command output is saved to a file " + tempfile.Name() + "\nBecause t is too big thus use text tools to extract information. DON'T read full content. REMEMBER to remove it after use."), nil
 		} else {
-			return nil, err
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to create temporary file: %v", err)), nil
 		}
 	} else {
 		return mcp.NewToolResultText(sb.String()), nil
@@ -874,11 +874,11 @@ func (t *BaseToolManager) fetchUrl(ctx context.Context, request mcp.CallToolRequ
 		if tempDir, err := os.MkdirTemp("", "aig*"); err == nil {
 			tempFile := filepath.Join(tempDir, "fetch-url-doc.md")
 			if err := u.CheckErrNonFatal(os.WriteFile(tempFile, []byte(markdownText), 0o644), "write doc file"); err != nil {
-				return nil, err
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 			return mcp.NewToolResultText(fmt.Sprintf("Document saved to file; path '%s'. Size %d bytes. You can extract information from it using current available text extraction tools. Avoid reading the whole file with that size to avoid context overflow. Clean up the file after you no longer need it", tempFile, docSize)), nil
 		} else {
-			return nil, err
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to create temporary directory: %v", err)), nil
 		}
 	}
 	return mcp.NewToolResultText(markdownText), nil
@@ -935,11 +935,11 @@ func (t *BaseToolManager) httpRequest(ctx context.Context, request mcp.CallToolR
 	if dataLen > MAX_OUPUT_SIZE {
 		tmpDir, err := os.MkdirTemp("", "mcp-tool")
 		if err != nil {
-			return mcp.NewToolResultText("[ERROR] " + err.Error()), err
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to create temporary directory: %v", err)), nil
 		}
 		filePath := filepath.Join(tmpDir, "http-request-body.txt")
 		if err := os.WriteFile(filePath, respBody, 0o640); err != nil {
-			return mcp.NewToolResultText("[ERROR] " + err.Error()), err
+			return mcp.NewToolResultError(err.Error()), nil
 		}
 		return mcp.NewToolResultText(fmt.Sprintf("Status: %d\nDocument saved to file; path '%s'. Size %d bytes. You can extract information from it using current available text extraction tools. Avoid reading the whole file with that size to avoid context overflow. Clean up the file after you no longer need it", resp.StatusCode, filePath, dataLen)), nil
 	}
