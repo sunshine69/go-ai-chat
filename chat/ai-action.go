@@ -219,16 +219,16 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 				fmt.Scanln(&response)
 				// y / yes / auto all allow. "auto" additionally grants the tool
 				// permission for all future calls. Anything else is a deny.
-				allow := false
-				switch strings.ToLower(strings.TrimSpace(response)) {
+				allowed = false
+				response = strings.ToLower(strings.TrimSpace(response))
+				switch response {
 				case "y", "yes", "auto":
-					allow = true
+					allowed = true
 				}
-				if !allow {
+				if !allowed {
 					fmt.Fprintf(os.Stderr, "❌ User denied permission for '%s'.\n", tc.Function.Name)
-					allowed = false
 				}
-				if strings.ToLower(strings.TrimSpace(response)) == "auto" {
+				if response == "auto" {
 					fmt.Fprintf(os.Stderr, "✅ User granted permission for all future calls to '%s'.\n", tc.Function.Name)
 					// Update the config to allow this tool in future calls
 					config.MCPPermissions[tc.Function.Name] = "auto"
