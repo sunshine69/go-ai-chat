@@ -241,7 +241,9 @@ func handleNonInteractive(config *Config) (runmode string) {
 			userMsg := buildUserMessage(question, inlineContent)
 
 			history = append(history, Message{Role: "user", Content: userMsg})
+			sessionStats.BeginInteraction()
 			ans, thinking, l_history, err := askAI(ctx, *config, history)
+			sessionStats.EndInteraction()
 			signal.Stop(sigChan)
 			cancel()
 
@@ -375,6 +377,8 @@ func runREPLWithShell(history *[]Message, shell *readline.Shell, histFile string
 		}
 
 		*history = append(*history, Message{Role: "user", Content: userMsg})
+		sessionStats.BeginInteraction()
+		defer sessionStats.EndInteraction()
 		ans, thinking, l_history, err := askAI(ctx, *config, *history)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -1522,7 +1526,9 @@ func runREPLFallback(history *[]Message) {
 
 		ctx := context.Background()
 		*history = append(*history, Message{Role: "user", Content: userMsg})
+		sessionStats.BeginInteraction()
 		ans, thinking, l_history, err := askAI(ctx, *config, *history)
+		sessionStats.EndInteraction()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			*history = l_history[:len(l_history)-1]

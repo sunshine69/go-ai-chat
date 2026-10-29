@@ -124,6 +124,17 @@ type SessionStats struct {
 	ToolSuccess   int64     // tool calls that returned a usable result
 	ToolFailure   int64     // tool calls that failed (error / no MCP / denied)
 	TurnDurations []float64 // per-model-turn tokens/sec samples
+
+	// LastInteractionMs — wall-clock time of the most recent interaction:
+	// from the user hitting Enter to the AI finishing and the prompt coming
+	// back. Includes tool execution, nudge waits and retries. Overwritten on
+	// every turn, zeroed on /new or /reset start.
+	LastInteractionMs      int64
+	LastInteractionStartMs int64
+
+	// SessionTotalMs — accumulated wall-clock time across ALL interactions in
+	// the current period (the sum of each interaction's duration).
+	SessionTotalMs int64
 }
 
 var sessionStats = &SessionStats{StartTime: time.Now()}
@@ -134,14 +145,16 @@ func (s *SessionStats) NewSessionPeriod() *SessionStats {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	old := &SessionStats{
-		StartTime:     s.StartTime,
-		ThinkingMs:    s.ThinkingMs,
-		AnswerMs:      s.AnswerMs,
-		Tokens:        s.Tokens,
-		ToolCalls:     s.ToolCalls,
-		ToolSuccess:   s.ToolSuccess,
-		ToolFailure:   s.ToolFailure,
-		TurnDurations: append([]float64(nil), s.TurnDurations...),
+		StartTime:         s.StartTime,
+		ThinkingMs:        s.ThinkingMs,
+		AnswerMs:          s.AnswerMs,
+		Tokens:            s.Tokens,
+		ToolCalls:         s.ToolCalls,
+		ToolSuccess:       s.ToolSuccess,
+		ToolFailure:       s.ToolFailure,
+		TurnDurations:     append([]float64(nil), s.TurnDurations...),
+		LastInteractionMs: s.LastInteractionMs,
+		SessionTotalMs:    s.SessionTotalMs,
 	}
 	s.ThinkingMs = 0
 	s.AnswerMs = 0
@@ -150,6 +163,8 @@ func (s *SessionStats) NewSessionPeriod() *SessionStats {
 	s.ToolSuccess = 0
 	s.ToolFailure = 0
 	s.TurnDurations = nil
+	s.LastInteractionMs = 0
+	s.SessionTotalMs = 0
 	s.StartTime = time.Now()
 	return old
 }
@@ -179,19 +194,43 @@ func (s *SessionStats) RecordToolCall(success bool) {
 	s.mu.Unlock()
 }
 
+// BeginInteraction stamps the start of a user interaction — called right
+// before askAI runs, i.e. just after the user hits Enter.
+func (s *SessionStats) BeginInteraction() {
+	s.mu.Lock()
+	s.LastInteractionStartMs = time.Now().UnixMilli()
+	s.mu.Unlock()
+}
+
+// EndInteraction records the elapsed wall-clock time of the interaction that
+// just finished (now - BeginInteraction) and adds it to the session total.
+func (s *SessionStats) EndInteraction() {
+	s.mu.Lock()
+	start := s.LastInteractionStartMs
+	if start > 0 {
+		ms := time.Now().UnixMilli() - start
+		s.LastInteractionMs = ms
+		s.SessionTotalMs += ms
+	}
+	s.LastInteractionStartMs = 0
+	s.mu.Unlock()
+}
+
 // Snapshot returns a copy of the current period for safe printing.
 func (s *SessionStats) Snapshot() *SessionStats {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return &SessionStats{
-		StartTime:     s.StartTime,
-		ThinkingMs:    s.ThinkingMs,
-		AnswerMs:      s.AnswerMs,
-		Tokens:        s.Tokens,
-		ToolCalls:     s.ToolCalls,
-		ToolSuccess:   s.ToolSuccess,
-		ToolFailure:   s.ToolFailure,
-		TurnDurations: append([]float64(nil), s.TurnDurations...),
+		StartTime:         s.StartTime,
+		ThinkingMs:        s.ThinkingMs,
+		AnswerMs:          s.AnswerMs,
+		Tokens:            s.Tokens,
+		ToolCalls:         s.ToolCalls,
+		ToolSuccess:       s.ToolSuccess,
+		ToolFailure:       s.ToolFailure,
+		TurnDurations:     append([]float64(nil), s.TurnDurations...),
+		LastInteractionMs: s.LastInteractionMs,
+		SessionTotalMs:    s.SessionTotalMs,
 	}
 }
 
@@ -218,6 +257,8 @@ func printSessionStats(s *SessionStats) {
 	}
 
 	fmt.Fprintln(os.Stderr, "📊 Stats since "+s.StartTime.Format("2006-01-02 15:04:05")+" ("+time.Since(s.StartTime).Round(time.Second).String()+" ago):")
+	fmt.Fprintf(os.Stderr, "   🧮 Total session time:        %s (all user→AI interactions accumulated)\n", (time.Duration(s.SessionTotalMs) * time.Millisecond).Round(time.Second))
+	fmt.Fprintf(os.Stderr, "   ⏱️  Last interaction time:     %s (Enter → AI done; overwritten per turn)\n", (time.Duration(s.LastInteractionMs) * time.Millisecond).Round(time.Second))
 	fmt.Fprintf(os.Stderr, "   💭 Total model thinking time: %s\n", (time.Duration(s.ThinkingMs) * time.Millisecond).Round(time.Second))
 	fmt.Fprintf(os.Stderr, "   💬 Total model answer time:   %s\n", (time.Duration(s.AnswerMs) * time.Millisecond).Round(time.Second))
 	fmt.Fprintf(os.Stderr, "   ⏱️  Total model time:          %s\n", (time.Duration(totalMs) * time.Millisecond).Round(time.Second))

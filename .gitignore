@@ -1,3 +1,4 @@
+.aig*
 .playwright-mcp/**
 test_*
 .continue/**
