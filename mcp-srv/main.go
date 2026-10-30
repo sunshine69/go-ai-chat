@@ -32,6 +32,7 @@ type config struct {
 	basePath  string
 	workDir   string
 	toolSet   string // extra tools to load, comma sep
+	proxy     string // proxy host:port
 }
 
 var (
@@ -236,6 +237,7 @@ func parseArgs() config {
 	flag.StringVar(&cfg.basePath, "base-path", cfg.basePath, "URL base path prefix")
 	flag.StringVar(&cfg.workDir, "work-dir", ".", "Working dir")
 	flag.StringVar(&cfg.toolSet, "tools", "", "Extra tools to load in addition to base tools. Comma-separated. Possible values: postgres, octo, browser, godoc, all")
+	flag.StringVar(&cfg.proxy, "proxy", "", "HTTP proxy server host:port (e.g. localhost:8080). When set, exports HTTP_PROXY/HTTPS_PROXY env vars and uses proxy for all network tools.")
 	flag.StringVar(&jwtSecret, "jwt-secret", "", `Shared HMAC secret (HS256), must match the chat client's -jwt-secret. When set, the streamable transport requires every request to carry Authorization: Bearer <jwt>, and the token's 'sub' claim becomes the model name in the network audit log. Stdio transport is never authenticated.`)
 	flag.StringVar(&gmailCredentialFile, "gmail-app-cred", "", `Gmail oauth2 credentials file. Create an OAuth client in Google Cloud Console, type "Desktop app," download the JSON → save as your credentialsPath. Then enable the Gmail API for that project. On the first run, do the browser-consent`)
 
@@ -289,6 +291,16 @@ Default options:
 // For stdio mode, we chdir to the base workdir.
 func buildServer(cfg config) *server.MCPServer {
 	u.CheckErr(os.Chdir(cfg.workDir), "Can not chdir to work-dir "+cfg.workDir)
+
+	// Export proxy environment variables if proxy is set
+	if cfg.proxy != "" {
+		proxyURL := "http://" + cfg.proxy
+		os.Setenv("HTTP_PROXY", proxyURL)
+		os.Setenv("HTTPS_PROXY", proxyURL)
+		os.Setenv("NO_PROXY", "localhost,127.0.0.1")
+		fmt.Fprintf(os.Stderr, "[PROXY] Using proxy: %s\n", proxyURL)
+	}
+
 	s := server.NewMCPServer(
 		"mcp-fetch-server",
 		"1.0.0",

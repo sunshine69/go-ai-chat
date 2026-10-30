@@ -721,9 +721,7 @@ func newBaseTransport() *http.Transport {
 			var dialer = net.Dialer{Timeout: 30 * time.Second}
 			return dialer.DialContext(ctx, network, addr)
 		},
-		Proxy: func(*http.Request) (*url.URL, error) {
-			return nil, nil
-		},
+		Proxy: http.ProxyFromEnvironment,
 		ResponseHeaderTimeout: netHeaderTimeout,
 	}
 }

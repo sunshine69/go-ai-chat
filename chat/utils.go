@@ -504,7 +504,7 @@ func loadConfig() *Config {
 		PromptedModel:       false,
 		PromptedAPIKey:      false,
 		MCPPermissions:      make(map[string]string),
-		ShowThinking:        os.Getenv("SHOW_THINKING") == "on",
+		ShowThinking:        os.Getenv("SHOW_THINKING") == "" || os.Getenv("SHOW_THINKING") == "on",
 		BlockedTools:        os.Getenv("BLOCKED_TOOLS"),
 		Debug:               os.Getenv("DEBUG") == "on",
 		DebugLevel:          os.Getenv("DEBUG_LEVEL"),
