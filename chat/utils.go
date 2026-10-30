@@ -508,7 +508,7 @@ func loadConfig() *Config {
 		BlockedTools:        os.Getenv("BLOCKED_TOOLS"),
 		Debug:               os.Getenv("DEBUG") == "on",
 		DebugLevel:          os.Getenv("DEBUG_LEVEL"),
-		MaxTokens:           999999,
+		MaxTokens:           50000,
 		MaxRepeatPattern:    10,
 		AutoNudgeDisabled:   os.Getenv("AUTONUDGE_DISABLED") == "on",
 		StallTimeout:        u.Must(time.ParseDuration("45s")),
