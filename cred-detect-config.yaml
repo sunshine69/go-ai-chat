@@ -10,9 +10,10 @@ path-exclude:
     - ansible\/artifacts.*
     - ansible-deploy-common\/.*
     - node_modules
-    - .terraform
-    - .env
+    - \.terraform
+    - \.env
     - .*\.auto\.tfvars\..*
+    - \.aig.*
 profile: ""
 regexp: []
 save-config: cred-detect-config.yaml

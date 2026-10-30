@@ -175,7 +175,10 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 		// No tool calls — we're done
 		if len(toolCalls) == 0 {
 			finalizeTurn()
-			return accumulatedContent.String(), accumulatedThinking.String(), workingMsgs, nil
+			// Trim trailing newlines from the response to avoid blank lines
+			content := strings.TrimRight(accumulatedContent.String(), "\n\r")
+			thinking := strings.TrimRight(accumulatedThinking.String(), "\n\r")
+			return content, thinking, workingMsgs, nil
 		} else {
 			foundAndExecToolCall = false // reset it here
 		}
