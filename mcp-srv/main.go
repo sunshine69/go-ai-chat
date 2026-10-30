@@ -293,12 +293,13 @@ func buildServer(cfg config) *server.MCPServer {
 	u.CheckErr(os.Chdir(cfg.workDir), "Can not chdir to work-dir "+cfg.workDir)
 
 	// Export proxy environment variables if proxy is set
+	// NOTE: We don't set these globally anymore because they affect npx/playwright startup.
+	// Instead, proxy settings are handled per-tool where needed.
 	if cfg.proxy != "" {
 		proxyURL := "http://" + cfg.proxy
-		os.Setenv("HTTP_PROXY", proxyURL)
-		os.Setenv("HTTPS_PROXY", proxyURL)
-		os.Setenv("NO_PROXY", "localhost,127.0.0.1")
-		fmt.Fprintf(os.Stderr, "[PROXY] Using proxy: %s\n", proxyURL)
+		// Only set for tools that explicitly need network access
+		// Don't set globally as it affects npx subprocesses
+		fmt.Fprintf(os.Stderr, "[PROXY] Proxy configured: %s (applied per-tool where needed)\n", proxyURL)
 	}
 
 	s := server.NewMCPServer(
