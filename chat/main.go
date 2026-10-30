@@ -214,7 +214,7 @@ func handleNonInteractive(config *Config) (runmode string) {
 			runmode = ""
 			return
 
-		case "/c", "/chat", "/q", "/question":
+		case "/c", "/chat", "/ask", "/question":
 			if i >= len(args) {
 				fmt.Fprintln(os.Stderr, "❌ No question provided after", cmd)
 				return

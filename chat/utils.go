@@ -124,13 +124,22 @@ func getFileProcessor(path string) FileProcessor {
 var (
 	history              []Message
 	historyLoaded        bool = false
-	homeDir, _                = os.UserHomeDir()
+	homeDir              string
 	config               *Config
 	currentContextPath   string
 	repeatedPatternCount int
 	// Global MCP client (single active connection)
 	activeMCP *ResilientMCPClient
 )
+
+func init() {
+	var err error
+	homeDir, err = os.Getwd()
+	if err != nil {
+		// Fallback to user's home directory if CWD cannot be determined
+		homeDir, _ = os.UserHomeDir()
+	}
+}
 
 func saveHistoryToFile(history []Message, index int, filename string) error {
 	if index >= len(history) {
