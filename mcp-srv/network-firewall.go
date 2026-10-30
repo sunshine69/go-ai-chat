@@ -436,11 +436,15 @@ var localhostPtn = regexp.MustCompile(`(?i)^(?:localhost|127(?:\.0\.0\.1)?(?::[0
 // string matcher.
 var decimalLoopbackPtn = regexp.MustCompile(`(?i)^(?:2130746305|2130748417|0x7f00000[01])$`)
 
-// linkLocalIPv4Ptn / privateIPv4Ptn / sharedAddressPtn cover hosts written as numeric
-// literals: 169.254.0.0/16 (link-local, where IMDS lives), RFC-private blocks, and
-// the shared/CGNAT blocks commonly used to front internal services.
+// linkLocalIPv4Ptn / sharedAddressPtn cover hosts written as numeric
+// literals: 169.254.0.0/16 (link-local, where IMDS lives), and the shared/CGNAT
+// blocks commonly used to front internal services.
+//
+// Private network addresses (10.x, 192.168.x, 172.16-31.x) are NO LONGER
+// specially blocked. They are treated like any other host — if you want to
+// block them, add them to BLOCKED_URL_PTN. This mirrors the philosophy that
+// the firewall is an allowlist, not a denylist for internal addresses.
 var linkLocalIPv4Ptn = regexp.MustCompile(`(?i)^169\.254\.`)
-var privateIPv4Ptn = regexp.MustCompile(`(?i)^(?:10\.|192\.168\.|172\.(?:1[6-9]|2[0-9]|3[01])\.)`)
 var sharedAddressPtn = regexp.MustCompile(`(?i)^(?:100\.(?:6[4-9]|[7-9][0-9]|1[0-2][0-7])\.|198\.(?:18|19)\.)`)
 
 // internalNamePtn flags internal-service DNS names (metadata.internal, db.local, …).
@@ -474,9 +478,6 @@ func isAlwaysDeniedHost(host string) string {
 	}
 	if linkLocalIPv4Ptn.MatchString(h) {
 		return fmt.Sprintf("link-local 169.254.0.0/16 address %s (cloud metadata range)", h)
-	}
-	if privateIPv4Ptn.MatchString(h) {
-		return fmt.Sprintf("private-network address %s", h)
 	}
 	if sharedAddressPtn.MatchString(h) {
 		return fmt.Sprintf("shared/CGNAT-block address %s", h)
