@@ -44,7 +44,7 @@ func dropLeadingToolMsgs(msgs []Message) []Message {
 
 // askAI — streams the response; if MCP is active, injects tools and handles
 // tool_calls returned by the model in a loop until the model gives a final answer.
-func askAI(ctx context.Context, config Config, msgs []Message) (string, string, []Message, error) {
+func askAI(ctx context.Context, config Config, msgs []Message, nonInteractive bool) (string, string, []Message, error) {
 	// Build a local copy of history for the tool loop — we extend it as we call tools
 	workingMsgs := make([]Message, len(msgs))
 	copy(workingMsgs, msgs)
@@ -235,7 +235,9 @@ func askAI(ctx context.Context, config Config, msgs []Message) (string, string, 
 					fmt.Fprintf(os.Stderr, "✅ User granted permission for all future calls to '%s'.\n", tc.Function.Name)
 					// Update the config to allow this tool in future calls
 					config.MCPPermissions[tc.Function.Name] = "auto"
-					saveConfig()
+					if !nonInteractive {
+						saveConfig()
+					}
 				}
 			}
 
@@ -584,8 +586,8 @@ func streamOnce(ctx context.Context, config Config, msgs []Message, quiet bool) 
 						log.Print("\n> 🤔 Thinking...\n")
 						thinkingStarted = true
 					}
-					fmt.Fprint(os.Stdout, rc)
-					os.Stdout.Sync()
+					fmt.Fprint(os.Stderr, rc)
+					os.Stderr.Sync()
 				} else if !thinkingStarted {
 					log.Print("\n> 🤔 Thinking hidden, run /showthink on to enable\n")
 					thinkingStarted = true

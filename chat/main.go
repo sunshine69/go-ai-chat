@@ -164,7 +164,7 @@ func main() {
 	} else {
 		// Non-Interactive Mode
 		config.ShowThinking = false
-		// config.AutoNudgeDisabled = true // Dont nudge
+		config.AutoNudgeDisabled = true
 		runMode = handleNonInteractive(config)
 	}
 
@@ -242,7 +242,7 @@ func handleNonInteractive(config *Config) (runmode string) {
 
 			history = append(history, Message{Role: "user", Content: userMsg})
 			sessionStats.BeginInteraction()
-			ans, thinking, l_history, err := askAI(ctx, *config, history)
+			ans, thinking, l_history, err := askAI(ctx, *config, history, true)
 			sessionStats.EndInteraction()
 			signal.Stop(sigChan)
 			cancel()
@@ -272,7 +272,7 @@ func handleNonInteractive(config *Config) (runmode string) {
 			if len(cmdArgs) > 0 {
 				fullCmd = cmd + " " + strings.Join(cmdArgs, " ")
 			}
-			handleCommand(fullCmd, &history)
+			handleCommand(fullCmd, &history, true)
 		}
 	}
 	return
@@ -379,7 +379,7 @@ func runREPLWithShell(history *[]Message, shell *readline.Shell, histFile string
 		*history = append(*history, Message{Role: "user", Content: userMsg})
 		sessionStats.BeginInteraction()
 		defer sessionStats.EndInteraction()
-		ans, thinking, l_history, err := askAI(ctx, *config, *history)
+		ans, thinking, l_history, err := askAI(ctx, *config, *history, false)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			*history = l_history[:len(l_history)-1]
@@ -472,7 +472,7 @@ func runREPLWithShell(history *[]Message, shell *readline.Shell, histFile string
 				continue
 			}
 
-			handleCommand(text, history)
+			handleCommand(text, history, false)
 			if config.Debug {
 				fmt.Fprintf(os.Stderr, "[DEBUG] config: %v\n", *config)
 			}
@@ -567,7 +567,7 @@ func appendHistoryFile(filename, line string) error {
 // Command handler
 // ---------------------------------------------------------------------------
 
-func handleCommand(text string, history *[]Message) {
+func handleCommand(text string, history *[]Message, nonInteractive bool) {
 	parts := strings.SplitN(text, " ", -1)
 	cmd := parts[0]
 	arg := ""
@@ -639,7 +639,9 @@ func handleCommand(text string, history *[]Message) {
 			return
 		case arg == "off":
 			config.ContextLimit = 0
-			saveConfig()
+			if !nonInteractive {
+				saveConfig()
+			}
 			fmt.Fprintln(os.Stderr, "✅ Context trimming disabled.")
 			return
 		case arg == "sum":
@@ -652,7 +654,9 @@ func handleCommand(text string, history *[]Message) {
 				return
 			}
 			config.ContextLimit = n
-			saveConfig()
+			if !nonInteractive {
+				saveConfig()
+			}
 			fmt.Fprintf(os.Stderr, "✅ Context limit set to %d tokens. Current usage: ~%d tokens.\n",
 				n, estimateTokens(*history))
 		}
@@ -661,11 +665,15 @@ func handleCommand(text string, history *[]Message) {
 		switch arg {
 		case "on":
 			config.ShowThinking = true
-			saveConfig()
+			if !nonInteractive {
+				saveConfig()
+			}
 			fmt.Fprintln(os.Stderr, "✅ Thinking text enabled.")
 		case "off":
 			config.ShowThinking = false
-			saveConfig()
+			if !nonInteractive {
+				saveConfig()
+			}
 			fmt.Fprintln(os.Stderr, "✅ Thinking text disabled.")
 		default:
 			fmt.Fprintln(os.Stderr, "Usage: /showthink on|off")
@@ -699,7 +707,9 @@ func handleCommand(text string, history *[]Message) {
 		default:
 			config.MCPPermissions[toolName] = perm
 		}
-		saveConfig()
+		if !nonInteractive {
+			saveConfig()
+		}
 		fmt.Fprintf(os.Stderr, "✅ Permission for '%s' set to [%s]\n", toolName, perm)
 
 	case "/mcp":
@@ -890,10 +900,12 @@ func handleCommand(text string, history *[]Message) {
 			fmt.Fprintf(os.Stderr, "error, index must be integer")
 			return
 		}
-		if err := saveHistoryToFile(*history, idx, expandedPath); err != nil {
-			fmt.Fprintf(os.Stderr, "❌ Failed to save: %v\n", err)
-		} else {
-			fmt.Fprintf(os.Stderr, "✅ Saved conversation up to index %d to: %s\n", idx, expandedPath)
+		if !nonInteractive {
+			if err := saveHistoryToFile(*history, idx, expandedPath); err != nil {
+				fmt.Fprintf(os.Stderr, "❌ Failed to save: %v\n", err)
+			} else {
+				fmt.Fprintf(os.Stderr, "✅ Saved conversation up to index %d to: %s\n", idx, expandedPath)
+			}
 		}
 
 	case "/cd":
@@ -929,10 +941,12 @@ func handleCommand(text string, history *[]Message) {
 			}
 
 			oldName := generateContextName(firstUserMsg)
-			if err := saveHistory(); err != nil {
-				fmt.Fprintf(os.Stderr, "⚠️  Could not save current session: %v\n", err)
-			} else {
-				fmt.Fprintf(os.Stderr, "✅ Saved current session to: %s\n", oldName)
+			if !nonInteractive {
+				if err := saveHistory(); err != nil {
+					fmt.Fprintf(os.Stderr, "⚠️  Could not save current session: %v\n", err)
+				} else {
+					fmt.Fprintf(os.Stderr, "✅ Saved current session to: %s\n", oldName)
+				}
 			}
 		}
 
@@ -1011,11 +1025,13 @@ func handleCommand(text string, history *[]Message) {
 		if !strings.Contains(expandedPath, string(os.PathSeparator)) {
 			expandedPath = filepath.Join(homeDir, ".aig", expandedPath)
 		}
-		if err := saveHistoryToFile(*history, -1, expandedPath); err != nil {
-			fmt.Fprintf(os.Stderr, "❌ Failed to save: %v\n", err)
-			return
+		if !nonInteractive {
+			if err := saveHistoryToFile(*history, -1, expandedPath); err != nil {
+				fmt.Fprintf(os.Stderr, "❌ Failed to save: %v\n", err)
+				return
+			}
+			fmt.Fprintf(os.Stderr, "✅ Saved current context to: %s\n", fullArg)
 		}
-		fmt.Fprintf(os.Stderr, "✅ Saved current context to: %s\n", fullArg)
 	case "/use":
 		if arg == "" {
 			fmt.Fprintln(os.Stderr, "Usage: /use <context-file-name/path> Load the context file name|path to current context. It will persist until you run /new. If it is a string then regard it as file name in the .aig directory. If it is a path then it will load the context from that path. If the file does not exist it will return an error")
@@ -1103,7 +1119,9 @@ func handleCommand(text string, history *[]Message) {
 		if config.Debug && debugFile == nil && config.DebugLevel >= "2" {
 			debugFile, _ = os.OpenFile("aig_stream_debug.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 		}
-		saveConfig()
+		if !nonInteractive {
+			saveConfig()
+		}
 		if config.Debug {
 			fmt.Fprintf(os.Stderr, "✅ Debug enabled (level: %s)\n", config.DebugLevel)
 		} else {
@@ -1360,10 +1378,12 @@ func handleCommand(text string, history *[]Message) {
 		if arg == "" {
 			panic("Usage: /configdir dir://<newdir>. Understand ~ expansion into user home dir")
 		}
-		if currentContextPath != "" {
+		if currentContextPath != "" && !nonInteractive {
 			saveHistory()
 		}
-		saveConfig()
+		if !nonInteractive {
+			saveConfig()
+		}
 		arg, _ = expandHomeDir(arg)
 		absPath, err := filepath.Abs(arg)
 		if err != nil {
@@ -1405,7 +1425,9 @@ func handleCommand(text string, history *[]Message) {
 			config.MaxTokens = maxtok
 			os.Setenv("MAX_TOKENS", arg)
 			fmt.Fprintf(os.Stderr, "Maxtokens set to: %d\n", config.MaxTokens)
-			saveConfig()
+			if !nonInteractive {
+				saveConfig()
+			}
 		}
 	case "/autonudgedisabled":
 		if arg == "" {
@@ -1420,7 +1442,9 @@ func handleCommand(text string, history *[]Message) {
 			fmt.Fprintln(os.Stderr, "Enable autonudge")
 			config.AutoNudgeDisabled = false
 		}
-		saveConfig()
+		if !nonInteractive {
+			saveConfig()
+		}
 
 	case "/unload":
 		if arg == "" {
@@ -1512,7 +1536,7 @@ func runREPLFallback(history *[]Message) {
 			continue
 		}
 		if strings.HasPrefix(text, "/") {
-			handleCommand(text, history)
+			handleCommand(text, history, false)
 			continue
 		}
 
@@ -1527,7 +1551,7 @@ func runREPLFallback(history *[]Message) {
 		ctx := context.Background()
 		*history = append(*history, Message{Role: "user", Content: userMsg})
 		sessionStats.BeginInteraction()
-		ans, thinking, l_history, err := askAI(ctx, *config, *history)
+		ans, thinking, l_history, err := askAI(ctx, *config, *history, false)
 		sessionStats.EndInteraction()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)

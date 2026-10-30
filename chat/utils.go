@@ -135,8 +135,11 @@ var (
 func init() {
 	var err error
 	homeDir, err = os.Getwd()
-	if err != nil {
-		// Fallback to user's home directory if CWD cannot be determined
+	if err == nil {
+		if exist, err := u.FileExists(filepath.Join(homeDir, ".aigdotenv")); err != nil || !exist {
+			homeDir, _ = os.UserHomeDir()
+		}
+	} else {
 		homeDir, _ = os.UserHomeDir()
 	}
 }
