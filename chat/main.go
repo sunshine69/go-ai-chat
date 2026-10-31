@@ -1250,10 +1250,12 @@ func handleCommand(text string, history *[]Message, nonInteractive bool) {
 			fmt.Fprintln(os.Stderr, "Usage: /url <url>")
 			return
 		}
-		if !strings.HasSuffix(arg, "chat/completions") {
-			arg = strings.TrimSuffix(arg, "/") + "/chat/completions"
+		url, err := url.Parse(arg)
+		if err != nil || url.Scheme == "" || url.Host == "" {
+			fmt.Fprintf(os.Stderr, "Invalid URL: %s\n", arg)
+			return
 		}
-		config.BaseURL = arg
+		config.BaseURL = url.Scheme + "://" + url.Host + "/v1/chat/completions"
 		fmt.Fprintf(os.Stderr, "URL switched to: %s\n", arg)
 
 	// These params only for session, not saved to config file
@@ -1461,7 +1463,7 @@ func handleCommand(text string, history *[]Message, nonInteractive bool) {
 		// Build the POST request body
 		bodyBytes, _ := json.Marshal(map[string]string{"model": modelName})
 		// Make the unload request
-		if _, err := u.Curl("POST", fmt.Sprintf("%s://%s/models/unload", url.Scheme, url.Host), string(bodyBytes), "application/json", []string{"Content-Type: application/json"}, nil); err == nil {
+		if _, err := u.Curl("POST", fmt.Sprintf("%s://%s/v1/models/unload", url.Scheme, url.Host), string(bodyBytes), "application/json", []string{"Content-Type: application/json"}, nil); err == nil {
 			fmt.Fprintf(os.Stderr, "✅ Model unloaded: %s\n", modelName)
 		} else {
 			fmt.Fprintf(os.Stderr, "❌ Failed to unload model %s: %v\n", modelName, err)

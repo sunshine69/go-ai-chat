@@ -354,7 +354,10 @@ func streamOnce(ctx context.Context, config Config, msgs []Message, quiet bool) 
 		body, _ := io.ReadAll(resp.Body)
 		content, thinking, toolCalls, err := HandleAPIErrorFromLlamaServer(resp.StatusCode, string(body))
 		// Mark context overflow distinctly so askAI can trim and retry.
-		if err != nil && (strings.Contains(err.Error(), "exceed_context_size") || strings.Contains(err.Error(), "exceeds the available context size")) {
+		errMsg := err.Error()
+		if err != nil && (strings.Contains(errMsg, "exceed_context_size") ||
+			strings.Contains(errMsg, "exceeds the available context size") ||
+			strings.Contains(errMsg, "request exceeds the context window")) {
 			return content, thinking, toolCalls, fmt.Errorf("%w: %s", errContextExceeded, err.Error())
 		}
 		return content, thinking, toolCalls, err
