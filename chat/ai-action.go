@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -170,6 +171,14 @@ func askAI(ctx context.Context, config Config, msgs []Message, nonInteractive bo
 			fmt.Fprintln(os.Stderr, "\n> ⚡ [System Nudge]: SLEEP after planning. Forcing execution in 5 secs...")
 			time.Sleep(5 * time.Second)
 			remindAiFunc("Continue. If completed replied with string 'Task completed'")
+			continue
+		}
+		// Wrong tool call format, which not captured by xml tool call etc. qwen flash sometimes
+		ptn := regexp.MustCompile(`(?ms)^.*\<tool_call\>.*\<\/tool_call\>`)
+		if ptn.MatchString(content) {
+			fmt.Fprintln(os.Stderr, "\n> ⚡ [System Nudge]: Wrong tool_call. Forcing execution in 5 secs...")
+			time.Sleep(5 * time.Second)
+			remindAiFunc("You generated worng tool_call format or func name, param. Carefull. Continue")
 			continue
 		}
 		// No tool calls — we're done
