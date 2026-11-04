@@ -1255,7 +1255,12 @@ func handleCommand(text string, history *[]Message, nonInteractive bool) {
 			fmt.Fprintf(os.Stderr, "Invalid URL: %s\n", arg)
 			return
 		}
-		config.BaseURL = url.Scheme + "://" + url.Host + "/v1/chat/completions"
+		firstPart := url.Scheme + "://" + url.Host
+		if url.Path == "" {
+			config.BaseURL = firstPart + "/v1/chat/completions"
+		} else {
+			config.BaseURL = firstPart + url.Path
+		}
 		fmt.Fprintf(os.Stderr, "URL switched to: %s\n", arg)
 
 	// These params only for session, not saved to config file
