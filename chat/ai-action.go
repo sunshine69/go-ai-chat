@@ -174,7 +174,7 @@ func askAI(ctx context.Context, config Config, msgs []Message, nonInteractive bo
 			continue
 		}
 		// Wrong tool call format, which not captured by xml tool call etc. qwen flash sometimes
-		ptn := regexp.MustCompile(`(?ms)^.*\<tool_call\>.*\<\/tool_call\>`)
+		ptn := regexp.MustCompile(`(?ms)^.*(\<tool_call\>|\<invoke [^\>]*\>).*(\<\/tool_call\>|\<\/invoke\>)`)
 		if ptn.MatchString(content) {
 			fmt.Fprintln(os.Stderr, "\n> ⚡ [System Nudge]: Wrong tool_call. Forcing execution in 5 secs...")
 			time.Sleep(5 * time.Second)
