@@ -45,6 +45,7 @@ func dropLeadingToolMsgs(msgs []Message) []Message {
 
 // askAI — streams the response; if MCP is active, injects tools and handles
 // tool_calls returned by the model in a loop until the model gives a final answer.
+// This is one user -> model turn, which may contain multiple model -> tool -> model sub-turns.
 func askAI(ctx context.Context, config Config, msgs []Message, nonInteractive bool) (string, string, []Message, error) {
 	// Build a local copy of history for the tool loop — we extend it as we call tools
 	workingMsgs := make([]Message, len(msgs))
@@ -108,8 +109,7 @@ func askAI(ctx context.Context, config Config, msgs []Message, nonInteractive bo
 			// needTrimCtx = needTrimCtx || (strings.Contains(errMsg, "exceed_context_size") || strings.Contains(errMsg, "exceeds the available context size"))
 			if ctx.Err() == nil || needTrimCtx {
 				// Context overflow: the request was too big for the backend.
-				// Trim and retry — up to 2 times, and only while we haven't
-				// accumulated a final answer yet.
+				// Trim and retry — up to 2 times, and only while we haven't accumulated a final answer yet.
 				fmt.Fprintf(os.Stderr, "\n> ⚠️  [DEBUG] Get inside. ctx.Err: %v\n", ctx.Err())
 				if needTrimCtx {
 					fmt.Fprintln(os.Stderr, "\n> 🔁 [System Nudge]: Stream stalled mid-generation due to context nearly full — reconnecting and resuming...")
@@ -146,8 +146,7 @@ func askAI(ctx context.Context, config Config, msgs []Message, nonInteractive bo
 			return accumulatedContent.String() + content, accumulatedThinking.String() + thinking, workingMsgs, err
 		}
 		collectContentAndThink()
-		// --- 🛌 THE LAZY MODEL AUTO-NUDGE TRAP HAHA ---
-		// If it chose to "stop" naturally, but left you with ZERO tools and ZERO text. No error return
+		// If AI chose to "stop" naturally, but left you with ZERO tools and ZERO text. No error return
 		// after doing a bunch of thinking, it's being lazy. Wake it up!
 		// sentences, _ := getSentencesAtPosition(content, "-2,-1")
 		if !config.AutoNudgeDisabled && len(toolCalls) == 0 && !strings.Contains(content, "Task completed") && strings.Contains(content, "</think>") {
