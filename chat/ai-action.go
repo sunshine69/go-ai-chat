@@ -177,7 +177,7 @@ func askAI(ctx context.Context, config Config, msgs []Message, nonInteractive bo
 		if ptn.MatchString(content) {
 			fmt.Fprintln(os.Stderr, "\n> ⚡ [System Nudge]: Wrong tool_call. Forcing execution in 5 secs...")
 			time.Sleep(5 * time.Second)
-			remindAiFunc("You generated worng tool_call format or func name, param. Carefull. Continue")
+			remindAiFunc("You generated wrong tool_call format or func name, param. Carefull. Continue")
 			continue
 		}
 		// No tool calls — we're done
