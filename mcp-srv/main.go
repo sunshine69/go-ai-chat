@@ -152,7 +152,9 @@ func init() {
 		// path on that drive vs. a scoped temp/profile dir) and should be an
 		// explicit, deliberate addition — same trade-off logic as the bare-shell
 		// omission above.
-		winSegment := `(?:[^./\\:*?"<>|][^\\/:*?"<>|]*|\.[^./\\:*?"<>|][^\\/:*?"<>|]*|\.)`
+		// `\.{3,}` carries the Go package wildcard (`.\...`, `..\...`) through the
+		// Windows pattern too; a bare ".." step remains unmatched.
+		winSegment := `(?:[^./\\:*?"<>|][^\\/:*?"<>|]*|\.[^./\\:*?"<>|][^\\/:*?"<>|]*|\.{3,}|\.)`
 		sep := `[\\/]`
 		winSegments := winSegment + `(?:` + sep + winSegment + `)*`
 		winPathBody := winSegments + sep + `?`
@@ -191,7 +193,13 @@ func init() {
 		// both in the relative form (../../etc/passwd) and inside the /tmp
 		// exception (/tmp/../etc/shadow). See detailed segment-matching notes
 		// in the earlier version of this comment.
-		pathSegment := `(?:[^./:\s][^/\s]*|\.[^./\s][^/\s]*|\.)`
+		// A segment is: a normal name, a dotfile, exactly ".", or THREE-PLUS dots.
+		// The last alternative is what makes Go package wildcards (`go test ./...`,
+		// `go get -u ./...`, `../...`) pass: RE2 alternation tries it only for
+		// runs of 3+ dots, so a bare ".." step is still unmatched and `../../x`
+		// stays denied. Do NOT add a plain `\.\.` alternative here — that re-opens
+		// directory traversal.
+		pathSegment := `(?:[^./:\s][^/\s]*|\.[^./\s][^/\s]*|\.{3,}|\.)`
 		segments := pathSegment + `(?:/` + pathSegment + `)*`
 		pathBody := segments + `/?` // fix: allow one optional trailing slash after the last segment
 		relativePath := `(?:(?:\.\./|\./)(?:` + pathBody + `)?|` + pathBody + `)`
@@ -199,10 +207,15 @@ func init() {
 		defaultAllowPath = `^(?:` + relativePath + `|` + tmpPath + `)$`
 
 		pathErrorMsg = `[ERROR] denied access for path: '%s'. ONLY RELATIVE PATH TO THE CURRENT DIR AND ONE LEVEL UPPER ARE ALLOWED. EXCEPTIONS ARE /tmp and /var/tmp. That is ./XXX ../XXX XXX /tmp, /var/tmp should work, BUT NOT / and ../../`
-		PathPtn = regexp.MustCompile(`(?:^|\s)([\.\/][a-zA-Z0-9_\.\-\/]+)`)
+		PathPtn = regexp.MustCompile(`(?:^|\s)([\.\/][a-zA-Z0-9_\.\-\/]*)`)
 	}
 	execCmdPtnString = u.Getenv("EXEC_CMD_PTN", `(?i)^`+
-		`(?:go(?: +(?:build|version|vet|env|fix|get|install|list|tool|fmt|mod tidy|doc|mod init)(?: +[^;|&<>]*)*)?|`+
+		// `go <anything>` for the whole Go toolchain: any subcommand (build, test,
+		// get, mod tidy, mod clean, workspace, pkg, vendor, doc, bench, ...)
+		// plus any flags/targets. `[^;|&<>]` keeps shell chaining out of the
+		// match; path-shaped tokens (`./...`, `a/b/c...`, `pkg/config@*`) are
+		// then audited by checkPath, which accepts Go package wildcards.
+		`(?:go(?: +[^\s;|&<>]+(?: +[^;|&<>]*)*)?|`+
 		`npm(?: +(?:version|install|run)(?: +[^;|&<>]*)*)?|`+
 		`terraform(?: +(?:version|init|plan|apply|destroy)(?: +[^;|&<>]*)*)?|`+
 		`rustc(?: +-[^ ]+(?: +[^;|&<>"']*)*)?|`+
