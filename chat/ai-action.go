@@ -118,6 +118,9 @@ func askAI(ctx context.Context, config Config, msgs []Message, nonInteractive bo
 					continue
 				}
 				switch errMsg {
+				case "MALFORMED TOOL CALL":
+					remindAiFunc("MALFORMED TOOL CALL. Carefull. Continue")
+					continue
 				case "STREAM CUTOFF DETECTED", "AI HAS BECOME MENTAL":
 					remindAiFunc("continue. If completed replied with string 'Task completed'")
 					continue
@@ -696,15 +699,18 @@ func streamOnce(ctx context.Context, config Config, msgs []Message, quiet bool) 
 
 	// Collect accumulated tool calls safely using a range loop over the map
 	var toolCalls []ToolCall
+	var errDetectMalformToolCall error = nil
 	for _, tc := range toolCallAccum {
 		if tc == nil || tc.Type != "function" || strings.TrimSpace(tc.Function.Name) == "" {
 			log.Printf("⚠️ Invalid - Type %s - Funcname %s\n ", tc.Type, tc.Function.Name)
+			errDetectMalformToolCall = fmt.Errorf("MALFORMED TOOL CALL NAME: %s", tc.Function.Name)
 			continue
 		}
 
 		args := strings.TrimSpace(tc.Function.Arguments)
 		if args == "" {
 			fmt.Fprintf(os.Stderr, "\n> ⚠️ Ignoring incomplete tool call (missing args): %s\n", tc.Function.Name)
+			errDetectMalformToolCall = fmt.Errorf("MALFORMED TOOL CALL %s", tc.Function.Name)
 			continue
 		}
 
@@ -712,6 +718,7 @@ func streamOnce(ctx context.Context, config Config, msgs []Message, quiet bool) 
 		var tmp interface{}
 		if err := json.Unmarshal([]byte(args), &tmp); err != nil {
 			fmt.Fprintf(os.Stderr, "\n> ⚠️ Ignoring malformed tool call %s: %v\n", tc.Function.Name, err)
+			errDetectMalformToolCall = fmt.Errorf("MALFORMED TOOL CALL %s", err.Error())
 			continue
 		}
 
@@ -735,6 +742,9 @@ func streamOnce(ctx context.Context, config Config, msgs []Message, quiet bool) 
 			}
 		}
 		return fullContent.String(), thinkingContent.String(), toolCalls, fmt.Errorf("STREAM CUTOFF DETECTED")
+	}
+	if errDetectMalformToolCall != nil && len(toolCalls) == 0 {
+		return fullContent.String(), thinkingContent.String(), toolCalls, errDetectMalformToolCall
 	}
 	// The server cut the output short (context nearly full): report it as a
 	// distinct error so askAI trims the context and retries, instead of
