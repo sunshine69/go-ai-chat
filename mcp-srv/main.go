@@ -33,6 +33,9 @@ type config struct {
 	workDir   string
 	toolSet   string // extra tools to load, comma sep
 	proxy     string // proxy host:port
+	// netAllowAll is the CLI spelling of ALLOWED_URL_OPEN=1: the network firewall
+	// keeps auditing every target but blocks nothing (report-only).
+	netAllowAll bool
 }
 
 var (
@@ -251,6 +254,7 @@ func parseArgs() config {
 	flag.StringVar(&cfg.workDir, "work-dir", ".", "Working dir")
 	flag.StringVar(&cfg.toolSet, "tools", "", "Extra tools to load in addition to base tools. Comma-separated. Possible values: postgres, octo, browser, godoc, all")
 	flag.StringVar(&cfg.proxy, "proxy", "", "HTTP proxy server host:port (e.g. localhost:8080). When set, exports HTTP_PROXY/HTTPS_PROXY env vars and uses proxy for all network tools.")
+	flag.BoolVar(&cfg.netAllowAll, "net-allow-all", false, "Disable the network allowlist: every network target is allowed, and only logged to stderr as '|NET|would-deny|' (report-only). Equivalent to env ALLOWED_URL_OPEN=1, but explicit on the command line. The always-deny belt (cloud metadata endpoints, non-http(s) schemes, single-label hosts) still applies.")
 	flag.StringVar(&jwtSecret, "jwt-secret", "", `Shared HMAC secret (HS256), must match the chat client's -jwt-secret. When set, the streamable transport requires every request to carry Authorization: Bearer <jwt>, and the token's 'sub' claim becomes the model name in the network audit log. Stdio transport is never authenticated.`)
 	flag.StringVar(&gmailCredentialFile, "gmail-app-cred", "", `Gmail oauth2 credentials file. Create an OAuth client in Google Cloud Console, type "Desktop app," download the JSON → save as your credentialsPath. Then enable the Gmail API for that project. On the first run, do the browser-consent`)
 
@@ -396,6 +400,17 @@ func buildServer(cfg config) *server.MCPServer {
 		BlockedPathPattern:            u.Getenv("BLOCKED_PATH_PTN", ""),
 	}
 	println("[DEBUG] baseTool - ", u.JsonDump(baseTool, ""))
+
+	// -net-allow-all is the CLI spelling of ALLOWED_URL_OPEN=1. We set the env var
+	// rather than poking netPolicy directly so there is exactly ONE code path into
+	// report-only mode (configureNetworkFirewall in network-firewall.go): same
+	// allowRules reset, same loud [NET][WARN] line, same startup banner, same
+	// always-deny belt. The firewall keeps auditing every target as
+	// '<time>|<model>|<session>|NET|would-deny|<target>|<reason>' on stderr and
+	// allows the call — it does not block.
+	if cfg.netAllowAll {
+		os.Setenv("ALLOWED_URL_OPEN", "1")
+	}
 
 	// Network firewall: read the URL policy and print the effective one, exactly
 	// like ALLOWED_TERM_CMD_PTN is printed above. DENY BY DEFAULT with no
