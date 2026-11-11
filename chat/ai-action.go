@@ -703,14 +703,14 @@ func streamOnce(ctx context.Context, config Config, msgs []Message, quiet bool) 
 	for _, tc := range toolCallAccum {
 		if tc == nil || tc.Type != "function" || strings.TrimSpace(tc.Function.Name) == "" {
 			log.Printf("⚠️ Invalid - Type %s - Funcname %s\n ", tc.Type, tc.Function.Name)
-			errDetectMalformToolCall = fmt.Errorf("MALFORMED TOOL CALL NAME: %s", tc.Function.Name)
+			errDetectMalformToolCall = fmt.Errorf("MALFORMED TOOL CALL")
 			continue
 		}
 
 		args := strings.TrimSpace(tc.Function.Arguments)
 		if args == "" {
 			fmt.Fprintf(os.Stderr, "\n> ⚠️ Ignoring incomplete tool call (missing args): %s\n", tc.Function.Name)
-			errDetectMalformToolCall = fmt.Errorf("MALFORMED TOOL CALL %s", tc.Function.Name)
+			errDetectMalformToolCall = fmt.Errorf("MALFORMED TOOL CALL")
 			continue
 		}
 
@@ -718,7 +718,7 @@ func streamOnce(ctx context.Context, config Config, msgs []Message, quiet bool) 
 		var tmp interface{}
 		if err := json.Unmarshal([]byte(args), &tmp); err != nil {
 			fmt.Fprintf(os.Stderr, "\n> ⚠️ Ignoring malformed tool call %s: %v\n", tc.Function.Name, err)
-			errDetectMalformToolCall = fmt.Errorf("MALFORMED TOOL CALL %s", err.Error())
+			errDetectMalformToolCall = fmt.Errorf("MALFORMED TOOL CALL")
 			continue
 		}
 
