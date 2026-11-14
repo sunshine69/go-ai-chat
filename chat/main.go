@@ -979,7 +979,7 @@ func handleCommand(text string, history *[]Message, nonInteractive bool) {
 		fmt.Fprintln(os.Stderr, "  /ms <model-summary>           - Switch model used for context summary to comress context")
 		fmt.Fprintln(os.Stderr, "  /msurl <model-summary-URL>    - Switch the api endpoint for summary model. If empty the global one will be used")
 		fmt.Fprintln(os.Stderr, "  /msto <number-in-secs>        - Set model summary timeout (e.g., 300 - which 300 secs)")
-		fmt.Fprintln(os.Stderr, "  /url <url>                    - Switch API URL")
+		fmt.Fprintln(os.Stderr, "  /url <url>                    - Switch API URL (http:// is prepended if protocol is missing)")
 		fmt.Fprintln(os.Stderr, "  /timeout or /t <dur>          - Set request timeout (e.g., 30s, 5m, 1h)")
 		fmt.Fprintln(os.Stderr, "  /exit or /q                   - Exit REPL")
 		fmt.Fprintln(os.Stderr, "  /use <name>                   - Switch to an existing context")
@@ -1247,9 +1247,10 @@ func handleCommand(text string, history *[]Message, nonInteractive bool) {
 
 	case "/url":
 		if arg == "" {
-			fmt.Fprintln(os.Stderr, "Usage: /url <url>")
+			fmt.Fprintln(os.Stderr, "Usage: /url <url> (http:// is added automatically if missing)")
 			return
 		}
+		arg = ensureURLScheme(arg)
 		url, err := url.Parse(arg)
 		if err != nil || url.Scheme == "" || url.Host == "" {
 			fmt.Fprintf(os.Stderr, "Invalid URL: %s\n", arg)

@@ -64,6 +64,22 @@ func ParseRangeFromInputString(s string) (int, int, bool) {
 	return 0, 0, false
 }
 
+// ensureURLScheme prepends "http://" when the URL has no http:// or https://
+// prefix, so "/url localhost:8080/v1" or "/url example.com" works without
+// typing the protocol. Already-prefixed (or other-scheme) URLs are returned
+// trimmed but unchanged.
+func ensureURLScheme(raw string) string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return raw
+	}
+	lower := strings.ToLower(s)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		return s
+	}
+	return "http://" + s
+}
+
 // ---- file_processors.go (replace the relevant functions) ----
 
 // TextProcessor now returns []ContentPart instead of a raw string.

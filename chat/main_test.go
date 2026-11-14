@@ -226,3 +226,23 @@ func TestGetSentencesAtPosition_MultipleCommas(t *testing.T) {
 		t.Errorf("expected 3 sentences, got %d", len(result))
 	}
 }
+
+func TestEnsureURLScheme(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"localhost:8080/v1", "http://localhost:8080/v1"},
+		{"example.com", "http://example.com"},
+		{"http://example.com/v1", "http://example.com/v1"},
+		{"https://example.com/v1", "https://example.com/v1"},
+		{"HTTPS://Example.COM/v1", "HTTPS://Example.COM/v1"},
+		{"  localhost:11434  ", "http://localhost:11434"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		if got := ensureURLScheme(tt.in); got != tt.want {
+			t.Errorf("ensureURLScheme(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
