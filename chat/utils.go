@@ -333,6 +333,27 @@ func runSystemCommand(cmdStr string) {
 // Config management
 // ---------------------------------------------------------------------------
 
+// envFloat / envInt read an optional numeric .aigdotenv variable. Missing or
+// unparseable values yield 0, which for the sampling params means "don't send
+// the field, let the server use its default".
+func envFloat(name string) float64 {
+	if v := os.Getenv(name); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
+		}
+	}
+	return 0
+}
+
+func envInt(name string) int {
+	if v := os.Getenv(name); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return 0
+}
+
 func saveConfig() {
 	if config == nil {
 		return
@@ -420,6 +441,25 @@ func saveConfig() {
 	if config.MaxTokens != 999999 {
 		envVars["MAX_TOKENS"] = fmt.Sprintf("%v", config.MaxTokens)
 		changed = true
+	}
+	// Sampling params: persisted so they survive a restart. 0 means "server
+	// default" — in that case any previously stored value is cleared.
+	for _, p := range []struct {
+		key string
+		val float64
+	}{
+		{"TEMPERATURE", config.Temperature},
+		{"TOP_P", config.TopP},
+		{"TOP_K", float64(config.TopK)},
+		{"MIN_P", config.MinP},
+	} {
+		if p.val > 0 {
+			envVars[p.key] = strconv.FormatFloat(p.val, 'g', -1, 64)
+			changed = true
+		} else if _, exists := envVars[p.key]; exists {
+			delete(envVars, p.key)
+			changed = true
+		}
 	}
 	if !changed {
 		return
@@ -540,6 +580,10 @@ func loadConfig() *Config {
 		MaxRepeatPattern:    10,
 		AutoNudgeDisabled:   os.Getenv("AUTONUDGE_DISABLED") == "on",
 		StallTimeout:        u.Must(time.ParseDuration("45s")),
+		Temperature:         envFloat("TEMPERATURE"),
+		TopP:                envFloat("TOP_P"),
+		TopK:                envInt("TOP_K"),
+		MinP:                envFloat("MIN_P"),
 	}
 
 	if timeoutStr := os.Getenv("TIMEOUT"); timeoutStr != "" {

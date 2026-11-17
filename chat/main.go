@@ -565,6 +565,16 @@ func appendHistoryFile(filename, line string) error {
 
 // ---------------------------------------------------------------------------
 // Command handler
+// persistConfigParam stores a numeric config value in the process environment
+// and, in interactive mode, in .aigdotenv, so the setting survives a restart.
+// In one-shot /ask mode nothing is written to the file.
+func persistConfigParam(key, value string, nonInteractive bool) {
+	os.Setenv(key, value)
+	if !nonInteractive {
+		saveConfig()
+	}
+}
+
 // ---------------------------------------------------------------------------
 
 func handleCommand(text string, history *[]Message, nonInteractive bool) {
@@ -996,10 +1006,10 @@ func handleCommand(text string, history *[]Message, nonInteractive bool) {
 		fmt.Fprintln(os.Stderr, "  /mcp refresh                  - Refresh MCP tool list")
 		fmt.Fprintln(os.Stderr, "  /mcpfunc <func> <perm>        - Set permission for tools func, auto|denied|ask")
 		fmt.Fprintln(os.Stderr, "  /ctx <N>|off                  - Set context token limit (auto-trim when exceeded)")
-		fmt.Fprintln(os.Stderr, "  /temp <float>                 - Set temperature for the model (0.0-1.0). 0 will use default from server")
-		fmt.Fprintln(os.Stderr, "  /top-p <float>                - Set top-p for the model (0.0-1.0). 0 will use default from server")
-		fmt.Fprintln(os.Stderr, "  /top-k <int>                  - Set top-k	for the model (0.0-1.0). 0 will use default from server")
-		fmt.Fprintln(os.Stderr, "  /min-p <float>                - Set min-p for the model (0.0-1.0). 0 will use default from server")
+		fmt.Fprintln(os.Stderr, "  /temp <float>                 - Set temperature for the model (0.0-1.0). 0 will use default from server. Saved to .aigdotenv")
+		fmt.Fprintln(os.Stderr, "  /top-p <float>                - Set top-p for the model (0.0-1.0). 0 will use default from server. Saved to .aigdotenv")
+		fmt.Fprintln(os.Stderr, "  /top-k <int>                  - Set top-k	for the model (0.0-1.0). 0 will use default from server. Saved to .aigdotenv")
+		fmt.Fprintln(os.Stderr, "  /min-p <float>                - Set min-p for the model (0.0-1.0). 0 will use default from server. Saved to .aigdotenv")
 		fmt.Fprintln(os.Stderr, "  /maxtoken <N>                 - Set max tokens in payload.")
 		fmt.Fprintln(os.Stderr, "  /trimctx <idx|range>          - Remove messages at index or range (e.g. 3-5, -1--3)")
 		fmt.Fprintln(os.Stderr, "  /autonudgedisabled <on|off>   - Disable the auto nudge feature")
@@ -1264,55 +1274,60 @@ func handleCommand(text string, history *[]Message, nonInteractive bool) {
 		}
 		fmt.Fprintf(os.Stderr, "URL switched to: %s\n", arg)
 
-	// These params only for session, not saved to config file
+	// Sampling params are saved to .aigdotenv, so they persist across restarts.
+	// 0 means "don't send the field, let the server use its default".
 	case "/temp":
 		if arg == "" {
-			fmt.Fprintln(os.Stderr, "Usage: /temp <float> (e.g., 0.7). 0 means use server default. Current value: ", config.Temperature)
+			fmt.Fprintf(os.Stderr, "Usage: /temp <float> (e.g., 0.7). 0 means use server default. Current value: %v\n", config.Temperature)
 			return
 		}
-		if temp, err := strconv.ParseFloat(arg, 64); err != nil {
+		temp, err := strconv.ParseFloat(arg, 64)
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "Can not parse float: %s\n", err.Error())
 			return
-		} else {
-			config.Temperature = temp
-			fmt.Fprintf(os.Stderr, "Temperature set to: %f\n", config.Temperature)
 		}
+		config.Temperature = temp
+		persistConfigParam("TEMPERATURE", arg, nonInteractive)
+		fmt.Fprintf(os.Stderr, "Temperature set to: %v\n", config.Temperature)
 	case "/top-p":
 		if arg == "" {
-			fmt.Fprintln(os.Stderr, "Usage: /top-p <float> (e.g., 0.9). 0 means use server default. Current value: ", config.TopP)
+			fmt.Fprintf(os.Stderr, "Usage: /top-p <float> (e.g., 0.9). 0 means use server default. Current value: %v\n", config.TopP)
 			return
 		}
-		if topP, err := strconv.ParseFloat(arg, 64); err != nil {
+		topP, err := strconv.ParseFloat(arg, 64)
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "Can not parse float: %s\n", err.Error())
 			return
-		} else {
-			config.TopP = topP
-			fmt.Fprintf(os.Stderr, "Top-p set to: %f\n", config.TopP)
 		}
+		config.TopP = topP
+		persistConfigParam("TOP_P", arg, nonInteractive)
+		fmt.Fprintf(os.Stderr, "Top-p set to: %v\n", config.TopP)
 	case "/top-k":
 		if arg == "" {
-			fmt.Fprintln(os.Stderr, "Usage: /top-k <int> (e.g., 50). 0 means use server default. Current value: ", config.TopK)
+			fmt.Fprintf(os.Stderr, "Usage: /top-k <int> (e.g., 50). 0 means use server default. Current value: %v\n", config.TopK)
 			return
 		}
-		if topK, err := strconv.Atoi(arg); err != nil {
+		topK, err := strconv.Atoi(arg)
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "Can not parse int: %s\n", err.Error())
 			return
-		} else {
-			config.TopK = topK
-			fmt.Fprintf(os.Stderr, "Top-k set to: %d\n", config.TopK)
 		}
+		config.TopK = topK
+		persistConfigParam("TOP_K", arg, nonInteractive)
+		fmt.Fprintf(os.Stderr, "Top-k set to: %d\n", config.TopK)
 	case "/min-p":
 		if arg == "" {
-			fmt.Fprintln(os.Stderr, "Usage: /min-p <float> (e.g., 0.1). 0 means use server default. Current value: ", config.MinP)
+			fmt.Fprintf(os.Stderr, "Usage: /min-p <float> (e.g., 0.1). 0 means use server default. Current value: %v\n", config.MinP)
 			return
 		}
-		if minP, err := strconv.ParseFloat(arg, 64); err != nil {
+		minP, err := strconv.ParseFloat(arg, 64)
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "Can not parse float: %s\n", err.Error())
 			return
-		} else {
-			config.MinP = minP
-			fmt.Fprintf(os.Stderr, "Min-p set to: %f\n", config.MinP)
 		}
+		config.MinP = minP
+		persistConfigParam("MIN_P", arg, nonInteractive)
+		fmt.Fprintf(os.Stderr, "Min-p set to: %v\n", config.MinP)
 	case "/timeout", "/t":
 		if arg == "" {
 			fmt.Fprintln(os.Stderr, "Usage: /timeout <duration> (e.g., 30s, 5m, 1h). Current value: ", config.Timeout)

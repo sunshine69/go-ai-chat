@@ -27,10 +27,14 @@ type Config struct {
 	MaxRepeatPattern    int
 	AutoNudgeDisabled   bool
 	StallTimeout        time.Duration
-	Temperature         float64 // model temperature; only set in the request when > 0 (runtime-only, never persisted)
-	TopP                float64 // model top_p; only set in the request when > 0 (runtime-only, never persisted)
-	TopK                int     // model top_k; only set in the request when > 0 (runtime-only, never persisted)
-	MinP                float64 // model min_p; only set in the request when > 0 (runtime-only, never persisted)
+	// Sampling params are sent in the request body only when > 0; 0 means the
+	// field is omitted so the server uses its own default. Set at runtime with
+	// /temp, /top-p, /top-k, /min-p and saved to .aigdotenv under the env keys
+	// TEMPERATURE, TOP_P, TOP_K and MIN_P.
+	Temperature float64 // model temperature
+	TopP        float64 // model top_p
+	TopK        int     // model top_k
+	MinP        float64 // model min_p
 }
 
 type Message struct {
