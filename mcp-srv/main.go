@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -327,11 +328,18 @@ func buildServer(cfg config) *server.MCPServer {
 		fmt.Fprintf(os.Stderr, "[PROXY] Network firewall fully disabled — all network access delegated to proxy\n")
 	}
 
+	// AIG_DEBUG=1 traces every JSON-RPC request from accept to reply, so a hang
+	// that leaves no log still records its own goroutine dump. The Hooks object is
+	// shared with the transport; DbgHooks is a no-op unless debugging is on.
+	dbgHooks := &server.Hooks{}
+	DbgHooks(dbgHooks)
+
 	s := server.NewMCPServer(
 		"mcp-fetch-server",
 		"1.0.0",
 		server.WithToolCapabilities(true),
 		server.WithResourceCapabilities(true, true),
+		server.WithHooks(dbgHooks),
 	)
 
 	if strings.Contains(cfg.toolSet, "all") || strings.Contains(cfg.toolSet, "postgres") {
@@ -441,12 +449,29 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Signal logger, on-demand stack dump (kill -QUIT) and stall watchdog.
+	// Process-wide, so it belongs here rather than in a transport branch.
+	InitDbg()
+
 	cfg := parseArgs()
 	s := buildServer(cfg)
 
 	switch cfg.transport {
 	case "stdio":
 		log.Println("Starting MCP server (stdio transport)")
+		// InitDbg() registers TERM/INT/HUP for logging when AIG_DEBUG=1, which
+		// removes Go's default "exit immediately" disposition for those signals.
+		// Nothing else would act on them on this path, so a debug build under
+		// stdio would ignore kill -15 — exactly the reported symptom. Exit on a
+		// stop signal here; ServeStdio's own stdin loop ends when the parent
+		// closes the pipe, which is the normal way a stdio server is stopped.
+		go func() {
+			sig := waitShutdownSignal()
+			log.Printf("Signal %s received; exiting", sig)
+			dbg("shutdown stdio signal=%s grace=%s (no drain: stdio has no listener)",
+				sig.String(), shutdownGrace)
+			os.Exit(0)
+		}()
 		if err := server.ServeStdio(s); err != nil {
 			log.Fatalf("Server error: %v", err)
 		}
@@ -539,12 +564,53 @@ func main() {
 		} else {
 			log.Printf("  Auth: off (no -jwt-secret)")
 		}
+		// Outermost layer: log the raw request net/http dispatched and the status
+		// we actually wrote, so a request that never gets an http-out line is
+		// provably stuck below this point.
+		listenHandler = DbgHTTP(listenHandler)
 
 		log.Printf("Starting MCP server (Streamable HTTP + CORS) on http://%s/mcp/{workdir}", addr)
 		log.Printf("  Workdir base: %s", cfg.workDir)
-		if err := http.ListenAndServe(addr, listenHandler); err != nil {
-			log.Fatalf("Streamable HTTP server error: %v", err)
+
+		// ListenAndServe in a goroutine so a signal can end the process.
+		//
+		// The reported symptom "kill -15 does not work, need -9" is mostly an
+		// artefact of how the server is started — TERM delivered to a wrapper
+		// (go run, a shell, a supervisor) never reaches this process, and the
+		// only way to be sure is SIGKILL. Owning the signal here means:
+		//
+		//   * the listener closes, so the port is free immediately;
+		//   * an in-flight tool call gets a short grace period;
+		//   * and if that call is parked in a wedged exec, we stop waiting for it
+		//     instead of hanging until something external -9s us.
+		//
+		// Note Shutdown() waits for open connections, and a streamable client
+		// keeps a long-lived SSE GET open — so the grace period is deliberately
+		// short and we exit regardless of what it returns. Forcing the exit is
+		// the difference between "TERM works" and "TERM works, but only after the
+		// last client hangs up".
+		srv := &http.Server{Addr: addr, Handler: listenHandler}
+		serveErr := make(chan error, 1)
+		go func() { serveErr <- srv.ListenAndServe() }()
+
+		sig := waitShutdownSignal()
+		log.Printf("Signal %s received; shutting down (grace %s)", sig, shutdownGrace)
+		dbg("shutdown begin signal=%s", sig.String())
+
+		ctx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			log.Printf("Shutdown incomplete (%v); exiting anyway", err)
+			dbg("shutdown incomplete err=%v", err)
 		}
+		select {
+		case err := <-serveErr:
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Fatalf("Streamable HTTP server error: %v", err)
+			}
+		default:
+		}
+		log.Printf("Stopped.")
 
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown transport %q — valid values: \"stdio\", \"streamable\"\n", cfg.transport)

@@ -142,6 +142,12 @@ while you are chatting, if you want to see the list of questions and answer from
 
 /edit - this will start a editor to type multi line message.
 
+## Debugging the MCP server
+
+Start the server with `AIG_DEBUG=1` and every request, session, exec wait,
+signal and stack dump goes to stderr — i.e. into the same log file. How to
+enable it, what each line means, and how to read a hang:
+[mcp-srv/DEBUG-TRACE.md](mcp-srv/DEBUG-TRACE.md)
 ## Network firewall
 
 mcp-srv has a network policy in `mcp-srv/network-firewall.go`. It answers one question

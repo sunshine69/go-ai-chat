@@ -251,6 +251,10 @@ var defaultLoopGuard = NewLoopGuard()
 // guarded wraps a tool handler with loop-detection. name must match the
 // registered tool name (used as part of the signature key).
 func guarded(name string, handler server.ToolHandlerFunc) server.ToolHandlerFunc {
+	// DbgWrapHandler is a pass-through unless AIG_DEBUG=1. It sits outside the
+	// loop-guard so a handler that never returns is visible even when the guard
+	// itself is what would have been consulted next.
+	handler = DbgWrapHandler(name, handler)
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := request.GetArguments()
 		blocked, blockResult, sig := defaultLoopGuard.check(name, args)
@@ -518,7 +522,11 @@ func (t *BaseToolManager) execCommand(ctx context.Context, request mcp.CallToolR
 	runCmd.Stdout = &stdout
 	runCmd.Stderr = &stderr
 
-	runErr := runCmd.Run()
+	// runCapped bounds the wait for the process AND for its inherited capture
+	// pipes, and kills the whole process group on a deadline. Without it a
+	// command that forks leaves a grandchild holding the pipes and Run() parks
+	// until that grandchild exits.
+	runErr := DbgExec("exec_command", runCmd, execCtx, func() error { return runCapped(execCtx, runCmd) })
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("$ %s\n", command))
@@ -646,7 +654,12 @@ func (t *BaseToolManager) runTerminalCommand(ctx context.Context, request mcp.Ca
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	runErr := cmd.Run()
+	// DbgExec is a pass-through unless AIG_DEBUG=1. Note this cmd is built with
+	// exec.Command and NO context: there was no deadline here, so a command that
+	// leaves a child holding our capture pipes blocked this handler for as long as
+	// that child lives. runCapped supplies the deadline, the process group, and
+	// the pipe wait cap; the tracer records the wait and any surviving children.
+	runErr := DbgExec("run_terminal_command", cmd, ctx, func() error { return runCapped(ctx, cmd) })
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("$ %s\n", command))

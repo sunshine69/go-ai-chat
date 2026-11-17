@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -20,7 +21,8 @@ type Session struct {
 	Fullpath  string
 	MCPServer *server.MCPServer
 	Active    bool
-	Cleanup   func() // optional cleanup function
+	Cleanup   func()   // optional cleanup function
+	since     time.Time // when the workdir was claimed, for the |DBG|wm| records
 }
 
 // WorkdirManager manages multiple workdir sessions with concurrency control.
@@ -55,6 +57,12 @@ func (wm *WorkdirManager) GetOrCreateSession(workdir string) (*Session, error) {
 
 	// Double-check after acquiring write lock
 	if session, ok := wm.sessions[workdir]; ok && session.Active {
+		// Two clients on the same /mcp/<workdir> path: the second gets a 409. If
+		// that client then retries in a loop, or the holder never releases, this
+		// is the line to see. ReleaseSession is never called from the HTTP layer,
+		// so a workdir stays occupied until the process restarts.
+		dbg("wm occupied workdir=%q holder_fullpath=%q held_for=%s active=%v",
+			workdir, session.Fullpath, time.Since(session.since).Round(time.Millisecond), session.Active)
 		return session, fmt.Errorf("workdir '%s' is already occupied by another client", workdir)
 	}
 
@@ -77,10 +85,24 @@ func (wm *WorkdirManager) GetOrCreateSession(workdir string) (*Session, error) {
 		Workdir:  workdir,
 		Fullpath: fullpath,
 		Active:   true,
+		since:    time.Now(),
 	}
 
 	wm.sessions[workdir] = session
+	dbg("wm acquire workdir=%q fullpath=%q active_workdirs=%v", workdir, fullpath, keysLocked(wm.sessions))
 	return session, nil
+}
+
+// keysLocked lists session keys. Callers of GetOrCreateSession already hold a
+// lock, so this helper takes none — it exists only for the debug records.
+func keysLocked(m map[string]*Session) []string {
+	out := make([]string, 0, len(m))
+	for k, v := range m {
+		if v.Active {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 // ReleaseSession marks a session as inactive, allowing other clients to use the workdir.
@@ -89,6 +111,7 @@ func (wm *WorkdirManager) ReleaseSession(workdir string) {
 	defer wm.mutex.Unlock()
 	if session, ok := wm.sessions[workdir]; ok {
 		session.Active = false
+		dbg("wm release workdir=%q held_for=%s", workdir, time.Since(session.since).Round(time.Millisecond))
 		// Optionally, we could remove the session from the map after a timeout
 		// or when cleanup is needed
 	}
