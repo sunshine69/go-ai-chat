@@ -330,6 +330,11 @@ func streamOnce(ctx context.Context, config Config, msgs []Message, quiet bool) 
 	if config.MinP > 0 {
 		reqBody["min_p"] = config.MinP
 	}
+	// Thinking level. Strata (0.2.15) reads "reasoning_effort" on
+	// /v1/chat/completions; omitting it leaves the model default ("high").
+	if config.ReasoningEffort != "" {
+		reqBody["reasoning_effort"] = config.ReasoningEffort
+	}
 
 	// Inject MCP tools if connected.
 	// QUIET calls (e.g. the context-compression sub-call) must not get

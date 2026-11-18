@@ -1010,6 +1010,7 @@ func handleCommand(text string, history *[]Message, nonInteractive bool) {
 		fmt.Fprintln(os.Stderr, "  /top-p <float>                - Set top-p for the model (0.0-1.0). 0 will use default from server. Saved to .aigdotenv")
 		fmt.Fprintln(os.Stderr, "  /top-k <int>                  - Set top-k	for the model (0.0-1.0). 0 will use default from server. Saved to .aigdotenv")
 		fmt.Fprintln(os.Stderr, "  /min-p <float>                - Set min-p for the model (0.0-1.0). 0 will use default from server. Saved to .aigdotenv")
+		fmt.Fprintln(os.Stderr, "  /effort <level>                 - Thinking level sent as reasoning_effort: none, low, medium or high (aliases minimal/xhigh/max are folded to the nearest). 'default' omits the field so the model uses its own default (Strata/Qwen3.8-Flash-Next: high). Saved to .aigdotenv as REASONING_EFFORT")
 		fmt.Fprintln(os.Stderr, "  /maxtoken <N>                 - Set max tokens in payload.")
 		fmt.Fprintln(os.Stderr, "  /trimctx <idx|range>          - Remove messages at index or range (e.g. 3-5, -1--3)")
 		fmt.Fprintln(os.Stderr, "  /autonudgedisabled <on|off>   - Disable the auto nudge feature")
@@ -1328,6 +1329,27 @@ func handleCommand(text string, history *[]Message, nonInteractive bool) {
 		config.MinP = minP
 		persistConfigParam("MIN_P", arg, nonInteractive)
 		fmt.Fprintf(os.Stderr, "Min-p set to: %v\n", config.MinP)
+	case "/effort", "/reasoning":
+		if arg == "" {
+			cur := config.ReasoningEffort
+			if cur == "" {
+				cur = "server/model default"
+			}
+			fmt.Fprintf(os.Stderr, "Usage: /effort <none|low|medium|high> ('default' to clear and use the model default, on Strata/Qwen3.8 that is high). Current value: %s\n", cur)
+			return
+		}
+		level, ok := normalizeReasoningEffort(arg)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "Unknown reasoning effort: %s (use none, low, medium, high or default)\n", arg)
+			return
+		}
+		config.ReasoningEffort = level
+		persistConfigParam("REASONING_EFFORT", level, nonInteractive)
+		shown := level
+		if shown == "" {
+			shown = "server/model default"
+		}
+		fmt.Fprintf(os.Stderr, "Reasoning effort set to: %s\n", shown)
 	case "/timeout", "/t":
 		if arg == "" {
 			fmt.Fprintln(os.Stderr, "Usage: /timeout <duration> (e.g., 30s, 5m, 1h). Current value: ", config.Timeout)

@@ -35,6 +35,12 @@ type Config struct {
 	TopP        float64 // model top_p
 	TopK        int     // model top_k
 	MinP        float64 // model min_p
+	// ReasoningEffort is the thinking level sent as "reasoning_effort" in the
+	// request body. Empty means the field is omitted so the server uses the
+	// model default (Strata/Qwen3.8-Flash-Next default is "high"). Set at
+	// runtime with /effort and saved to .aigdotenv under REASONING_EFFORT.
+	// Strata accepts: none, low, medium, high.
+	ReasoningEffort string
 }
 
 type Message struct {

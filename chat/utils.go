@@ -354,6 +354,43 @@ func envInt(name string) int {
 	return 0
 }
 
+// reasoningEffortAliases maps what the user types with /effort to a level name
+// the server understands. Strata (0.2.15/0.2.16) documents exactly four levels
+// on /v1/chat/completions — "reasoning_effort": "none" | "low" | "medium" |
+// "high" — so anything else is folded into the nearest one instead of being
+// sent verbatim and answered with a 400. Unrecognised values are rejected.
+var reasoningEffortAliases = map[string]string{
+	"none":    "none",
+	"off":     "none",
+	"false":   "none",
+	"minimal": "low",
+	"min":     "low",
+	"low":     "low",
+	"medium":  "medium",
+	"med":     "medium",
+	"mid":     "medium",
+	"high":    "high",
+	"xhigh":   "high",
+	"extra":   "high",
+	"max":     "high",
+}
+
+// normalizeReasoningEffort lower-cases and maps a /effort argument to a level
+// Strata accepts. "" means "don't send reasoning_effort at all, let the server
+// use the model default" (which is high for Qwen3.8-Flash-Next). ok is false
+// for values we do not recognise.
+func normalizeReasoningEffort(v string) (string, bool) {
+	v = strings.ToLower(strings.TrimSpace(v))
+	switch v {
+	case "", "default", "server", "model", "reset", "clear":
+		return "", true
+	}
+	if lvl, ok := reasoningEffortAliases[v]; ok {
+		return lvl, true
+	}
+	return "", false
+}
+
 func saveConfig() {
 	if config == nil {
 		return
@@ -460,6 +497,15 @@ func saveConfig() {
 			delete(envVars, p.key)
 			changed = true
 		}
+	}
+	// Reasoning effort: a string. Empty means "omit the field", so a previously
+	// stored value is cleared.
+	if config.ReasoningEffort != "" {
+		envVars["REASONING_EFFORT"] = config.ReasoningEffort
+		changed = true
+	} else if _, exists := envVars["REASONING_EFFORT"]; exists {
+		delete(envVars, "REASONING_EFFORT")
+		changed = true
 	}
 	if !changed {
 		return
@@ -585,6 +631,14 @@ func loadConfig() *Config {
 		TopK:                envInt("TOP_K"),
 		MinP:                envFloat("MIN_P"),
 	}
+
+	// A hand-edited .aigdotenv can hold a level the server would reject with a
+	// 400, so validate it on load and fall back to the model default.
+	effort, effortOK := normalizeReasoningEffort(os.Getenv("REASONING_EFFORT"))
+	if !effortOK {
+		fmt.Fprintf(os.Stderr, "⚠️  Ignoring unknown REASONING_EFFORT=%q (use none, low, medium, high or empty)\n", os.Getenv("REASONING_EFFORT"))
+	}
+	c.ReasoningEffort = effort
 
 	if timeoutStr := os.Getenv("TIMEOUT"); timeoutStr != "" {
 		if d, err := time.ParseDuration(timeoutStr); err == nil {
